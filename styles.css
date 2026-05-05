@@ -847,7 +847,7 @@ select:focus {
 
 .available-player-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 6px;
   max-height: 320px;
   overflow: auto;
@@ -855,7 +855,8 @@ select:focus {
 }
 
 .available-player {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22px auto;
   min-height: 42px;
   align-items: center;
   gap: 6px;
@@ -875,7 +876,7 @@ select:focus {
   background: rgba(190, 66, 57, 0.08);
 }
 
-.available-player strong {
+.available-player-name {
   min-width: 0;
   overflow: hidden;
   font-size: 13px;
@@ -883,16 +884,14 @@ select:focus {
   white-space: nowrap;
 }
 
-.available-player span {
-  flex: 0 0 auto;
+.available-player-side {
   color: var(--muted);
   font-size: 11px;
+  text-align: center;
 }
 
 .side-actions {
-  margin-left: auto;
   display: flex;
-  flex: 0 0 auto;
   gap: 4px;
 }
 

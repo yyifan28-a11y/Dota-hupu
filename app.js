@@ -534,8 +534,8 @@ function renderAvailablePlayer(player) {
 
   return `
     <div class="available-player ${stateClass}">
-      <strong>${escapeHtml(player.name)}</strong>
-      ${stateLabel ? `<span>${stateLabel}</span>` : ""}
+      <strong class="available-player-name">${escapeHtml(player.name)}</strong>
+      <span class="available-player-side">${escapeHtml(stateLabel)}</span>
       <div class="side-actions">
         <button class="ghost-button compact-button ${side === "radiant" ? "is-active" : ""}" data-assign-side="radiant" data-player-id="${player.id}" ${disabledRadiant ? "disabled" : ""} type="button">天</button>
         <button class="ghost-button compact-button ${side === "dire" ? "is-active" : ""}" data-assign-side="dire" data-player-id="${player.id}" ${disabledDire ? "disabled" : ""} type="button">夜</button>
