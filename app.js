@@ -1333,6 +1333,7 @@ function bindEvents() {
 
   $("#playerForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const form = event.currentTarget;
     try {
       await adminApi("/api/players", {
         method: "POST",
@@ -1342,7 +1343,7 @@ function bindEvents() {
           note: $("#playerNote").value.trim()
         })
       });
-      event.currentTarget.reset();
+      form.reset();
       await loadState();
     } catch (error) {
       alert(error.message);
