@@ -632,6 +632,7 @@ function renderMatches() {
 
 function renderAdmin() {
   renderAdminPlayers();
+  renderMatchEntryEditor();
   renderAdminMatches();
   updateAdminUi();
 }
