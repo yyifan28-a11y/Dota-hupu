@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dota2 内战工具</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">D2</span>
+          <div>
+        <h1>Hupu内战记录器</h1>
+            <p>V1.0</p>
+          </div>
+        </div>
+
+        <nav class="nav-tabs" aria-label="主导航">
+          <button class="nav-tab is-active" data-view="dashboard" type="button">总览</button>
+          <button class="nav-tab" data-view="players" type="button">战绩</button>
+          <button class="nav-tab" data-view="rankings" type="button">数据</button>
+          <button class="nav-tab" data-view="generator" type="button">对阵生成器</button>
+          <button class="nav-tab" data-view="matches" type="button">比赛</button>
+          <button class="nav-tab admin-nav-tab" data-view="data" type="button">
+            <span>管理</span>
+          </button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <section class="view is-active" id="dashboard">
+          <div class="page-heading">
+            <div>
+              <h2>总览</h2>
+            </div>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span>比赛场次</span>
+              <strong id="statMatches">0</strong>
+            </div>
+            <div class="stat-card">
+              <span>选手数量</span>
+              <strong id="statPlayers">0</strong>
+            </div>
+          </div>
+
+          <section class="mini-rank-grid">
+            <section class="panel mini-rank-panel">
+              <div class="panel-header">
+                <h3>评分榜</h3>
+              </div>
+              <ol id="ratingTopList" class="mini-rank-list"></ol>
+            </section>
+            <section class="panel mini-rank-panel">
+              <div class="panel-header">
+                <h3>胜率榜</h3>
+              </div>
+              <ol id="winrateTopList" class="mini-rank-list"></ol>
+            </section>
+            <section class="panel mini-rank-panel">
+              <div class="panel-header">
+                <h3>净胜榜</h3>
+              </div>
+              <ol id="netWinsTopList" class="mini-rank-list"></ol>
+            </section>
+            <section class="panel mini-rank-panel">
+              <div class="panel-header">
+                <h3>参赛榜</h3>
+              </div>
+              <ol id="gamesTopList" class="mini-rank-list"></ol>
+            </section>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>最近比赛</h3>
+            </div>
+            <div id="recentMatches" class="match-list"></div>
+          </section>
+        </section>
+
+        <section class="view" id="players">
+          <div class="page-heading">
+            <div>
+              <h2>战绩</h2>
+              <p>查看群友评分、胜负、场次和位置倾向。</p>
+            </div>
+          </div>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>选手战绩表</h3>
+              <span id="playersCountLabel">0 人</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>昵称 <button class="sort-arrow" data-record-sort="name" type="button" aria-label="按昵称排序">⌄</button></th>
+                    <th>评分 <button class="sort-arrow" data-record-sort="rating" type="button" aria-label="按评分排序">⌄</button></th>
+                    <th>胜负 <button class="sort-arrow" data-record-sort="netWins" type="button" aria-label="按胜负排序">⌄</button></th>
+                    <th>场次 <button class="sort-arrow" data-record-sort="games" type="button" aria-label="按场次排序">⌄</button></th>
+                    <th>
+                      <span>位置</span>
+                      <span class="position-axis" aria-label="位置编号">
+                        <b>一号位 <button class="sort-arrow" data-record-sort="position-1" type="button" aria-label="按一号位次数排序">⌄</button></b>
+                        <b>二号位 <button class="sort-arrow" data-record-sort="position-2" type="button" aria-label="按二号位次数排序">⌄</button></b>
+                        <b>三号位 <button class="sort-arrow" data-record-sort="position-3" type="button" aria-label="按三号位次数排序">⌄</button></b>
+                        <b>四号位 <button class="sort-arrow" data-record-sort="position-4" type="button" aria-label="按四号位次数排序">⌄</button></b>
+                        <b>五号位 <button class="sort-arrow" data-record-sort="position-5" type="button" aria-label="按五号位次数排序">⌄</button></b>
+                      </span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody id="playersBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="rankings">
+          <div class="page-heading">
+            <div>
+              <h2>数据</h2>
+              <p>按比赛记录统计每位选手的场均个人数据。</p>
+            </div>
+          </div>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>选手数据表</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>昵称 <button class="sort-arrow" data-data-sort="name" type="button" aria-label="按昵称排序">⌄</button></th>
+                    <th>场均 GPM <button class="sort-arrow" data-data-sort="gpm" type="button" aria-label="按场均 GPM 排序">⌄</button></th>
+                    <th>场均 XPM <button class="sort-arrow" data-data-sort="xpm" type="button" aria-label="按场均 XPM 排序">⌄</button></th>
+                    <th>场均 10分钟经济 <button class="sort-arrow" data-data-sort="netWorth10" type="button" aria-label="按场均 10分钟经济排序">⌄</button></th>
+                    <th>伤害量 <button class="sort-arrow" data-data-sort="damage" type="button" aria-label="按伤害量排序">⌄</button></th>
+                  </tr>
+                </thead>
+                <tbody id="rankingsBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="generator">
+          <div class="page-heading">
+            <div>
+              <h2>对阵生成器</h2>
+              <p>选择本场参加的 10 名选手，系统会尽量按评分平衡两队。</p>
+            </div>
+          </div>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>选择参赛选手</h3>
+              <span id="selectionCount">已选 0/10</span>
+              <div class="button-row">
+                <button class="ghost-button" id="clearSelection" type="button">清空</button>
+              </div>
+            </div>
+            <div id="playerPicker" class="picker-grid"></div>
+          </section>
+
+          <details class="panel collapsible-panel" id="presetPanel">
+            <summary class="collapsible-summary">分队预设</summary>
+            <div class="preset-grid">
+              <label>
+                选手 A
+                <select id="constraintPlayerA"></select>
+              </label>
+              <label>
+                关系
+                <select id="constraintType">
+                  <option value="teammate">挚友</option>
+                  <option value="opponent">仇人</option>
+                </select>
+              </label>
+              <label>
+                选手 B
+                <select id="constraintPlayerB"></select>
+              </label>
+              <button class="secondary-button" id="addConstraint" type="button">添加预设</button>
+            </div>
+            <div id="constraintsList" class="constraint-list"></div>
+          </details>
+
+          <section class="panel generator-preference-panel">
+            <div class="panel-header">
+              <h3>生成规则：双方分差 ≤ 1</h3>
+            </div>
+            <div class="generator-preference-layout">
+              <div>
+                <div class="mode-row">
+                  <label class="mode-option">
+                    <input type="radio" name="balanceMode" value="position" checked />
+                    <span>常用位置优先</span>
+                  </label>
+                  <label class="mode-option">
+                    <input type="radio" name="balanceMode" value="combination" />
+                    <span>人员组合优先</span>
+                  </label>
+                  <label class="mode-option">
+                    <input type="radio" name="balanceMode" value="random" />
+                    <span>完全随机</span>
+                  </label>
+                  <label class="mode-option">
+                    <input type="radio" name="balanceMode" value="winrate" />
+                    <span>胜率平衡</span>
+                  </label>
+                </div>
+                <div class="mode-description" id="balanceModeDescription">
+                  <p>尽量让同队选手的常用位置不重复。</p>
+                </div>
+              </div>
+              <button class="primary-button" id="generateTeams" type="button">生成 5v5 对阵</button>
+            </div>
+          </section>
+
+          <section class="teams-grid is-hidden" id="generatedTeams">
+            <div class="team-panel radiant">
+              <div class="team-title">
+                <h3>天辉</h3>
+                <span id="radiantRating">总评分 0</span>
+              </div>
+              <ol id="radiantTeam" class="team-list"></ol>
+            </div>
+            <div class="team-panel dire">
+              <div class="team-title">
+                <h3>夜魇</h3>
+                <span id="direRating">总评分 0</span>
+              </div>
+              <ol id="direTeam" class="team-list"></ol>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="matches">
+          <div class="page-heading">
+            <div>
+              <h2>比赛记录</h2>
+              <p>保存胜负时记录每个人本场位置，后续自动形成位置倾向。</p>
+            </div>
+          </div>
+
+          <form class="match-form admin-only" id="matchForm">
+            <div class="form-grid">
+              <label>
+                比赛日期
+                <input id="matchDate" type="date" required />
+              </label>
+              <label>
+                当日第几场
+                <input id="matchNo" type="number" min="1" step="1" />
+              </label>
+              <label>
+                比分
+                <span class="score-inputs">
+                  <input id="matchScoreRadiant" type="number" min="0" step="1" inputmode="numeric" aria-label="天辉比分" />
+                  <span>-</span>
+                  <input id="matchScoreDire" type="number" min="0" step="1" inputmode="numeric" aria-label="夜魇比分" />
+                </span>
+              </label>
+              <label>
+                时长
+                <span class="duration-picker">
+                  <input id="matchDurationMinutes" type="number" min="0" step="1" inputmode="numeric" aria-label="比赛时长分钟" />
+                  <span>分</span>
+                  <input id="matchDurationSeconds" type="number" min="0" max="59" step="1" inputmode="numeric" aria-label="比赛时长秒钟" />
+                  <span>秒</span>
+                </span>
+              </label>
+              <label>
+                获胜方
+                <select id="matchWinner">
+                  <option value="radiant">天辉</option>
+                  <option value="dire">夜魇</option>
+                </select>
+              </label>
+              <label class="wide">
+                备注
+                <input id="matchNote" placeholder="翻盘、碾压、阵容问题等" />
+              </label>
+            </div>
+            <div class="position-editor">
+              <div id="matchPlayerPicker" class="match-player-picker"></div>
+              <div id="matchDetailEditor" class="match-detail-editor"></div>
+            </div>
+            <button class="primary-button" id="matchSubmitButton" type="submit">录入比赛</button>
+          </form>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>历史比赛</h3>
+              <span id="matchesCountLabel">0 场</span>
+            </div>
+            <div id="matchesList" class="match-list"></div>
+          </section>
+        </section>
+
+        <section class="view" id="data">
+          <div class="page-heading">
+            <div>
+              <h2>管理</h2>
+              <p>在这里维护选手名单、比赛记录和数据备份。</p>
+            </div>
+          </div>
+
+          <section class="panel data-panel admin-entry-panel">
+            <div class="admin-entry-status">
+              <h3>管理权限</h3>
+              <p id="adminStatus">未进入管理员模式。进入后可以添加/删除人员、改评分、保存比赛和管理数据。</p>
+            </div>
+            <div class="admin-login">
+              <input id="adminPasswordInput" type="password" placeholder="管理员密码" />
+              <button class="primary-button" id="adminLogin" type="button">进入管理员模式</button>
+              <button class="secondary-button" id="adminLogout" type="button">退出管理员模式</button>
+            </div>
+
+            <details class="panel collapsible-panel admin-only" id="adminPlayersPanel">
+              <summary class="collapsible-summary">
+                <span>选手管理</span>
+              </summary>
+              <form class="form-grid" id="playerForm">
+                <label>
+                  昵称
+                  <input id="playerName" required placeholder="例如：Maybe" />
+                </label>
+                <label>
+                  初始评分
+                  <input id="playerRating" type="number" min="0" max="10" step="0.5" placeholder="0-10" />
+                </label>
+                <label class="wide">
+                  备注
+                  <input id="playerNote" placeholder="英雄池、分路偏好、补位情况" />
+                </label>
+                <button class="primary-button" type="submit">添加选手</button>
+              </form>
+              <div class="table-wrap admin-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>昵称</th>
+                      <th>评分</th>
+                      <th>最后改分</th>
+                      <th>备注</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="adminPlayersBody"></tbody>
+                </table>
+              </div>
+            </details>
+
+            <details class="panel collapsible-panel admin-only" id="adminMatchEntryPanel">
+              <summary class="collapsible-summary">
+                <span>比赛录入</span>
+              </summary>
+              <div id="adminMatchFormMount"></div>
+            </details>
+
+            <details class="panel collapsible-panel admin-only" id="adminMatchHistoryPanel">
+              <summary class="collapsible-summary">
+                <span>历史管理</span>
+              </summary>
+              <div class="panel-header">
+                <h3>比赛记录管理</h3>
+              </div>
+              <div id="adminMatchesList" class="admin-match-list"></div>
+            </details>
+
+            <details class="panel collapsible-panel admin-only" id="adminBackupPanel">
+              <summary class="collapsible-summary">
+                <span>备份和恢复</span>
+              </summary>
+              <div class="backup-panel-body">
+                <h3>备份和恢复</h3>
+                <p>数据保存在项目目录的 SQLite 数据库里。建议打完几次内战后导出备份。</p>
+                <div class="button-row">
+                  <button class="primary-button" id="exportData" type="button">导出数据</button>
+                  <label class="secondary-button file-button admin-only">
+                    导入数据
+                    <input id="importData" type="file" accept="application/json" />
+                  </label>
+                  <button class="danger-button admin-only" id="resetData" type="button">清空数据</button>
+                </div>
+              </div>
+            </details>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <template id="emptyStateTemplate">
+      <div class="empty-state">暂无数据</div>
+    </template>
+
+    <dialog id="matchDetailDialog" class="match-dialog">
+      <div class="dialog-header">
+        <h2>比赛详情</h2>
+        <button class="icon-button" id="closeMatchDialog" type="button" aria-label="关闭">×</button>
+      </div>
+      <div id="matchDetailBody" class="match-dialog-body"></div>
+    </dialog>
+
+    <script src="./heroes.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

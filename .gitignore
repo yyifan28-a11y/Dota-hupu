@@ -1,0 +1,14 @@
+node_modules/
+
+# Local SQLite data. Do not commit private match records.
+*.db
+*.db-shm
+*.db-wal
+
+# Local logs and backups.
+*.log
+backups/
+
+# OS/editor noise.
+.DS_Store
+Thumbs.db
