@@ -71,6 +71,7 @@ function initDatabase() {
       id TEXT PRIMARY KEY,
       date TEXT NOT NULL,
       match_no INTEGER DEFAULT 1,
+      match_id TEXT DEFAULT '',
       winner TEXT NOT NULL CHECK (winner IN ('radiant', 'dire')),
       score TEXT DEFAULT '',
       note TEXT DEFAULT '',
@@ -92,6 +93,7 @@ function initDatabase() {
   addColumnIfMissing("matches", "positions", "TEXT DEFAULT '{}'");
   addColumnIfMissing("matches", "player_details", "TEXT DEFAULT '{}'");
   addColumnIfMissing("matches", "match_no", "INTEGER DEFAULT 1");
+  addColumnIfMissing("matches", "match_id", "TEXT DEFAULT ''");
 
   const playerColumns = getColumns("players");
   if (playerColumns.includes("mmr")) {
@@ -256,12 +258,13 @@ async function handleApi(request, response, url) {
     }
 
     db.prepare(`
-      INSERT INTO matches (id, date, match_no, winner, score, note, radiant, dire, positions, player_details, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO matches (id, date, match_no, match_id, winner, score, note, radiant, dire, positions, player_details, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       crypto.randomUUID(),
       body.date || new Date().toISOString().slice(0, 10),
       Number(body.matchNo || 1),
+      String(body.matchId || "").trim(),
       body.winner === "dire" ? "dire" : "radiant",
       body.score || "",
       body.note || "",
@@ -296,11 +299,12 @@ async function handleApi(request, response, url) {
 
     db.prepare(`
       UPDATE matches
-      SET date = ?, match_no = ?, winner = ?, score = ?, note = ?, radiant = ?, dire = ?, positions = ?, player_details = ?
+      SET date = ?, match_no = ?, match_id = ?, winner = ?, score = ?, note = ?, radiant = ?, dire = ?, positions = ?, player_details = ?
       WHERE id = ?
     `).run(
       body.date || new Date().toISOString().slice(0, 10),
       Number(body.matchNo || 1),
+      String(body.matchId || "").trim(),
       body.winner === "dire" ? "dire" : "radiant",
       body.score || "",
       body.note || "",
@@ -347,8 +351,8 @@ async function handleApi(request, response, url) {
     });
 
     const insertMatch = db.prepare(`
-      INSERT INTO matches (id, date, match_no, winner, score, note, radiant, dire, positions, player_details, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO matches (id, date, match_no, match_id, winner, score, note, radiant, dire, positions, player_details, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     body.matches.forEach((match) => {
       const radiant = Array.isArray(match.radiant) ? match.radiant : [];
@@ -357,6 +361,7 @@ async function handleApi(request, response, url) {
         match.id || crypto.randomUUID(),
         match.date || new Date().toISOString().slice(0, 10),
         Number(match.matchNo || match.match_no || 1),
+        String(match.matchId || match.match_id || "").trim(),
         match.winner === "dire" ? "dire" : "radiant",
         match.score || "",
         match.note || "",
@@ -429,7 +434,7 @@ function getState() {
       ORDER BY created_at ASC
     `).all(),
     matches: db.prepare(`
-      SELECT id, date, match_no AS matchNo, winner, score, note, radiant, dire, positions, player_details AS playerDetails
+      SELECT id, date, match_no AS matchNo, match_id AS matchId, winner, score, note, radiant, dire, positions, player_details AS playerDetails
       FROM matches
       ORDER BY created_at DESC
     `).all().map((match) => ({
@@ -719,13 +724,14 @@ function parseExcelMatches(buffer) {
     const records = rows.slice(1)
       .filter((row) => row.some((value) => String(value ?? "").trim() !== ""))
       .map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index]])));
+    const playerRecords = records.filter(isExcelPlayerRecord);
 
-    if (records.length !== 10) {
-      errors.push(`${sheetName}: 需要 10 行选手数据，当前是 ${records.length} 行`);
+    if (playerRecords.length !== 10) {
+      errors.push(`${sheetName}: 需要 10 行选手数据，当前是 ${playerRecords.length} 行`);
       return;
     }
 
-    const parsed = parseExcelMatchSheet(sheetName, records, playerByName);
+    const parsed = parseExcelMatchSheet(sheetName, playerRecords, playerByName, records, rows.slice(1));
     matches.push(parsed.match);
     errors.push(...parsed.errors);
     warnings.push(...parsed.warnings);
@@ -739,18 +745,29 @@ function parseExcelMatches(buffer) {
   };
 }
 
-function parseExcelMatchSheet(sheetName, records, playerByName) {
+function isExcelPlayerRecord(record) {
+  return Boolean(
+    ["radiant", "dire"].includes(normalizeSide(record["阵营"]))
+    && !isBlank(record["选手"])
+    && !isBlank(record["英雄"])
+  );
+}
+
+function parseExcelMatchSheet(sheetName, records, playerByName, allRecords = records, rawRows = []) {
   const errors = [];
   const warnings = [];
-  const first = records[0] || {};
+  const first = records[0] || allRecords[0] || {};
   const radiant = records.filter((record) => normalizeSide(record["阵营"]) === "radiant");
   const dire = records.filter((record) => normalizeSide(record["阵营"]) === "dire");
-  const winnerRecord = records.find((record) => String(record["结果"] || "").trim() === "胜");
+  const winnerRecord = allRecords.find((record) => String(record["结果"] || "").trim() === "胜");
   const winner = winnerRecord ? normalizeSide(winnerRecord["阵营"]) : "";
-  const date = normalizeExcelDate(first["日期"], sheetName);
+  const dateValue = first["日期"] || allRecords.find((record) => !isBlank(record["日期"]))?.["日期"];
+  const date = normalizeExcelDate(dateValue, sheetName);
   const matchNo = Number(first["场次"] || sheetName.match(/-(\d+)$/)?.[1] || 1);
-  const radiantKills = getTeamKills(radiant);
-  const direKills = getTeamKills(dire);
+  const radiantKills = getTeamKills(allRecords.filter((record) => normalizeSide(record["阵营"]) === "radiant")) || getTeamKills(radiant);
+  const direKills = getTeamKills(allRecords.filter((record) => normalizeSide(record["阵营"]) === "dire")) || getTeamKills(dire);
+  const matchId = String(findExcelMetaValue(["比赛ID", "比赛 Id", "Match ID", "match_id"], allRecords, rawRows) || "").trim();
+  const duration = normalizeDuration(findExcelMetaValue(["比赛时长", "时长", "比赛时间", "Duration"], allRecords, rawRows));
   const usedIds = new Set();
 
   if (!date) errors.push(`${sheetName}: 无法识别日期`);
@@ -796,8 +813,9 @@ function parseExcelMatchSheet(sheetName, records, playerByName) {
       sheetName,
       date,
       matchNo,
+      matchId,
       winner: winner || "radiant",
-      score: `${radiantKills}-${direKills}`,
+      score: [`${radiantKills}-${direKills}`, duration].filter(Boolean).join(" / "),
       note: `Excel导入：${sheetName}`,
       radiant: teams.radiant.filter(Boolean),
       dire: teams.dire.filter(Boolean),
@@ -830,6 +848,7 @@ function validateExcelMatches(matches) {
     cleaned.push({
       date: match.date || new Date().toISOString().slice(0, 10),
       matchNo: Number(match.matchNo || 1),
+      matchId: String(match.matchId || match.match_id || "").trim(),
       winner: match.winner === "dire" ? "dire" : "radiant",
       score: String(match.score || ""),
       note: String(match.note || ""),
@@ -845,8 +864,8 @@ function validateExcelMatches(matches) {
 
 function insertMatches(matches) {
   const insert = db.prepare(`
-    INSERT INTO matches (id, date, match_no, winner, score, note, radiant, dire, positions, player_details, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO matches (id, date, match_no, match_id, winner, score, note, radiant, dire, positions, player_details, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   db.exec("BEGIN");
   try {
@@ -855,6 +874,7 @@ function insertMatches(matches) {
         crypto.randomUUID(),
         match.date,
         match.matchNo,
+        match.matchId,
         match.winner,
         match.score,
         match.note,
@@ -870,6 +890,74 @@ function insertMatches(matches) {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+function findExcelMetaValue(labels, records = [], rawRows = []) {
+  const wanted = new Set(labels.map(normalizeExcelLabel));
+
+  for (const record of records) {
+    for (const [key, value] of Object.entries(record)) {
+      if (wanted.has(normalizeExcelLabel(key)) && !isBlank(value)) return value;
+    }
+
+    const values = Object.values(record);
+    for (let index = 0; index < values.length; index += 1) {
+      if (!wanted.has(normalizeExcelLabel(values[index]))) continue;
+      const next = values.slice(index + 1).find((value) => !isBlank(value));
+      if (!isBlank(next)) return next;
+    }
+  }
+
+  for (const row of rawRows) {
+    for (let index = 0; index < row.length; index += 1) {
+      if (!wanted.has(normalizeExcelLabel(row[index]))) continue;
+      const next = row.slice(index + 1).find((value) => !isBlank(value));
+      if (!isBlank(next)) return next;
+    }
+  }
+
+  return "";
+}
+
+function normalizeExcelLabel(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_:：-]/g, "");
+}
+
+function normalizeDuration(value) {
+  if (isBlank(value)) return "";
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const totalSeconds = value > 0 && value < 1 ? Math.round(value * 86400) : Math.round(value * 60);
+    return formatDurationSeconds(totalSeconds);
+  }
+
+  const text = String(value).trim();
+  const colonMatch = text.match(/^(\d+):([0-5]?\d)(?::([0-5]?\d))?$/);
+  if (colonMatch) {
+    const first = Number(colonMatch[1]);
+    const second = Number(colonMatch[2]);
+    const third = colonMatch[3] === undefined ? null : Number(colonMatch[3]);
+    const totalSeconds = third === null ? first * 60 + second : (first * 60 + second) * 60 + third;
+    return formatDurationSeconds(totalSeconds);
+  }
+
+  const cnMatch = text.match(/(\d+)\s*分(?:钟)?\s*(\d+)?\s*秒?/);
+  if (cnMatch) {
+    return formatDurationSeconds(Number(cnMatch[1]) * 60 + Number(cnMatch[2] || 0));
+  }
+
+  const numeric = Number(text);
+  if (Number.isFinite(numeric)) return formatDurationSeconds(Math.round(numeric * 60));
+  return text;
+}
+
+function formatDurationSeconds(totalSeconds) {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return "";
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function getExcelPlayerId(record, playerByName, usedIds, sheetName, errors) {

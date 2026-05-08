@@ -953,6 +953,10 @@ function renderMatchDialog(match) {
 
     <section class="match-meta-grid">
       <div>
+        <span>比赛ID</span>
+        <strong>${escapeHtml(match.matchId || "数据未录入")}</strong>
+      </div>
+      <div>
         <span>比分 / 时长</span>
         <strong>${escapeHtml(match.score || "数据未录入")}</strong>
       </div>
@@ -1191,6 +1195,7 @@ function editMatch(matchId) {
 
   $("#matchDate").value = match.date || "";
   $("#matchNo").value = match.matchNo || 1;
+  $("#matchId").value = match.matchId || "";
   const [score = "", duration = ""] = String(match.score || "").split(" / ");
   setScoreValue(score.trim());
   setDurationValue(duration.trim());
@@ -1208,6 +1213,7 @@ function resetMatchForm() {
   setDurationValue("");
   $("#matchNote").value = "";
   $("#matchNo").value = "";
+  $("#matchId").value = "";
   editingMatchId = null;
   matchDetails = {};
   matchEntryTeams = { radiant: [], dire: [] };
@@ -1631,6 +1637,7 @@ function renderExcelImportPreview(result) {
         <td>${escapeHtml(match.sheetName || "-")}</td>
         <td>${escapeHtml(match.date || "-")}</td>
         <td>${Number(match.matchNo || 1)}</td>
+        <td>${escapeHtml(match.matchId || "-")}</td>
         <td>${match.winner === "radiant" ? "天辉" : "夜魇"}</td>
         <td>${escapeHtml(match.score || "-")}</td>
         <td>${renderMatchQualityBadge(match)}${isDuplicate ? `<span class="duplicate-badge">已存在</span>` : ""}</td>
@@ -1647,7 +1654,7 @@ function renderExcelImportPreview(result) {
       ${rows ? `
         <div class="table-wrap">
           <table class="excel-preview-table">
-            <thead><tr><th>导入</th><th>Sheet</th><th>日期</th><th>场次</th><th>胜方</th><th>比分</th><th>状态</th></tr></thead>
+            <thead><tr><th>导入</th><th>Sheet</th><th>日期</th><th>场次</th><th>比赛ID</th><th>胜方</th><th>比分 / 时长</th><th>状态</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>
@@ -1661,10 +1668,12 @@ function renderExcelImportPreview(result) {
 }
 
 function matchKey(match) {
+  if (!isBlank(match.matchId)) return `match-id::${match.matchId}`;
   return `${match.date || ""}::${Number(match.matchNo || 1)}`;
 }
 
 function formatDuplicateMatchLabel(match) {
+  if (!isBlank(match.matchId)) return `比赛ID ${match.matchId}`;
   return `${formatShortMatchDate(match.date)}第${Number(match.matchNo || 1)}场`;
 }
 
@@ -1868,6 +1877,7 @@ function bindEvents() {
         body: JSON.stringify({
           date: $("#matchDate").value,
           matchNo: $("#matchNo").value || 1,
+          matchId: $("#matchId").value.trim(),
           winner: $("#matchWinner").value,
           score: [score, duration].filter(Boolean).join(" / "),
           note: $("#matchNote").value.trim(),
