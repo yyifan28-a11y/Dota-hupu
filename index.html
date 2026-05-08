@@ -20,7 +20,8 @@
         <nav class="nav-tabs" aria-label="主导航">
           <button class="nav-tab is-active" data-view="dashboard" type="button">总览</button>
           <button class="nav-tab" data-view="players" type="button">战绩</button>
-          <button class="nav-tab" data-view="rankings" type="button">数据</button>
+          <button class="nav-tab" data-view="basicData" type="button">基础数据</button>
+          <button class="nav-tab" data-view="advancedData" type="button">高阶数据</button>
           <button class="nav-tab" data-view="generator" type="button">对阵生成器</button>
           <button class="nav-tab" data-view="matches" type="button">比赛</button>
           <button class="nav-tab admin-nav-tab" data-view="data" type="button">
@@ -92,10 +93,6 @@
           </div>
 
           <section class="panel">
-            <div class="panel-header">
-              <h3>选手战绩表</h3>
-              <span id="playersCountLabel">0 人</span>
-            </div>
             <div class="table-wrap">
               <table>
                 <thead>
@@ -122,30 +119,37 @@
           </section>
         </section>
 
-        <section class="view" id="rankings">
+        <section class="view" id="basicData">
           <div class="page-heading">
             <div>
-              <h2>数据</h2>
-              <p>按比赛记录统计每位选手的场均个人数据。</p>
+              <h2>基础数据</h2>
+              <p>评分、KDA 和核心输出表现。</p>
             </div>
           </div>
 
           <section class="panel">
-            <div class="panel-header">
-              <h3>选手数据表</h3>
-            </div>
             <div class="table-wrap">
               <table>
-                <thead>
-                  <tr>
-                    <th>昵称 <button class="sort-arrow" data-data-sort="name" type="button" aria-label="按昵称排序">⌄</button></th>
-                    <th>场均 GPM <button class="sort-arrow" data-data-sort="gpm" type="button" aria-label="按场均 GPM 排序">⌄</button></th>
-                    <th>场均 XPM <button class="sort-arrow" data-data-sort="xpm" type="button" aria-label="按场均 XPM 排序">⌄</button></th>
-                    <th>场均 10分钟经济 <button class="sort-arrow" data-data-sort="netWorth10" type="button" aria-label="按场均 10分钟经济排序">⌄</button></th>
-                    <th>伤害量 <button class="sort-arrow" data-data-sort="damage" type="button" aria-label="按伤害量排序">⌄</button></th>
-                  </tr>
-                </thead>
-                <tbody id="rankingsBody"></tbody>
+                <thead><tr></tr></thead>
+                <tbody id="basicDataBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="advancedData">
+          <div class="page-heading">
+            <div>
+              <h2>高阶数据</h2>
+              <p>经济效率、参战、推进和承伤表现。</p>
+            </div>
+          </div>
+
+          <section class="panel">
+            <div class="table-wrap">
+              <table>
+                <thead><tr></tr></thead>
+                <tbody id="advancedDataBody"></tbody>
               </table>
             </div>
           </section>
@@ -252,6 +256,7 @@
           </div>
 
           <form class="match-form admin-only" id="matchForm">
+            <h3 class="form-section-title">基本信息</h3>
             <div class="form-grid">
               <label>
                 比赛日期
@@ -332,11 +337,11 @@
               <form class="form-grid" id="playerForm">
                 <label>
                   昵称
-                  <input id="playerName" required placeholder="例如：Maybe" />
+                  <input id="playerName" required />
                 </label>
                 <label>
                   初始评分
-                  <input id="playerRating" type="number" min="0" max="10" step="0.5" placeholder="0-10" />
+                  <input id="playerRating" type="number" min="0" step="0.5" placeholder="例如：10.5" />
                 </label>
                 <label class="wide">
                   备注
@@ -371,10 +376,23 @@
               <summary class="collapsible-summary">
                 <span>历史管理</span>
               </summary>
-              <div class="panel-header">
-                <h3>比赛记录管理</h3>
-              </div>
               <div id="adminMatchesList" class="admin-match-list"></div>
+            </details>
+
+            <details class="panel collapsible-panel admin-only" id="adminExcelImportPanel">
+              <summary class="collapsible-summary">
+                <span>Excel 导入</span>
+              </summary>
+              <div class="backup-panel-body">
+                <p>从 Excel 识别比赛记录，确认预览后再写入数据库。</p>
+                <div class="button-row">
+                  <label class="secondary-button file-button admin-only">
+                    导入 Excel
+                    <input id="importExcelData" type="file" accept=".xlsx,.xls" />
+                  </label>
+                </div>
+                <div id="excelImportPreview" class="excel-import-preview"></div>
+              </div>
             </details>
 
             <details class="panel collapsible-panel admin-only" id="adminBackupPanel">
@@ -382,7 +400,6 @@
                 <span>备份和恢复</span>
               </summary>
               <div class="backup-panel-body">
-                <h3>备份和恢复</h3>
                 <p>数据保存在项目目录的 SQLite 数据库里。建议打完几次内战后导出备份。</p>
                 <div class="button-row">
                   <button class="primary-button" id="exportData" type="button">导出数据</button>

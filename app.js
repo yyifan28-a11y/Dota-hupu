@@ -8,6 +8,22 @@ const POSITIONS = ["1", "2", "3", "4", "5"];
 const HEROES = Array.isArray(window.DOTA_HEROES) ? window.DOTA_HEROES : [];
 const HERO_IMAGE_BASE = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes";
 const ADMIN_PASSWORD_KEY = "dota-admin-password";
+const REQUIRED_DETAIL_FIELDS = [
+  "hero",
+  "position",
+  "kills",
+  "deaths",
+  "assists",
+  "participation",
+  "damageShare",
+  "gpm",
+  "xpm",
+  "netWorth10",
+  "damage",
+  "buildingDamage",
+  "damageTaken",
+  "healing"
+];
 const BALANCE_MODE_DESCRIPTIONS = {
   position: "尽量让同队选手的常用位置不重复。",
   combination: "优先减少老队友组合，让大家更常遇到新搭配。",
@@ -22,11 +38,49 @@ let selectedMatchPlayerId = null;
 let matchEntryTeams = { radiant: [], dire: [] };
 let editingMatchId = null;
 let recordSort = "rating";
-let dataSort = "damage";
+let recordSortDirection = "desc";
 let hasGeneratedTeams = false;
 let playerById = new Map();
 let statsByPlayerId = new Map();
 let dataStatsByPlayerId = new Map();
+let pendingExcelMatches = [];
+
+const dataSortState = {
+  basicData: { key: "rating", direction: "desc" },
+  advancedData: { key: "gpm", direction: "desc" }
+};
+
+const BASIC_DATA_COLUMNS = [
+  { key: "name", label: "昵称", sortLabel: "按昵称排序" },
+  { key: "rating", label: "评分", sortLabel: "按评分排序" },
+  { key: "kills", label: "场均击杀", sortLabel: "按场均击杀排序" },
+  { key: "deaths", label: "场均死亡", sortLabel: "按场均死亡排序" },
+  { key: "assists", label: "场均助攻", sortLabel: "按场均助攻排序" },
+  { key: "damage", label: "场均伤害量", sortLabel: "按场均伤害量排序" },
+  { key: "damageShare", label: "场均伤害占比", sortLabel: "按场均伤害占比排序", type: "percent" }
+];
+
+const ADVANCED_DATA_COLUMNS = [
+  { key: "name", label: "昵称", sortLabel: "按昵称排序" },
+  { key: "gpm", label: "场均 GPM", sortLabel: "按场均 GPM 排序" },
+  { key: "xpm", label: "场均 XPM", sortLabel: "按场均 XPM 排序" },
+  { key: "participation", label: "场均参战率", sortLabel: "按场均参战率排序", type: "percent" },
+  { key: "buildingDamage", label: "场均建筑伤害", sortLabel: "按场均建筑伤害排序" },
+  { key: "netWorth10", label: "场均10分钟经济", sortLabel: "按场均10分钟经济排序" },
+  { key: "damageTaken", label: "场均承受伤害", sortLabel: "按场均承受伤害排序" }
+];
+
+const RECORD_COLUMNS = [
+  { key: "name", label: "昵称", sortLabel: "按昵称排序" },
+  { key: "rating", label: "评分", sortLabel: "按评分排序" },
+  { key: "netWins", label: "胜负", sortLabel: "按胜负排序" },
+  { key: "games", label: "场次", sortLabel: "按场次排序" },
+  { key: "position-1", label: "一号位", sortLabel: "按一号位次数排序" },
+  { key: "position-2", label: "二号位", sortLabel: "按二号位次数排序" },
+  { key: "position-3", label: "三号位", sortLabel: "按三号位次数排序" },
+  { key: "position-4", label: "四号位", sortLabel: "按四号位次数排序" },
+  { key: "position-5", label: "五号位", sortLabel: "按五号位次数排序" }
+];
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -155,10 +209,17 @@ function createEmptyPlayerStats() {
 
 function createEmptyDataStats() {
   return {
+    kills: null,
+    deaths: null,
+    assists: null,
     gpm: null,
     xpm: null,
     netWorth10: null,
-    damage: null
+    damage: null,
+    buildingDamage: null,
+    damageTaken: null,
+    damageShare: null,
+    participation: null
   };
 }
 
@@ -177,6 +238,7 @@ function getMatchQualityLabel(quality) {
 
 function hasBasicMatchInfo(match) {
   const scoreParts = String(match.score || "").split("/").map((part) => part.trim());
+  const score = scoreParts[0] || "";
   return Boolean(
     match.date
     && Number(match.matchNo || 0) > 0
@@ -185,9 +247,7 @@ function hasBasicMatchInfo(match) {
     && match.radiant.length === 5
     && Array.isArray(match.dire)
     && match.dire.length === 5
-    && scoreParts.length === 2
-    && /^\d+\s*-\s*\d+$/.test(scoreParts[0])
-    && /^\d+\s*:\s*\d{1,2}$/.test(scoreParts[1])
+    && /^\d+\s*-\s*\d+$/.test(score)
   );
 }
 
@@ -197,15 +257,7 @@ function hasCompletePlayerDetails(match) {
 
   return ids.every((playerId) => {
     const detail = match.playerDetails?.[playerId] || {};
-    return Boolean(
-      !isBlank(detail.hero)
-      && POSITIONS.includes(String(detail.position || match.positions?.[playerId] || ""))
-      && hasNumericDetail(detail.gpm)
-      && hasNumericDetail(detail.xpm)
-      && hasNumericDetail(detail.netWorth10)
-      && hasNumericDetail(detail.damage)
-      && hasNumericDetail(detail.healing)
-    );
+    return isCompleteMatchDetail({ ...detail, position: detail.position || match.positions?.[playerId] || "" });
   });
 }
 
@@ -213,6 +265,20 @@ function hasNumericDetail(value) {
   if (isBlank(value)) return false;
   const number = Number(value);
   return Number.isFinite(number) && number >= 0;
+}
+
+function isCompleteDetailField(detail = {}, field) {
+  if (field === "hero") return !isBlank(detail.hero);
+  if (field === "position") return POSITIONS.includes(String(detail.position || ""));
+  return hasNumericDetail(detail[field]);
+}
+
+function isCompleteMatchDetail(detail = {}) {
+  return REQUIRED_DETAIL_FIELDS.every((field) => isCompleteDetailField(detail, field));
+}
+
+function renderEntryStatusIcon(isComplete, label) {
+  return `<span class="entry-status ${isComplete ? "is-complete" : "is-missing"}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}"></span>`;
 }
 
 function renderMatchQualityBadge(match) {
@@ -224,13 +290,36 @@ function rebuildDerivedStats() {
   playerById = new Map(db.players.map((player) => [player.id, player]));
   statsByPlayerId = new Map(db.players.map((player) => [player.id, createEmptyPlayerStats()]));
 
-  const dataTotals = new Map(db.players.map((player) => [player.id, { gpm: 0, xpm: 0, netWorth10: 0, damage: 0 }]));
-  const dataCounts = new Map(db.players.map((player) => [player.id, { gpm: 0, xpm: 0, netWorth10: 0, damage: 0 }]));
+  const dataTotals = new Map(db.players.map((player) => [player.id, {
+    kills: 0,
+    deaths: 0,
+    assists: 0,
+    gpm: 0,
+    xpm: 0,
+    netWorth10: 0,
+    damage: 0,
+    buildingDamage: 0,
+    damageTaken: 0,
+    damageShare: 0,
+    participation: 0
+  }]));
+  const dataCounts = new Map(db.players.map((player) => [player.id, {
+    kills: 0,
+    deaths: 0,
+    assists: 0,
+    gpm: 0,
+    xpm: 0,
+    netWorth10: 0,
+    damage: 0,
+    buildingDamage: 0,
+    damageTaken: 0,
+    damageShare: 0,
+    participation: 0
+  }]));
 
   db.matches.forEach((match) => {
     const quality = getMatchQuality(match);
     if (quality === "draft") return;
-    const hasFullData = quality === "complete";
 
     [
       ["radiant", match.radiant || []],
@@ -242,7 +331,6 @@ function rebuildDerivedStats() {
 
         stats.games += 1;
         if (match.winner === side) stats.wins += 1;
-        if (!hasFullData) return;
 
         const position = match.playerDetails?.[playerId]?.position || match.positions?.[playerId];
         if (POSITIONS.includes(position)) {
@@ -252,8 +340,6 @@ function rebuildDerivedStats() {
       });
     });
 
-    if (!hasFullData) return;
-
     Object.entries(match.playerDetails || {}).forEach(([playerId, detail]) => {
       const totals = dataTotals.get(playerId);
       const counts = dataCounts.get(playerId);
@@ -261,7 +347,7 @@ function rebuildDerivedStats() {
 
       Object.keys(totals).forEach((key) => {
         const value = Number(detail[key]);
-        if (!Number.isFinite(value) || value <= 0) return;
+        if (!Number.isFinite(value) || value < 0) return;
         totals[key] += value;
         counts[key] += 1;
       });
@@ -284,7 +370,12 @@ function rebuildDerivedStats() {
     return [
       player.id,
       Object.fromEntries(
-        Object.keys(totals).map((key) => [key, counts[key] ? Math.round(totals[key] / counts[key]) : null])
+        Object.keys(totals).map((key) => {
+          if (!counts[key]) return [key, null];
+          const average = totals[key] / counts[key];
+          const isPercent = key === "damageShare" || key === "participation";
+          return [key, isPercent ? Number(average.toFixed(3)) : Math.round(average)];
+        })
       )
     ];
   }));
@@ -365,8 +456,8 @@ function renderMiniRank(target, players, valueFormatter) {
 }
 
 function renderPlayers() {
-  $("#playersCountLabel").textContent = `${db.players.length} 人`;
   const body = $("#playersBody");
+  renderRecordHeader(body.closest("table"));
 
   if (!db.players.length) {
     body.innerHTML = `<tr><td colspan="5" class="muted">暂无选手</td></tr>`;
@@ -391,50 +482,129 @@ function renderPlayers() {
     .join("");
 }
 
-function renderRankings() {
-  const body = $("#rankingsBody");
+function renderRecordHeader(table) {
+  if (!table) return;
+  table.classList.add("record-table");
+  const header = table.querySelector("thead tr");
+  if (!header) return;
+  const positionColumns = RECORD_COLUMNS.filter((column) => column.key.startsWith("position-"));
+  header.innerHTML = `
+    ${RECORD_COLUMNS.slice(0, 4).map((column) => `
+      <th>
+        <button class="table-heading sort-heading" data-record-sort="${column.key}" type="button" aria-label="${escapeHtml(column.sortLabel)}">
+          <span>${escapeHtml(column.label)}</span>
+          <span class="sort-arrow ${recordSort === column.key ? "is-active" : ""}">${getRecordSortIcon(column.key)}</span>
+        </button>
+      </th>
+    `).join("")}
+    <th class="record-position-heading">
+      <span class="table-heading"><span>位置</span></span>
+      <span class="position-axis" aria-label="位置编号">
+        ${positionColumns.map((column) => `
+          <b>
+            <button class="position-sort-button" data-record-sort="${column.key}" type="button" aria-label="${escapeHtml(column.sortLabel)}">
+              <span>${escapeHtml(column.label)}</span>
+              <span class="sort-arrow ${recordSort === column.key ? "is-active" : ""}">${getRecordSortIcon(column.key)}</span>
+            </button>
+          </b>
+        `).join("")}
+      </span>
+    </th>
+  `;
+}
+
+function getRecordSortIcon(key) {
+  if (recordSort !== key) return "";
+  return recordSortDirection === "desc" ? "▾" : "▴";
+}
+
+function renderBasicData() {
+  renderDataTable("basicData", BASIC_DATA_COLUMNS, $("#basicDataBody"));
+}
+
+function renderAdvancedData() {
+  renderDataTable("advancedData", ADVANCED_DATA_COLUMNS, $("#advancedDataBody"));
+}
+
+function renderDataTable(viewId, columns, body) {
   if (!body) return;
+  renderDataHeader(body.closest("table"), columns, viewId);
 
   const players = db.players
     .map((player) => ({
       ...player,
       dataStats: getPlayerDataStats(player.id)
     }))
-    .sort(compareDataPlayers);
+    .sort((a, b) => compareDataPlayers(a, b, viewId));
 
   if (!players.length) {
-    body.innerHTML = `<tr><td colspan="5" class="muted">暂无选手</td></tr>`;
+    body.innerHTML = `<tr><td colspan="${columns.length}" class="muted">暂无选手</td></tr>`;
     return;
   }
 
   body.innerHTML = players
     .map((player) => `
       <tr>
-        <td><strong>${escapeHtml(player.name)}</strong></td>
-        <td>${formatAverage(player.dataStats.gpm)}</td>
-        <td>${formatAverage(player.dataStats.xpm)}</td>
-        <td>${formatAverage(player.dataStats.netWorth10)}</td>
-        <td>${formatAverage(player.dataStats.damage)}</td>
+        ${columns.map((column) => `<td>${renderDataCell(player, column)}</td>`).join("")}
       </tr>
     `)
     .join("");
 }
 
+function renderDataCell(player, column) {
+  if (column.key === "name") return `<strong>${escapeHtml(player.name)}</strong>`;
+  if (column.key === "rating") return formatRating(player.rating);
+  return formatAverage(player.dataStats[column.key], column.type);
+}
+
+function renderDataHeader(table, columns, viewId) {
+  if (!table) return;
+  table.classList.add("rankings-table");
+  const header = table.querySelector("thead tr");
+  if (!header) return;
+  const sortState = dataSortState[viewId];
+  header.innerHTML = columns
+    .map((column) => `
+      <th>
+        <button class="table-heading sort-heading" data-data-sort="${column.key}" type="button" aria-label="${escapeHtml(column.sortLabel)}">
+          <span>${escapeHtml(column.label)}</span>
+          <span class="sort-arrow ${sortState.key === column.key ? "is-active" : ""}">${sortState.key === column.key ? (sortState.direction === "desc" ? "▾" : "▴") : ""}</span>
+        </button>
+      </th>
+    `)
+    .join("");
+}
+
 function compareRecordPlayers(a, b) {
-  if (recordSort === "name") return a.name.localeCompare(b.name, "zh-Hans");
-  if (recordSort === "rating") return Number(b.rating || 0) - Number(a.rating || 0) || a.name.localeCompare(b.name, "zh-Hans");
-  if (recordSort === "netWins") return b.stats.netWins - a.stats.netWins || b.stats.wins - a.stats.wins || Number(b.rating || 0) - Number(a.rating || 0);
-  if (recordSort === "games") return b.stats.games - a.stats.games || b.stats.wins - a.stats.wins || Number(b.rating || 0) - Number(a.rating || 0);
+  const direction = recordSortDirection === "asc" ? 1 : -1;
+  if (recordSort === "name") return direction * a.name.localeCompare(b.name, "zh-Hans");
+  if (recordSort === "rating") return direction * (Number(a.rating || 0) - Number(b.rating || 0)) || a.name.localeCompare(b.name, "zh-Hans");
+  if (recordSort === "netWins") return direction * (a.stats.netWins - b.stats.netWins) || direction * (a.stats.wins - b.stats.wins) || direction * (Number(a.rating || 0) - Number(b.rating || 0)) || a.name.localeCompare(b.name, "zh-Hans");
+  if (recordSort === "games") return direction * (a.stats.games - b.stats.games) || direction * (a.stats.wins - b.stats.wins) || direction * (Number(a.rating || 0) - Number(b.rating || 0)) || a.name.localeCompare(b.name, "zh-Hans");
   if (recordSort.startsWith("position-")) {
     const position = recordSort.replace("position-", "");
-    return (b.positionStats.counts[position] || 0) - (a.positionStats.counts[position] || 0) || Number(b.rating || 0) - Number(a.rating || 0);
+    return direction * ((a.positionStats.counts[position] || 0) - (b.positionStats.counts[position] || 0)) || direction * (Number(a.rating || 0) - Number(b.rating || 0)) || a.name.localeCompare(b.name, "zh-Hans");
   }
   return 0;
 }
 
-function compareDataPlayers(a, b) {
-  if (dataSort === "name") return a.name.localeCompare(b.name, "zh-Hans");
-  return (b.dataStats[dataSort] || 0) - (a.dataStats[dataSort] || 0) || a.name.localeCompare(b.name, "zh-Hans");
+function compareDataPlayers(a, b, viewId) {
+  const sortState = dataSortState[viewId];
+  const direction = sortState.direction === "asc" ? 1 : -1;
+  if (sortState.key === "name") return direction * a.name.localeCompare(b.name, "zh-Hans");
+  const aValue = getDataSortValue(a, sortState.key);
+  const bValue = getDataSortValue(b, sortState.key);
+  const aMissing = aValue === null || aValue === undefined;
+  const bMissing = bValue === null || bValue === undefined;
+  if (aMissing && bMissing) return a.name.localeCompare(b.name, "zh-Hans");
+  if (aMissing) return 1;
+  if (bMissing) return -1;
+  return direction * (aValue - bValue) || a.name.localeCompare(b.name, "zh-Hans");
+}
+
+function getDataSortValue(player, key) {
+  if (key === "rating") return Number(player.rating || 0);
+  return player.dataStats[key];
 }
 
 function renderPicker() {
@@ -452,7 +622,7 @@ function renderPicker() {
         <input type="checkbox" value="${player.id}" ${selected.has(player.id) ? "checked" : ""} ${isFull && !selected.has(player.id) ? "disabled" : ""} />
         <span class="chip-meta">
           <strong>${escapeHtml(player.name)}</strong>
-          <span>评分 ${formatRating(player.rating)} · 主倾向 ${getPositionStats(player.id).main}</span>
+          <span>评分 ${formatRating(player.rating)}</span>
         </span>
       </label>
     `)
@@ -559,14 +729,15 @@ function renderSelectedTeam(teamName, side, ids) {
 function renderMatchPlayerButton(playerId) {
   const player = getPlayer(playerId);
   const detail = matchDetails[playerId] || {};
+  const isComplete = isCompleteMatchDetail(detail);
   const meta = [
     detail.position ? `${detail.position}号位` : "未选位置",
     detail.hero || "未选英雄"
   ].join(" · ");
 
   return `
-    <button class="match-player-button ${selectedMatchPlayerId === playerId ? "is-active" : ""}" data-match-player="${playerId}" type="button">
-      <strong>${renderPlayerNameWithHero(player?.name || "-", detail.hero)}</strong>
+    <button class="match-player-button ${selectedMatchPlayerId === playerId ? "is-active" : ""} ${isComplete ? "is-complete" : "is-incomplete"}" data-match-player="${playerId}" type="button">
+      <strong>${renderPlayerNameWithHero(player?.name || "-", detail.hero)}${renderEntryStatusIcon(isComplete, isComplete ? "数据已录入完整" : "仍有数据未录入")}</strong>
       <span>${escapeHtml(meta)}</span>
     </button>
   `;
@@ -579,16 +750,17 @@ function renderSelectedMatchDetail() {
 
   const player = getPlayer(selectedMatchPlayerId);
   const detail = matchDetails[selectedMatchPlayerId] || createEmptyDetail();
+  const isComplete = isCompleteMatchDetail(detail);
 
   editor.innerHTML = `
     <div class="detail-heading">
       <h4>${renderPlayerNameWithHero(player?.name || "-", detail.hero)}</h4>
-      <span>录入本场个人数据</span>
+      <span class="detail-entry-state">${renderEntryStatusIcon(isComplete, isComplete ? "个人数据已录入完整" : "个人数据未录入完整")}${isComplete ? "已录入完整" : "未录入完整"}</span>
     </div>
     <div class="detail-grid">
       <label>
         英雄选择
-        <input data-detail-field="hero" list="heroOptions" value="${escapeHtml(detail.hero)}" placeholder="例如：帕克" />
+        <input data-detail-field="hero" list="heroOptions" value="${escapeHtml(detail.hero)}" />
       </label>
       <label>
         位置
@@ -596,6 +768,32 @@ function renderSelectedMatchDetail() {
           <option value="">未选择</option>
           ${POSITIONS.map((position) => `<option value="${position}" ${detail.position === position ? "selected" : ""}>${position} 号位</option>`).join("")}
         </select>
+      </label>
+      <label>
+        击杀
+        <input data-detail-field="kills" type="number" min="0" step="1" value="${escapeHtml(detail.kills)}" />
+      </label>
+      <label>
+        死亡
+        <input data-detail-field="deaths" type="number" min="0" step="1" value="${escapeHtml(detail.deaths)}" />
+      </label>
+      <label>
+        助攻
+        <input data-detail-field="assists" type="number" min="0" step="1" value="${escapeHtml(detail.assists)}" />
+      </label>
+      <label>
+        参战率
+        <span class="input-suffix">
+          <input data-detail-field="participation" type="number" min="0" step="0.001" value="${escapeHtml(detail.participation)}" />
+          <span>%</span>
+        </span>
+      </label>
+      <label>
+        输出占比
+        <span class="input-suffix">
+          <input data-detail-field="damageShare" type="number" min="0" step="0.001" value="${escapeHtml(detail.damageShare)}" />
+          <span>%</span>
+        </span>
       </label>
       <label>
         GPM
@@ -614,15 +812,24 @@ function renderSelectedMatchDetail() {
         <input data-detail-field="damage" type="number" min="0" step="1" value="${escapeHtml(detail.damage)}" />
       </label>
       <label>
+        建筑伤害
+        <input data-detail-field="buildingDamage" type="number" min="0" step="1" value="${escapeHtml(detail.buildingDamage)}" />
+      </label>
+      <label>
+        承受伤害
+        <input data-detail-field="damageTaken" type="number" min="0" step="1" value="${escapeHtml(detail.damageTaken)}" />
+      </label>
+      <label>
         治疗量
         <input data-detail-field="healing" type="number" min="0" step="1" value="${escapeHtml(detail.healing)}" />
       </label>
       <label class="wide">
         特殊内容
-        <input data-detail-field="special" value="${escapeHtml(detail.special)}" placeholder="例如：买活翻盘、肉山关键团、MVP 表现" />
+        <input data-detail-field="special" value="${escapeHtml(detail.special)}" />
       </label>
     </div>
   `;
+  updateMatchEntryStatusIndicators();
 }
 
 function renderMatches() {
@@ -658,7 +865,7 @@ function renderAdminPlayers() {
       <tr>
         <td><strong>${escapeHtml(player.name)}</strong></td>
         <td>
-          <input class="rating-input" data-rating-input="${player.id}" type="number" min="0" max="10" step="0.5" value="${formatRating(player.rating)}" />
+          <input class="rating-input" data-rating-input="${player.id}" type="number" min="0" step="0.5" value="${formatRating(player.rating)}" />
         </td>
         <td>${formatDateTime(player.ratingUpdatedAt)}</td>
         <td>${escapeHtml(player.note || "-")}</td>
@@ -820,7 +1027,8 @@ function renderCurrentView() {
   const renderers = {
     dashboard: renderDashboard,
     players: renderPlayers,
-    rankings: renderRankings,
+    basicData: renderBasicData,
+    advancedData: renderAdvancedData,
     generator: renderGenerator,
     matches: renderMatches,
     data: renderAdmin
@@ -870,6 +1078,63 @@ function updateBalanceModeDescription() {
   target.innerHTML = `
     <p>${escapeHtml(BALANCE_MODE_DESCRIPTIONS[getBalanceMode()] || "")}</p>
   `;
+}
+
+function updateMatchEntryStatusIndicators() {
+  const currentDetail = selectedMatchPlayerId ? (matchDetails[selectedMatchPlayerId] || createEmptyDetail()) : {};
+  const isCurrentDetailComplete = isCompleteMatchDetail(currentDetail);
+  REQUIRED_DETAIL_FIELDS.forEach((field) => {
+    const input = $(`[data-detail-field="${field}"]`);
+    if (!input) return;
+    setEntryLabelStatus(input.closest("label"), isCompleteDetailField(currentDetail, field));
+  });
+
+  const detailState = $(".detail-entry-state");
+  if (detailState) {
+    detailState.innerHTML = `${renderEntryStatusIcon(isCurrentDetailComplete, isCurrentDetailComplete ? "个人数据已录入完整" : "个人数据未录入完整")}${isCurrentDetailComplete ? "已录入完整" : "未录入完整"}`;
+  }
+
+  const selectedButton = $$("[data-match-player]").find((button) => button.dataset.matchPlayer === selectedMatchPlayerId);
+  if (selectedButton) {
+    selectedButton.classList.toggle("is-complete", isCurrentDetailComplete);
+    selectedButton.classList.toggle("is-incomplete", !isCurrentDetailComplete);
+    const status = selectedButton.querySelector(".entry-status");
+    if (status) {
+      status.classList.toggle("is-complete", isCurrentDetailComplete);
+      status.classList.toggle("is-missing", !isCurrentDetailComplete);
+      status.title = isCurrentDetailComplete ? "数据已录入完整" : "仍有数据未录入";
+      status.setAttribute("aria-label", status.title);
+    }
+  }
+
+  const basicStatuses = [
+    ["#matchDate", !isBlank($("#matchDate")?.value)],
+    ["#matchNo", !isBlank($("#matchNo")?.value)],
+    ["#matchScoreRadiant", !isBlank($("#matchScoreRadiant")?.value) && !isBlank($("#matchScoreDire")?.value)],
+    ["#matchDurationMinutes", !isBlank($("#matchDurationMinutes")?.value) && !isBlank($("#matchDurationSeconds")?.value)],
+    ["#matchWinner", !isBlank($("#matchWinner")?.value)]
+  ];
+
+  basicStatuses.forEach(([selector, isComplete]) => {
+    setEntryLabelStatus($(selector)?.closest("label"), isComplete);
+  });
+}
+
+function setEntryLabelStatus(label, isComplete) {
+  if (!label) return;
+  label.classList.toggle("entry-field-complete", isComplete);
+  label.classList.toggle("entry-field-missing", !isComplete);
+
+  let status = label.querySelector(":scope > .entry-status");
+  if (!status) {
+    status = document.createElement("span");
+    status.className = "entry-status";
+    label.prepend(status);
+  }
+  status.classList.toggle("is-complete", isComplete);
+  status.classList.toggle("is-missing", !isComplete);
+  status.title = isComplete ? "已录入" : "未录入";
+  status.setAttribute("aria-label", status.title);
 }
 
 function getCurrentPositions() {
@@ -935,6 +1200,7 @@ function editMatch(matchId) {
   $("#matchForm").classList.remove("is-hidden");
   switchView("data");
   renderMatchEntryEditor();
+  revealMatchEntryPanel();
 }
 
 function resetMatchForm() {
@@ -951,14 +1217,33 @@ function resetMatchForm() {
   renderMatchEntryEditor();
 }
 
+function revealMatchEntryPanel() {
+  const entryPanel = $("#adminMatchEntryPanel");
+  const historyPanel = $("#adminMatchHistoryPanel");
+  if (entryPanel) entryPanel.open = true;
+  if (historyPanel) historyPanel.open = false;
+
+  requestAnimationFrame(() => {
+    entryPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+    $("#matchDate")?.focus({ preventScroll: true });
+  });
+}
+
 function createEmptyDetail() {
   return {
     hero: "",
     position: "",
+    kills: "",
+    deaths: "",
+    assists: "",
+    participation: "",
+    damageShare: "",
     gpm: "",
     xpm: "",
     netWorth10: "",
     damage: "",
+    buildingDamage: "",
+    damageTaken: "",
     healing: "",
     special: ""
   };
@@ -1006,6 +1291,11 @@ function canSaveMatchDraft() {
     const detail = matchDetails[playerId] || {};
     if (isBlank(detail.hero)) missingFields.push(`${playerName} 的英雄`);
     if (isBlank(detail.position)) missingFields.push(`${playerName} 的位置`);
+    if (isBlank(detail.kills)) missingFields.push(`${playerName} 的击杀`);
+    if (isBlank(detail.deaths)) missingFields.push(`${playerName} 的死亡`);
+    if (isBlank(detail.assists)) missingFields.push(`${playerName} 的助攻`);
+    if (isBlank(detail.participation)) missingFields.push(`${playerName} 的参战率`);
+    if (isBlank(detail.damageShare)) missingFields.push(`${playerName} 的输出占比`);
     if (isBlank(detail.gpm)) missingFields.push(`${playerName} 的 GPM`);
     if (isBlank(detail.xpm)) missingFields.push(`${playerName} 的 XPM`);
     if (isBlank(detail.netWorth10)) missingFields.push(`${playerName} 的 10分钟经济`);
@@ -1235,8 +1525,14 @@ function formatWinLoss(stats) {
   return stats.games ? `${stats.wins}胜${stats.losses}负` : "无记录";
 }
 
-function formatAverage(value) {
-  return value === null || value === undefined ? "-" : String(value);
+function formatAverage(value, type = "number") {
+  if (value === null || value === undefined) return "-";
+  if (type === "percent") {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "-";
+    return `${(number <= 1 ? number * 100 : number).toFixed(1)}%`;
+  }
+  return String(value);
 }
 
 function renderMatchDetailSummary(match) {
@@ -1249,10 +1545,17 @@ function renderMatchDetailSummary(match) {
       return `
         <tr>
           <td>${renderPlayerNameWithHero(player?.name || "-", detail.hero)}</td>
+          <td>${renderStatValue(detail.kills)}</td>
+          <td>${renderStatValue(detail.deaths)}</td>
+          <td>${renderStatValue(detail.assists)}</td>
+          <td>${renderPercentStat(detail.participation)}</td>
+          <td>${renderPercentStat(detail.damageShare)}</td>
           <td>${renderStatValue(detail.gpm)}</td>
           <td>${renderStatValue(detail.xpm)}</td>
           <td>${renderStatValue(detail.netWorth10)}</td>
           <td>${renderStatValue(detail.damage)}</td>
+          <td>${renderStatValue(detail.buildingDamage)}</td>
+          <td>${renderStatValue(detail.damageTaken)}</td>
           <td>${renderStatValue(detail.healing)}</td>
           <td>${escapeHtml(detail.special || "数据未录入")}</td>
         </tr>
@@ -1268,10 +1571,17 @@ function renderMatchDetailSummary(match) {
           <thead>
             <tr>
               <th>选手</th>
+              <th>击杀</th>
+              <th>死亡</th>
+              <th>助攻</th>
+              <th>参战率</th>
+              <th>输出占比</th>
               <th>GPM</th>
               <th>XPM</th>
               <th>10分钟经济</th>
               <th>伤害</th>
+              <th>建筑伤害</th>
+              <th>承受伤害</th>
               <th>治疗</th>
               <th>特殊内容</th>
             </tr>
@@ -1285,6 +1595,77 @@ function renderMatchDetailSummary(match) {
 
 function renderStatValue(value) {
   return value === "" || value === null || value === undefined ? `<span class="missing-data">数据未录入</span>` : escapeHtml(value);
+}
+
+function renderPercentStat(value) {
+  if (value === "" || value === null || value === undefined) return `<span class="missing-data">数据未录入</span>`;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return escapeHtml(value);
+  return `${(number <= 1 ? number * 100 : number).toFixed(1)}%`;
+}
+
+async function fileToBase64(file) {
+  const buffer = await file.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function renderExcelImportPreview(result) {
+  const target = $("#excelImportPreview");
+  if (!target) return;
+  pendingExcelMatches = result.matches || [];
+  const existingMatchKeys = new Set(db.matches.map((match) => matchKey(match)));
+
+  const errors = result.errors || [];
+  const warnings = result.warnings || [];
+  const rows = pendingExcelMatches.map((match, index) => {
+    const isDuplicate = existingMatchKeys.has(matchKey(match));
+    return `
+      <tr class="${isDuplicate ? "excel-duplicate-row" : ""}">
+        <td><input data-excel-match-index="${index}" type="checkbox" checked /></td>
+        <td>${escapeHtml(match.sheetName || "-")}</td>
+        <td>${escapeHtml(match.date || "-")}</td>
+        <td>${Number(match.matchNo || 1)}</td>
+        <td>${match.winner === "radiant" ? "天辉" : "夜魇"}</td>
+        <td>${escapeHtml(match.score || "-")}</td>
+        <td>${renderMatchQualityBadge(match)}${isDuplicate ? `<span class="duplicate-badge">已存在</span>` : ""}</td>
+      </tr>
+    `;
+  }).join("");
+
+  target.innerHTML = `
+    <div class="excel-preview-card">
+      <h4>Excel 导入预览</h4>
+      <p>识别到 ${pendingExcelMatches.length} 场比赛。缺少位置时会导入为空，之后可在比赛编辑里手动补。</p>
+      ${errors.length ? `<div class="excel-message error">${errors.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : ""}
+      ${warnings.length ? `<div class="excel-message warning">${warnings.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : ""}
+      ${rows ? `
+        <div class="table-wrap">
+          <table class="excel-preview-table">
+            <thead><tr><th>导入</th><th>Sheet</th><th>日期</th><th>场次</th><th>胜方</th><th>比分</th><th>状态</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      ` : ""}
+      <div class="button-row">
+        <button class="primary-button" id="confirmExcelImport" type="button" ${result.canImport ? "" : "disabled"}>确认导入 Excel 比赛</button>
+        <button class="secondary-button" id="clearExcelImport" type="button">取消预览</button>
+      </div>
+    </div>
+  `;
+}
+
+function matchKey(match) {
+  return `${match.date || ""}::${Number(match.matchNo || 1)}`;
+}
+
+function formatDuplicateMatchLabel(match) {
+  return `${formatShortMatchDate(match.date)}第${Number(match.matchNo || 1)}场`;
 }
 
 function escapeHtml(value) {
@@ -1316,20 +1697,34 @@ function bindEvents() {
     if (event.target.id === "matchDetailDialog") event.target.close();
   });
 
-  $("#rankingSort")?.addEventListener("change", renderRankings);
-
   $("#players").addEventListener("click", (event) => {
-    const sortKey = event.target.dataset.recordSort;
+    const sortButton = event.target.closest("[data-record-sort]");
+    const sortKey = sortButton?.dataset.recordSort;
     if (!sortKey) return;
-    recordSort = sortKey;
+    if (recordSort === sortKey) {
+      recordSortDirection = recordSortDirection === "desc" ? "asc" : "desc";
+    } else {
+      recordSort = sortKey;
+      recordSortDirection = "desc";
+    }
     renderPlayers();
   });
 
-  $("#rankings").addEventListener("click", (event) => {
-    const sortKey = event.target.dataset.dataSort;
+  ["#basicData", "#advancedData"].forEach((selector) => {
+    $(selector)?.addEventListener("click", (event) => {
+    const sortButton = event.target.closest("[data-data-sort]");
+    const sortKey = sortButton?.dataset.dataSort;
     if (!sortKey) return;
-    dataSort = sortKey;
-    renderRankings();
+    const viewId = event.currentTarget.id;
+    const sortState = dataSortState[viewId];
+    if (sortState.key === sortKey) {
+      sortState.direction = sortState.direction === "desc" ? "asc" : "desc";
+    } else {
+      sortState.key = sortKey;
+      sortState.direction = "desc";
+    }
+      viewId === "basicData" ? renderBasicData() : renderAdvancedData();
+    });
   });
 
   $("#playerForm").addEventListener("submit", async (event) => {
@@ -1369,6 +1764,7 @@ function bindEvents() {
 
   $("#matchDetailEditor").addEventListener("input", () => {
     updateSelectedDetailFromForm();
+    updateMatchEntryStatusIndicators();
   });
 
   $("#matchDetailEditor").addEventListener("change", () => {
@@ -1451,6 +1847,13 @@ function bindEvents() {
 
   $("#matchDate").valueAsDate = new Date();
 
+  $("#matchForm").addEventListener("input", () => {
+    updateSelectedDetailFromForm();
+    updateMatchEntryStatusIndicators();
+  });
+
+  $("#matchForm").addEventListener("change", updateMatchEntryStatusIndicators);
+
   $("#matchForm").addEventListener("submit", async (event) => {
     event.preventDefault();
 
@@ -1528,6 +1931,67 @@ function bindEvents() {
       alert(error.message || "导入失败，请确认文件是本工具导出的 JSON。");
     } finally {
       event.target.value = "";
+    }
+  });
+
+  $("#importExcelData")?.addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    try {
+      const result = await adminApi("/api/excel/preview", {
+        method: "POST",
+        body: JSON.stringify({
+          fileName: file.name,
+          fileBase64: await fileToBase64(file)
+        })
+      });
+      renderExcelImportPreview(result);
+    } catch (error) {
+      alert(error.message || "Excel 解析失败，请确认文件格式。");
+    } finally {
+      event.target.value = "";
+    }
+  });
+
+  $("#excelImportPreview")?.addEventListener("click", async (event) => {
+    if (event.target.id === "clearExcelImport") {
+      pendingExcelMatches = [];
+      $("#excelImportPreview").innerHTML = "";
+      return;
+    }
+
+    if (event.target.id !== "confirmExcelImport") return;
+    const selectedMatches = $$("[data-excel-match-index]:checked")
+      .map((input) => pendingExcelMatches[Number(input.dataset.excelMatchIndex)])
+      .filter(Boolean);
+    if (!selectedMatches.length) {
+      alert("请至少选择一场要导入的比赛。");
+      return;
+    }
+    const existingKeys = new Set(db.matches.map((match) => matchKey(match)));
+    const duplicates = selectedMatches.filter((match) => existingKeys.has(matchKey(match)));
+    if (duplicates.length) {
+      const duplicateText = duplicates
+        .map((match) => `已存在${formatDuplicateMatchLabel(match)}比赛`)
+        .join("\n");
+      if (!confirm(`${duplicateText}\n是否继续录入？`)) return;
+    }
+    if (!confirm(`确认导入选中的 ${selectedMatches.length} 场 Excel 比赛吗？`)) return;
+
+    try {
+      const result = await adminApi("/api/excel/import", {
+        method: "POST",
+        body: JSON.stringify({ matches: selectedMatches })
+      });
+      db = result.state;
+      rebuildDerivedStats();
+      pendingExcelMatches = [];
+      $("#excelImportPreview").innerHTML = "";
+      renderAll();
+      alert(`已导入 ${result.imported} 场比赛。`);
+    } catch (error) {
+      alert(error.details?.join("\n") || error.message);
     }
   });
 

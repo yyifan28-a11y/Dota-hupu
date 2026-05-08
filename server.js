@@ -5,6 +5,7 @@ import { dirname, extname, isAbsolute, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import crypto from "node:crypto";
+import * as XLSX from "xlsx";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const ENV = globalThis.process?.env || {};
@@ -99,7 +100,7 @@ function initDatabase() {
       db.exec(`
         UPDATE players
         SET rating = CASE
-          WHEN mmr IS NOT NULL AND mmr > 0 THEN MIN(10, MAX(0, mmr / 1000.0))
+          WHEN mmr IS NOT NULL AND mmr > 0 THEN MAX(0, mmr / 1000.0)
           WHEN rating IS NULL THEN 5
           ELSE rating
         END;
@@ -116,7 +117,7 @@ function initDatabase() {
     WHERE rating_updated_at IS NULL OR rating_updated_at = '';
 
     UPDATE players
-    SET rating = MIN(10, MAX(0, ROUND(rating * 2) / 2.0))
+    SET rating = MAX(0, ROUND(rating * 2) / 2.0)
     WHERE rating IS NOT NULL;
   `);
 
@@ -372,6 +373,36 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (method === "POST" && url.pathname === "/api/excel/preview") {
+    const body = await readJson(request);
+    const buffer = Buffer.from(String(body.fileBase64 || ""), "base64");
+    if (!buffer.length) {
+      sendJson(response, 400, { error: "请先选择 Excel 文件" });
+      return;
+    }
+
+    sendJson(response, 200, parseExcelMatches(buffer));
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/excel/import") {
+    const body = await readJson(request);
+    if (!Array.isArray(body.matches) || !body.matches.length) {
+      sendJson(response, 400, { error: "没有可导入的比赛" });
+      return;
+    }
+
+    const validation = validateExcelMatches(body.matches);
+    if (validation.errors.length) {
+      sendJson(response, 400, { error: "Excel 数据仍有错误，不能导入", details: validation.errors });
+      return;
+    }
+
+    insertMatches(validation.matches);
+    sendJson(response, 200, { imported: validation.matches.length, state: getState() });
+    return;
+  }
+
   if (method === "POST" && url.pathname === "/api/reset") {
     db.exec("DELETE FROM players; DELETE FROM matches;");
     saveTeams({ radiant: [], dire: [] });
@@ -594,6 +625,7 @@ function getMatchQuality(match) {
 
 function hasBasicMatchInfo(match) {
   const scoreParts = String(match.score || "").split("/").map((part) => part.trim());
+  const score = scoreParts[0] || "";
   return Boolean(
     match.date
     && Number(match.matchNo || match.match_no || 0) > 0
@@ -602,9 +634,7 @@ function hasBasicMatchInfo(match) {
     && match.radiant.length === 5
     && Array.isArray(match.dire)
     && match.dire.length === 5
-    && scoreParts.length === 2
-    && /^\d+\s*-\s*\d+$/.test(scoreParts[0])
-    && /^\d+\s*:\s*\d{1,2}$/.test(scoreParts[1])
+    && /^\d+\s*-\s*\d+$/.test(score)
   );
 }
 
@@ -617,10 +647,17 @@ function hasCompletePlayerDetails(match) {
     return Boolean(
       !isBlank(detail.hero)
       && ["1", "2", "3", "4", "5"].includes(String(detail.position || match.positions?.[playerId] || ""))
+      && hasNumericDetail(detail.kills)
+      && hasNumericDetail(detail.deaths)
+      && hasNumericDetail(detail.assists)
+      && hasNumericDetail(detail.participation)
+      && hasNumericDetail(detail.damageShare)
       && hasNumericDetail(detail.gpm)
       && hasNumericDetail(detail.xpm)
       && hasNumericDetail(detail.netWorth10)
       && hasNumericDetail(detail.damage)
+      && hasNumericDetail(detail.buildingDamage)
+      && hasNumericDetail(detail.damageTaken)
       && hasNumericDetail(detail.healing)
     );
   });
@@ -663,6 +700,219 @@ function pairKey(a, b) {
   return [a, b].sort().join("::");
 }
 
+function parseExcelMatches(buffer) {
+  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: false });
+  const players = getState().players;
+  const playerByName = new Map(players.map((player) => [normalizeName(player.name), player]));
+  const matches = [];
+  const errors = [];
+  const warnings = [];
+
+  workbook.SheetNames.forEach((sheetName) => {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+    if (!rows.length || sheetName === "选手工资") return;
+
+    const headers = rows[0].map((value) => String(value || "").trim());
+    if (!headers.includes("阵营") || !headers.includes("选手") || !headers.includes("英雄")) return;
+
+    const records = rows.slice(1)
+      .filter((row) => row.some((value) => String(value ?? "").trim() !== ""))
+      .map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index]])));
+
+    if (records.length !== 10) {
+      errors.push(`${sheetName}: 需要 10 行选手数据，当前是 ${records.length} 行`);
+      return;
+    }
+
+    const parsed = parseExcelMatchSheet(sheetName, records, playerByName);
+    matches.push(parsed.match);
+    errors.push(...parsed.errors);
+    warnings.push(...parsed.warnings);
+  });
+
+  return {
+    matches,
+    errors,
+    warnings,
+    canImport: matches.length > 0 && errors.length === 0
+  };
+}
+
+function parseExcelMatchSheet(sheetName, records, playerByName) {
+  const errors = [];
+  const warnings = [];
+  const first = records[0] || {};
+  const radiant = records.filter((record) => normalizeSide(record["阵营"]) === "radiant");
+  const dire = records.filter((record) => normalizeSide(record["阵营"]) === "dire");
+  const winnerRecord = records.find((record) => String(record["结果"] || "").trim() === "胜");
+  const winner = winnerRecord ? normalizeSide(winnerRecord["阵营"]) : "";
+  const date = normalizeExcelDate(first["日期"], sheetName);
+  const matchNo = Number(first["场次"] || sheetName.match(/-(\d+)$/)?.[1] || 1);
+  const radiantKills = getTeamKills(radiant);
+  const direKills = getTeamKills(dire);
+  const usedIds = new Set();
+
+  if (!date) errors.push(`${sheetName}: 无法识别日期`);
+  if (!winner) errors.push(`${sheetName}: 无法识别获胜方`);
+  if (radiant.length !== 5 || dire.length !== 5) {
+    errors.push(`${sheetName}: 天辉 ${radiant.length} 人，夜魇 ${dire.length} 人，需要各 5 人`);
+  }
+
+  const teams = {
+    radiant: radiant.map((record) => getExcelPlayerId(record, playerByName, usedIds, sheetName, errors)),
+    dire: dire.map((record) => getExcelPlayerId(record, playerByName, usedIds, sheetName, errors))
+  };
+  const playerDetails = {};
+
+  [...radiant, ...dire].forEach((record) => {
+    const player = playerByName.get(normalizeName(record["选手"]));
+    if (!player) return;
+    playerDetails[player.id] = {
+      hero: String(record["英雄"] || "").trim(),
+      position: normalizePosition(record["位置"]),
+      kills: numberOrBlank(record["K"]),
+      deaths: numberOrBlank(record["D"]),
+      assists: numberOrBlank(record["A"]),
+      participation: normalizeRatio(record["参战率"]),
+      damageShare: normalizeRatio(record["输出占比"]),
+      gpm: numberOrBlank(record["GPM"]),
+      xpm: numberOrBlank(record["XPM"]),
+      netWorth10: numberOrBlank(record["10分钟财产"]),
+      damage: numberOrBlank(record["英雄伤害"]),
+      buildingDamage: numberOrBlank(record["建筑伤害"]),
+      damageTaken: numberOrBlank(record["承受伤害"] || record["承伤减免前"]),
+      healing: numberOrBlank(record["治疗"]),
+      special: ""
+    };
+  });
+
+  if (!records.some((record) => Object.hasOwn(record, "位置"))) {
+    warnings.push(`${sheetName}: Excel 没有“位置”列，导入后需要手动补 1-5 号位`);
+  }
+
+  return {
+    match: {
+      sheetName,
+      date,
+      matchNo,
+      winner: winner || "radiant",
+      score: `${radiantKills}-${direKills}`,
+      note: `Excel导入：${sheetName}`,
+      radiant: teams.radiant.filter(Boolean),
+      dire: teams.dire.filter(Boolean),
+      positions: {},
+      playerDetails
+    },
+    errors,
+    warnings
+  };
+}
+
+function validateExcelMatches(matches) {
+  const errors = [];
+  const validIds = new Set(getState().players.map((player) => player.id));
+  const cleaned = [];
+
+  matches.forEach((match, index) => {
+    const label = match.sheetName || `第 ${index + 1} 场`;
+    const radiant = Array.isArray(match.radiant) ? match.radiant : [];
+    const dire = Array.isArray(match.dire) ? match.dire : [];
+    const ids = [...radiant, ...dire];
+
+    if (radiant.length !== 5 || dire.length !== 5) errors.push(`${label}: 需要天辉/夜魇各 5 人`);
+    if (new Set(ids).size !== ids.length) errors.push(`${label}: 有重复选手`);
+    ids.forEach((id) => {
+      if (!validIds.has(id)) errors.push(`${label}: 选手 ID 不存在 ${id}`);
+    });
+
+    const teams = { radiant, dire };
+    cleaned.push({
+      date: match.date || new Date().toISOString().slice(0, 10),
+      matchNo: Number(match.matchNo || 1),
+      winner: match.winner === "dire" ? "dire" : "radiant",
+      score: String(match.score || ""),
+      note: String(match.note || ""),
+      radiant,
+      dire,
+      positions: cleanPositions(match.positions || {}, teams),
+      playerDetails: cleanPlayerDetails(match.playerDetails || {}, teams)
+    });
+  });
+
+  return { errors, matches: cleaned };
+}
+
+function insertMatches(matches) {
+  const insert = db.prepare(`
+    INSERT INTO matches (id, date, match_no, winner, score, note, radiant, dire, positions, player_details, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  db.exec("BEGIN");
+  try {
+    matches.forEach((match) => {
+      insert.run(
+        crypto.randomUUID(),
+        match.date,
+        match.matchNo,
+        match.winner,
+        match.score,
+        match.note,
+        JSON.stringify(match.radiant),
+        JSON.stringify(match.dire),
+        JSON.stringify(match.positions),
+        JSON.stringify(match.playerDetails),
+        new Date().toISOString()
+      );
+    });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function getExcelPlayerId(record, playerByName, usedIds, sheetName, errors) {
+  const name = String(record["选手"] || "").trim();
+  const player = playerByName.get(normalizeName(name));
+  if (!player) {
+    errors.push(`${sheetName}: 选手不存在，请先新增：${name || "未命名选手"}`);
+    return "";
+  }
+  if (usedIds.has(player.id)) errors.push(`${sheetName}: 选手重复：${name}`);
+  usedIds.add(player.id);
+  return player.id;
+}
+
+function getTeamKills(records) {
+  const value = records.map((record) => Number(record["队伍击杀"])).find((number) => Number.isFinite(number));
+  return Number.isFinite(value) ? value : 0;
+}
+
+function normalizeSide(value) {
+  const text = String(value || "").trim();
+  if (text === "天辉" || text.toLowerCase() === "radiant") return "radiant";
+  if (text === "夜魇" || text.toLowerCase() === "dire") return "dire";
+  return "";
+}
+
+function normalizePosition(value) {
+  const text = String(value || "").trim();
+  return ["1", "2", "3", "4", "5"].includes(text) ? text : "";
+}
+
+function normalizeName(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeExcelDate(value, fallback) {
+  const raw = String(value || fallback?.match(/\d{6}/)?.[0] || "").trim();
+  const match = raw.match(/^(\d{2})(\d{2})(\d{2})$/);
+  if (match) return `20${match[1]}-${match[2]}-${match[3]}`;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+}
+
 function cleanPositions(positions, teams) {
   const validIds = new Set([...teams.radiant, ...teams.dire]);
   const cleaned = {};
@@ -683,10 +933,17 @@ function cleanPlayerDetails(details, teams) {
     cleaned[playerId] = {
       hero: String(detail.hero || "").trim(),
       position: ["1", "2", "3", "4", "5"].includes(String(detail.position)) ? String(detail.position) : "",
+      kills: numberOrBlank(detail.kills),
+      deaths: numberOrBlank(detail.deaths),
+      assists: numberOrBlank(detail.assists),
+      participation: normalizeRatio(detail.participation),
+      damageShare: normalizeRatio(detail.damageShare),
       gpm: numberOrBlank(detail.gpm),
       xpm: numberOrBlank(detail.xpm),
       netWorth10: numberOrBlank(detail.netWorth10),
       damage: numberOrBlank(detail.damage),
+      buildingDamage: numberOrBlank(detail.buildingDamage),
+      damageTaken: numberOrBlank(detail.damageTaken),
       healing: numberOrBlank(detail.healing),
       special: String(detail.special || "").trim()
     };
@@ -701,10 +958,21 @@ function numberOrBlank(value) {
   return Number.isFinite(number) ? number : "";
 }
 
+function normalizeRatio(value) {
+  if (value === "" || value === null || value === undefined) return "";
+  if (typeof value === "string" && value.trim().endsWith("%")) {
+    const percent = Number(value.trim().slice(0, -1));
+    return Number.isFinite(percent) ? percent / 100 : "";
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  return number > 1 ? number / 100 : number;
+}
+
 function clampRating(value) {
   const rating = Number(value);
   if (!Number.isFinite(rating)) return 5;
-  return Math.max(0, Math.min(10, Math.round(rating * 2) / 2));
+  return Math.max(0, Math.round(rating * 2) / 2);
 }
 
 function parseJsonArray(value) {

@@ -7,6 +7,9 @@
     "start": "node server.js",
     "seed:demo": "node scripts/seed-demo.js"
   },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  },
   "engines": {
     "node": ">=24.0.0"
   }
