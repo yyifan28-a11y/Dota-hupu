@@ -124,5 +124,6 @@ window.DOTA_HEROES = [
   { slug: "primal_beast", cn: "兽", name: "Primal Beast", aliases: ["兽", "大牛头"] },
   { slug: "muerta", cn: "琼英碧灵", name: "Muerta", aliases: ["女枪"] },
   { slug: "ringmaster", cn: "百戏大王", name: "Ringmaster", aliases: ["马戏团"] },
-  { slug: "kez", cn: "凯", name: "Kez", aliases: ["凯"] }
+  { slug: "kez", cn: "凯", name: "Kez", aliases: ["凯"] },
+  { slug: "largo", cn: "朗戈", name: "Largo", aliases: ["朗戈"] }
 ];

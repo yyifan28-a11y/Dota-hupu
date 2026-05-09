@@ -43,6 +43,9 @@ let hasGeneratedTeams = false;
 let playerById = new Map();
 let statsByPlayerId = new Map();
 let dataStatsByPlayerId = new Map();
+let heroUsageByPlayerId = new Map();
+let heroRankStats = [];
+let pairRankStats = { teammate: [], opponent: [] };
 let pendingExcelMatches = [];
 
 const dataSortState = {
@@ -223,6 +226,82 @@ function createEmptyDataStats() {
   };
 }
 
+function getHeroIdentity(heroName) {
+  const name = String(heroName || "").trim();
+  const hero = findHero(name);
+  return {
+    key: hero?.slug || normalizeHeroName(name),
+    name: hero?.cn || name,
+    originalName: name
+  };
+}
+
+function addHeroUsage(playerId, heroName) {
+  const usage = heroUsageByPlayerId.get(playerId);
+  if (!usage) return;
+  const identity = getHeroIdentity(heroName);
+  if (!identity.key) return;
+  const current = usage.get(identity.key) || { ...identity, count: 0 };
+  current.count += 1;
+  usage.set(identity.key, current);
+}
+
+function addHeroRankGame(heroStatsByKey, heroName, isWin) {
+  const identity = getHeroIdentity(heroName);
+  if (!identity.key) return;
+  const stats = heroStatsByKey.get(identity.key) || {
+    ...identity,
+    games: 0,
+    wins: 0
+  };
+  stats.games += 1;
+  if (isWin) stats.wins += 1;
+  heroStatsByKey.set(identity.key, stats);
+}
+
+function addTeammatePair(pairStatsByKey, a, b, isWin) {
+  const key = pairStatKey(a, b);
+  const stats = pairStatsByKey.get(key) || {
+    key,
+    players: key.split("::"),
+    games: 0,
+    wins: 0
+  };
+  stats.games += 1;
+  if (isWin) stats.wins += 1;
+  pairStatsByKey.set(key, stats);
+}
+
+function pairStatKey(a, b) {
+  return [a, b].sort().join("::");
+}
+
+function addOpponentPair(pairStatsByKey, playerId, opponentId, isWin) {
+  const key = `${playerId}::${opponentId}`;
+  const stats = pairStatsByKey.get(key) || {
+    key,
+    playerId,
+    opponentId,
+    games: 0,
+    wins: 0
+  };
+  stats.games += 1;
+  if (isWin) stats.wins += 1;
+  pairStatsByKey.set(key, stats);
+}
+
+function finalizePairStats(stats) {
+  return Array.from(stats.values()).map((item) => {
+    const losses = item.games - item.wins;
+    return {
+      ...item,
+      losses,
+      netWins: item.wins - losses,
+      winrate: item.games ? item.wins / item.games : 0
+    };
+  });
+}
+
 function getMatchQuality(match) {
   if (!hasBasicMatchInfo(match)) return "draft";
   return hasCompletePlayerDetails(match) ? "complete" : "basic";
@@ -289,6 +368,10 @@ function renderMatchQualityBadge(match) {
 function rebuildDerivedStats() {
   playerById = new Map(db.players.map((player) => [player.id, player]));
   statsByPlayerId = new Map(db.players.map((player) => [player.id, createEmptyPlayerStats()]));
+  heroUsageByPlayerId = new Map(db.players.map((player) => [player.id, new Map()]));
+  const heroStatsByKey = new Map();
+  const teammateStatsByKey = new Map();
+  const opponentStatsByKey = new Map();
 
   const dataTotals = new Map(db.players.map((player) => [player.id, {
     kills: 0,
@@ -325,18 +408,38 @@ function rebuildDerivedStats() {
       ["radiant", match.radiant || []],
       ["dire", match.dire || []]
     ].forEach(([side, ids]) => {
+      const isWin = match.winner === side;
       ids.forEach((playerId) => {
         const stats = statsByPlayerId.get(playerId);
         if (!stats) return;
 
         stats.games += 1;
-        if (match.winner === side) stats.wins += 1;
+        if (isWin) stats.wins += 1;
 
         const position = match.playerDetails?.[playerId]?.position || match.positions?.[playerId];
         if (POSITIONS.includes(position)) {
           stats.positionStats.counts[position] += 1;
           stats.positionStats.total += 1;
         }
+
+        const heroName = match.playerDetails?.[playerId]?.hero;
+        if (!isBlank(heroName)) {
+          addHeroUsage(playerId, heroName);
+          addHeroRankGame(heroStatsByKey, heroName, isWin);
+        }
+      });
+
+      for (let index = 0; index < ids.length; index += 1) {
+        for (let nextIndex = index + 1; nextIndex < ids.length; nextIndex += 1) {
+          addTeammatePair(teammateStatsByKey, ids[index], ids[nextIndex], isWin);
+        }
+      }
+    });
+
+    (match.radiant || []).forEach((radiantId) => {
+      (match.dire || []).forEach((direId) => {
+        addOpponentPair(opponentStatsByKey, radiantId, direId, match.winner === "radiant");
+        addOpponentPair(opponentStatsByKey, direId, radiantId, match.winner === "dire");
       });
     });
 
@@ -379,6 +482,19 @@ function rebuildDerivedStats() {
       )
     ];
   }));
+  heroRankStats = Array.from(heroStatsByKey.values()).map((hero) => {
+    const losses = hero.games - hero.wins;
+    return {
+      ...hero,
+      losses,
+      netWins: hero.wins - losses,
+      winrate: hero.games ? hero.wins / hero.games : 0
+    };
+  });
+  pairRankStats = {
+    teammate: finalizePairStats(teammateStatsByKey),
+    opponent: finalizePairStats(opponentStatsByKey)
+  };
 }
 
 function sumRating(ids) {
@@ -524,6 +640,189 @@ function renderBasicData() {
 
 function renderAdvancedData() {
   renderDataTable("advancedData", ADVANCED_DATA_COLUMNS, $("#advancedDataBody"));
+}
+
+function renderHeroes() {
+  renderPlayerHeroUsage();
+  renderHeroRankings();
+}
+
+function renderPlayerHeroUsage() {
+  const target = $("#playerHeroUsageList");
+  if (!target) return;
+
+  const players = db.players
+    .map((player) => {
+      const heroes = Array.from(heroUsageByPlayerId.get(player.id)?.values() || [])
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-Hans"));
+      const total = heroes.reduce((sum, hero) => sum + hero.count, 0);
+      return { ...player, heroes, total };
+    })
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, "zh-Hans"));
+
+  const rows = players.filter((player) => player.total > 0);
+  if (!rows.length) {
+    target.innerHTML = `<p class="muted">暂无英雄记录</p>`;
+    return;
+  }
+
+  target.innerHTML = rows
+    .map((player) => `
+      <article class="hero-usage-row">
+        <strong>${escapeHtml(player.name)}</strong>
+        <div class="hero-usage-groups">
+          ${player.heroes.map(renderHeroUsageGroup).join("")}
+        </div>
+      </article>
+    `)
+    .join("");
+}
+
+function renderHeroUsageGroup(hero) {
+  const avatars = Array.from({ length: hero.count }, () => renderHeroUsageAvatar(hero.name)).join("");
+  return `
+    <span class="hero-usage-group" title="${escapeHtml(hero.name)} ${hero.count} 次" aria-label="${escapeHtml(hero.name)} ${hero.count} 次">
+      <span class="hero-usage-avatars">${avatars}</span>
+    </span>
+  `;
+}
+
+function renderHeroUsageAvatar(heroName) {
+  const avatar = renderHeroAvatar(heroName);
+  if (avatar) return avatar;
+  return `<span class="hero-avatar hero-avatar-fallback">${escapeHtml(String(heroName || "-").slice(0, 1))}</span>`;
+}
+
+function renderHeroRankings() {
+  const target = $("#heroRankGrid");
+  if (!target) return;
+  const rankedHeroes = heroRankStats.filter((hero) => hero.games > 0);
+  const boards = [
+    {
+      title: "胜率最高",
+      heroes: [...rankedHeroes].sort((a, b) => b.winrate - a.winrate || b.games - a.games || b.netWins - a.netWins),
+      value: (hero) => `${Math.round(hero.winrate * 100)}%`
+    },
+    {
+      title: "净胜最高",
+      heroes: [...rankedHeroes].sort((a, b) => b.netWins - a.netWins || b.winrate - a.winrate || b.games - a.games),
+      value: (hero) => `${hero.netWins > 0 ? "+" : ""}${hero.netWins}`
+    },
+    {
+      title: "总场次最高",
+      heroes: [...rankedHeroes].sort((a, b) => b.games - a.games || b.wins - a.wins || a.name.localeCompare(b.name, "zh-Hans")),
+      value: (hero) => `${hero.games} 场`
+    },
+    {
+      title: "胜率最低",
+      heroes: [...rankedHeroes].sort((a, b) => a.winrate - b.winrate || b.games - a.games || a.netWins - b.netWins),
+      value: (hero) => `${Math.round(hero.winrate * 100)}%`
+    },
+    {
+      title: "净负最高",
+      heroes: [...rankedHeroes].sort((a, b) => a.netWins - b.netWins || a.winrate - b.winrate || b.games - a.games),
+      value: (hero) => `${hero.netWins}`
+    }
+  ];
+
+  target.innerHTML = boards.map(renderHeroRankCard).join("");
+}
+
+function renderHeroRankCard(board) {
+  const heroes = board.heroes.slice(0, 5);
+  return `
+    <section class="panel hero-rank-card">
+      <div class="panel-header">
+        <h3>${escapeHtml(board.title)}</h3>
+      </div>
+      ${heroes.length ? `
+        <ol class="hero-rank-list">
+          ${heroes.map((hero) => `
+            <li>
+              <span class="hero-rank-main">
+                ${renderHeroUsageAvatar(hero.name)}
+                <span>
+                  <em>${hero.wins}-${hero.losses}</em>
+                </span>
+              </span>
+              <b>${escapeHtml(board.value(hero))}</b>
+            </li>
+          `).join("")}
+        </ol>
+      ` : `<p class="muted">暂无数据</p>`}
+    </section>
+  `;
+}
+
+function renderRelations() {
+  const target = $("#pairRankGrid");
+  if (!target) return;
+  const teammatePairs = pairRankStats.teammate.filter((pair) => pair.games > 0);
+  const opponentPairs = pairRankStats.opponent.filter((pair) => pair.games > 0);
+  const boards = [
+    {
+      title: "队友胜率最高",
+      pairs: sortPairsByWinrate(teammatePairs, "desc"),
+      type: "teammate"
+    },
+    {
+      title: "队友胜率最低",
+      pairs: sortPairsByWinrate(teammatePairs, "asc"),
+      type: "teammate"
+    },
+    {
+      title: "对手胜率最高",
+      pairs: sortPairsByWinrate(opponentPairs, "desc"),
+      type: "opponent"
+    },
+    {
+      title: "对手胜率最低",
+      pairs: sortPairsByWinrate(opponentPairs, "asc"),
+      type: "opponent"
+    }
+  ];
+
+  target.innerHTML = boards.map(renderPairRankCard).join("");
+}
+
+function sortPairsByWinrate(pairs, direction) {
+  const multiplier = direction === "asc" ? 1 : -1;
+  return [...pairs].sort((a, b) => {
+    const winrateDiff = multiplier * (a.winrate - b.winrate);
+    if (winrateDiff) return winrateDiff;
+    return b.games - a.games || b.netWins - a.netWins || formatPairNames(a).localeCompare(formatPairNames(b), "zh-Hans");
+  });
+}
+
+function renderPairRankCard(board) {
+  const pairs = board.pairs.slice(0, 5);
+  return `
+    <section class="panel pair-rank-card">
+      <div class="panel-header">
+        <h3>${escapeHtml(board.title)}</h3>
+      </div>
+      ${pairs.length ? `
+        <ol class="pair-rank-list">
+          ${pairs.map((pair) => `
+            <li>
+              <span class="pair-rank-main">
+                <strong>${escapeHtml(formatPairNames(pair, board.type))}</strong>
+                <em>${pair.wins}-${pair.losses}</em>
+              </span>
+              <b>${Math.round(pair.winrate * 100)}%</b>
+            </li>
+          `).join("")}
+        </ol>
+      ` : `<p class="muted">暂无数据</p>`}
+    </section>
+  `;
+}
+
+function formatPairNames(pair, type = "teammate") {
+  if (type === "opponent") {
+    return `${getPlayer(pair.playerId)?.name || "-"} vs ${getPlayer(pair.opponentId)?.name || "-"}`;
+  }
+  return (pair.players || []).map((id) => getPlayer(id)?.name || "-").join(" + ");
 }
 
 function renderDataTable(viewId, columns, body) {
@@ -1033,6 +1332,8 @@ function renderCurrentView() {
     players: renderPlayers,
     basicData: renderBasicData,
     advancedData: renderAdvancedData,
+    heroes: renderHeroes,
+    relations: renderRelations,
     generator: renderGenerator,
     matches: renderMatches,
     data: renderAdmin
@@ -1049,10 +1350,15 @@ function renderTendency(playerId) {
     <div class="tendency" title="共 ${stats.total} 场有位置记录">
       ${POSITIONS.map((position) => {
         const count = stats.counts[position];
-        const dots = Array.from({ length: Math.min(count, 12) }, () => `<i class="position-dot position-dot-${position}" title="${position}号位"></i>`).join("");
+        const tens = Math.floor(count / 10);
+        const ones = count % 10;
+        const balls = [
+          ...Array.from({ length: tens }, () => `<i class="position-dot position-dot-${position} position-dot-ten" title="${position}号位 10 次">10</i>`),
+          ...Array.from({ length: ones }, () => `<i class="position-dot position-dot-${position}" title="${position}号位"></i>`)
+        ].join("");
         return `
           <span class="position-zone" title="${position}号位 ${count} 次">
-            <span class="position-balls">${dots}</span>
+            <span class="position-balls">${balls}</span>
           </span>
         `;
       }).join("")}

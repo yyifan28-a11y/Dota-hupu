@@ -22,6 +22,8 @@
           <button class="nav-tab" data-view="players" type="button">战绩</button>
           <button class="nav-tab" data-view="basicData" type="button">基础数据</button>
           <button class="nav-tab" data-view="advancedData" type="button">高阶数据</button>
+          <button class="nav-tab" data-view="heroes" type="button">英雄</button>
+          <button class="nav-tab" data-view="relations" type="button">队友对手</button>
           <button class="nav-tab" data-view="generator" type="button">对阵生成器</button>
           <button class="nav-tab" data-view="matches" type="button">比赛</button>
           <button class="nav-tab admin-nav-tab" data-view="data" type="button">
@@ -153,6 +155,35 @@
               </table>
             </div>
           </section>
+        </section>
+
+        <section class="view" id="heroes">
+          <div class="page-heading">
+            <div>
+              <h2>英雄</h2>
+              <p>查看每位选手的英雄使用记录和英雄榜。</p>
+            </div>
+          </div>
+
+          <section class="hero-rank-grid" id="heroRankGrid"></section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>选手英雄统计</h3>
+            </div>
+            <div id="playerHeroUsageList" class="hero-usage-list"></div>
+          </section>
+        </section>
+
+        <section class="view" id="relations">
+          <div class="page-heading">
+            <div>
+              <h2>队友对手</h2>
+              <p>查看同队组合和对位关系的胜率表现。</p>
+            </div>
+          </div>
+
+          <section class="pair-rank-grid" id="pairRankGrid"></section>
         </section>
 
         <section class="view" id="generator">
