@@ -1361,7 +1361,7 @@ select:focus {
 
 .hero-usage-row {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
+  grid-template-columns: 138px minmax(0, 1fr);
   align-items: start;
   gap: 14px;
   padding: 12px 0;
@@ -1374,8 +1374,31 @@ select:focus {
 }
 
 .hero-usage-row > strong {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 8px;
   padding-top: 4px;
   color: var(--ink);
+}
+
+.hero-usage-row > strong em {
+  overflow: hidden;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hero-usage-row > strong span {
+  display: inline-grid;
+  min-width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--green-dark);
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .hero-usage-groups {
@@ -1495,7 +1518,19 @@ select:focus {
   white-space: nowrap;
 }
 
+.pair-vs-icon {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  margin: 0 3px;
+  vertical-align: -1px;
+  background: currentColor;
+  clip-path: polygon(48% 0, 62% 0, 62% 55%, 82% 55%, 82% 70%, 62% 70%, 62% 100%, 48% 100%, 48% 70%, 18% 70%, 18% 55%, 48% 55%);
+  transform: rotate(45deg);
+}
+
 .pair-rank-main em {
+  min-height: 17px;
   color: var(--muted);
   font-size: 12px;
   font-style: normal;

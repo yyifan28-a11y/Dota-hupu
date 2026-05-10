@@ -656,7 +656,7 @@ function renderPlayerHeroUsage() {
       const heroes = Array.from(heroUsageByPlayerId.get(player.id)?.values() || [])
         .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-Hans"));
       const total = heroes.reduce((sum, hero) => sum + hero.count, 0);
-      return { ...player, heroes, total };
+      return { ...player, heroes, uniqueHeroCount: heroes.length, total };
     })
     .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, "zh-Hans"));
 
@@ -669,7 +669,7 @@ function renderPlayerHeroUsage() {
   target.innerHTML = rows
     .map((player) => `
       <article class="hero-usage-row">
-        <strong>${escapeHtml(player.name)}</strong>
+        <strong><em>${escapeHtml(player.name)}</em><span>${player.uniqueHeroCount}</span></strong>
         <div class="hero-usage-groups">
           ${player.heroes.map(renderHeroUsageGroup).join("")}
         </div>
@@ -761,24 +761,21 @@ function renderRelations() {
   const opponentPairs = pairRankStats.opponent.filter((pair) => pair.games > 0);
   const boards = [
     {
-      title: "队友胜率最高",
+      title: "最佳挚友",
       pairs: sortPairsByWinrate(teammatePairs, "desc"),
       type: "teammate"
     },
     {
-      title: "队友胜率最低",
+      title: "卧龙凤雏",
       pairs: sortPairsByWinrate(teammatePairs, "asc"),
       type: "teammate"
     },
     {
-      title: "对手胜率最高",
+      title: "爆杀榜",
       pairs: sortPairsByWinrate(opponentPairs, "desc"),
-      type: "opponent"
-    },
-    {
-      title: "对手胜率最低",
-      pairs: sortPairsByWinrate(opponentPairs, "asc"),
-      type: "opponent"
+      type: "opponent",
+      value: (pair) => `${pair.wins}-${pair.losses}`,
+      hideRecord: true
     }
   ];
 
@@ -806,10 +803,10 @@ function renderPairRankCard(board) {
           ${pairs.map((pair) => `
             <li>
               <span class="pair-rank-main">
-                <strong>${escapeHtml(formatPairNames(pair, board.type))}</strong>
-                <em>${pair.wins}-${pair.losses}</em>
+                <strong>${renderPairNames(pair, board.type)}</strong>
+                <em>${board.hideRecord ? "&nbsp;" : `${pair.wins}-${pair.losses}`}</em>
               </span>
-              <b>${Math.round(pair.winrate * 100)}%</b>
+              <b>${escapeHtml(board.value ? board.value(pair) : `${Math.round(pair.winrate * 100)}%`)}</b>
             </li>
           `).join("")}
         </ol>
@@ -823,6 +820,13 @@ function formatPairNames(pair, type = "teammate") {
     return `${getPlayer(pair.playerId)?.name || "-"} vs ${getPlayer(pair.opponentId)?.name || "-"}`;
   }
   return (pair.players || []).map((id) => getPlayer(id)?.name || "-").join(" + ");
+}
+
+function renderPairNames(pair, type = "teammate") {
+  if (type === "opponent") {
+    return `${escapeHtml(getPlayer(pair.playerId)?.name || "-")} <span class="pair-vs-icon" aria-label="对阵" title="对阵"></span> ${escapeHtml(getPlayer(pair.opponentId)?.name || "-")}`;
+  }
+  return escapeHtml(formatPairNames(pair, type));
 }
 
 function renderDataTable(viewId, columns, body) {
@@ -1939,7 +1943,7 @@ function renderExcelImportPreview(result) {
     const isDuplicate = existingMatchKeys.has(matchKey(match));
     return `
       <tr class="${isDuplicate ? "excel-duplicate-row" : ""}">
-        <td><input data-excel-match-index="${index}" type="checkbox" checked /></td>
+        <td><input data-excel-match-index="${index}" type="checkbox" ${isDuplicate ? "" : "checked"} /></td>
         <td>${escapeHtml(match.sheetName || "-")}</td>
         <td>${escapeHtml(match.date || "-")}</td>
         <td>${Number(match.matchNo || 1)}</td>
