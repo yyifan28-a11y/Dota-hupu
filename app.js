@@ -106,7 +106,9 @@ async function api(path, options = {}) {
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || `请求失败：${response.status}`);
+    const error = new Error(payload.error || `请求失败：${response.status}`);
+    Object.assign(error, payload);
+    throw error;
   }
 
   if (response.status === 204) return null;
@@ -117,8 +119,8 @@ async function adminApi(path, options = {}) {
   let password = sessionStorage.getItem(ADMIN_PASSWORD_KEY);
   const hadStoredPassword = Boolean(password);
   if (!password) {
-    password = $("#adminPasswordInput")?.value || prompt("请输入管理员密码");
-    if (!password) throw new Error("已取消操作");
+    password = $("#adminPasswordInput")?.value;
+    if (!password) throw new Error("请先在“数据”页的管理员入口输入密码并进入管理员模式。");
   }
 
   try {
@@ -1751,7 +1753,7 @@ async function saveTeams() {
     return;
   }
 
-  db.currentTeams = await adminApi("/api/teams", {
+  db.currentTeams = await api("/api/teams", {
     method: "POST",
     body: JSON.stringify({
       ids,
@@ -1762,6 +1764,21 @@ async function saveTeams() {
   hasGeneratedTeams = true;
   renderPicker();
   renderTeams();
+}
+
+function formatTeamGenerationError(error) {
+  const details = error.details || {};
+  const parts = [error.message];
+  if (Number.isFinite(details.validPlayerCount) && details.validPlayerCount !== 10) {
+    parts.push(`有效选手数：${details.validPlayerCount}/10。`);
+  }
+  if (Number.isFinite(details.afterConstraints) && details.afterConstraints === 0) {
+    parts.push("当前分队预设互相冲突，所有组合都被过滤了。");
+  }
+  if (Number.isFinite(details.afterConstraints) && details.afterConstraints > 0 && details.withinRatingLimit === 0) {
+    parts.push(`预设内共有 ${details.afterConstraints} 种组合，但最接近的评分差是 ${formatRating(details.bestDiff)}，仍大于 1。`);
+  }
+  return parts.join("\n");
 }
 
 function renderConstraintOptions() {
@@ -2047,23 +2064,38 @@ async function fileToBase64(file) {
 function renderExcelImportPreview(result) {
   const target = $("#excelImportPreview");
   if (!target) return;
-  pendingExcelMatches = result.matches || [];
   const existingMatchKeys = new Set(db.matches.map((match) => matchKey(match)));
+  pendingExcelMatches = sortExcelPreviewMatches(result.matches || [], existingMatchKeys);
 
   const errors = result.errors || [];
   const warnings = result.warnings || [];
   const rows = pendingExcelMatches.map((match, index) => {
     const isDuplicate = existingMatchKeys.has(matchKey(match));
+    const hasMissingPlayers = Array.isArray(match.missingPlayers) && match.missingPlayers.length > 0;
+    const importErrors = Array.isArray(match.importErrors) ? match.importErrors : [];
+    const hasImportErrors = importErrors.length > 0;
+    const shouldCheck = !isDuplicate && !hasMissingPlayers && !hasImportErrors;
+    const rowMessages = [
+      ...importErrors,
+      ...(Array.isArray(match.missingPlayers) && match.missingPlayers.length
+        ? [`缺少选手：${match.missingPlayers.join("、")}`]
+        : [])
+    ];
     return `
-      <tr class="${isDuplicate ? "excel-duplicate-row" : ""}">
-        <td><input data-excel-match-index="${index}" type="checkbox" ${isDuplicate ? "" : "checked"} /></td>
+      <tr class="${isDuplicate || hasMissingPlayers || hasImportErrors ? "excel-duplicate-row" : ""}">
+        <td><input data-excel-match-index="${index}" type="checkbox" ${shouldCheck ? "checked" : ""} ${hasMissingPlayers || hasImportErrors ? "disabled" : ""} /></td>
         <td>${escapeHtml(match.sheetName || "-")}</td>
         <td>${escapeHtml(match.date || "-")}</td>
         <td>${Number(match.matchNo || 1)}</td>
         <td>${escapeHtml(match.matchId || "-")}</td>
         <td>${match.winner === "radiant" ? "天辉" : "夜魇"}</td>
         <td>${escapeHtml(match.score || "-")}</td>
-        <td>${renderMatchQualityBadge(match)}${isDuplicate ? `<span class="duplicate-badge">已存在</span>` : ""}</td>
+        <td title="${escapeHtml(rowMessages.join("\n"))}">
+          ${renderMatchQualityBadge(match)}
+          ${isDuplicate ? `<span class="duplicate-badge">已存在</span>` : ""}
+          ${hasMissingPlayers ? `<span class="duplicate-badge">缺选手</span>` : ""}
+          ${hasImportErrors ? `<span class="duplicate-badge">有错误</span>` : ""}
+        </td>
       </tr>
     `;
   }).join("");
@@ -2088,6 +2120,19 @@ function renderExcelImportPreview(result) {
       </div>
     </div>
   `;
+}
+
+function sortExcelPreviewMatches(matches, existingMatchKeys) {
+  return [...matches].sort((a, b) => getExcelPreviewRank(a, existingMatchKeys) - getExcelPreviewRank(b, existingMatchKeys));
+}
+
+function getExcelPreviewRank(match, existingMatchKeys) {
+  const isDuplicate = existingMatchKeys.has(matchKey(match));
+  const hasMissingPlayers = Array.isArray(match.missingPlayers) && match.missingPlayers.length > 0;
+  const hasImportErrors = Array.isArray(match.importErrors) && match.importErrors.length > 0;
+  if (!isDuplicate && !hasMissingPlayers && !hasImportErrors) return 0;
+  if (!isDuplicate) return 1;
+  return 2;
 }
 
 function matchKey(match) {
@@ -2279,7 +2324,7 @@ function bindEvents() {
   $("#clearSelection").addEventListener("click", async () => {
     try {
       db.currentTeams = { radiant: [], dire: [] };
-      await adminApi("/api/teams/manual", {
+      await api("/api/teams/manual", {
         method: "POST",
         body: JSON.stringify(db.currentTeams)
       });
@@ -2296,7 +2341,7 @@ function bindEvents() {
     input.addEventListener("change", updateBalanceModeDescription);
   });
   updateBalanceModeDescription();
-  $("#generateTeams").addEventListener("click", () => saveTeams().catch((error) => alert(error.message)));
+  $("#generateTeams").addEventListener("click", () => saveTeams().catch((error) => alert(formatTeamGenerationError(error))));
 
   $("#matchDate").valueAsDate = new Date();
 

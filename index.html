@@ -406,11 +406,20 @@
               </div>
             </details>
 
-            <details class="panel collapsible-panel admin-only" id="adminMatchEntryPanel">
+            <details class="panel collapsible-panel admin-only" id="adminExcelImportPanel">
               <summary class="collapsible-summary">
-                <span>比赛录入</span>
+                <span>数据导入</span>
               </summary>
-              <div id="adminMatchFormMount"></div>
+              <div class="backup-panel-body">
+                <p>请导入 S2内战数据表.xlsx</p>
+                <div class="button-row">
+                  <label class="secondary-button file-button admin-only">
+                    导入 Excel
+                    <input id="importExcelData" type="file" accept=".xlsx,.xls" />
+                  </label>
+                </div>
+                <div id="excelImportPreview" class="excel-import-preview"></div>
+              </div>
             </details>
 
             <details class="panel collapsible-panel admin-only" id="adminMatchHistoryPanel">
@@ -420,20 +429,11 @@
               <div id="adminMatchesList" class="admin-match-list"></div>
             </details>
 
-            <details class="panel collapsible-panel admin-only" id="adminExcelImportPanel">
+            <details class="panel collapsible-panel admin-only" id="adminMatchEntryPanel">
               <summary class="collapsible-summary">
-                <span>Excel 导入</span>
+                <span>手动录入</span>
               </summary>
-              <div class="backup-panel-body">
-                <p>从 Excel 识别比赛记录，确认预览后再写入数据库。</p>
-                <div class="button-row">
-                  <label class="secondary-button file-button admin-only">
-                    导入 Excel
-                    <input id="importExcelData" type="file" accept=".xlsx,.xls" />
-                  </label>
-                </div>
-                <div id="excelImportPreview" class="excel-import-preview"></div>
-              </div>
+              <div id="adminMatchFormMount"></div>
             </details>
 
             <details class="panel collapsible-panel admin-only" id="adminBackupPanel">

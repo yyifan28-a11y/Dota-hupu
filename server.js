@@ -160,7 +160,7 @@ async function handleApi(request, response, url) {
     return;
   }
 
-  if (method !== "GET" && !requireAdmin(request, response)) {
+  if (method !== "GET" && !isPublicMutation(method, url.pathname) && !requireAdmin(request, response)) {
     return;
   }
 
@@ -226,7 +226,10 @@ async function handleApi(request, response, url) {
       constraints: Array.isArray(body.constraints) ? body.constraints : []
     });
     if (!teams) {
-      sendJson(response, 400, { error: "找不到满足评分差 ≤ 1 和预设条件的对阵，请调整选手或预设。" });
+      sendJson(response, 400, {
+        error: "找不到满足评分差 ≤ 1 和预设条件的对阵，请调整选手或预设。",
+        details: getTeamGenerationDetails(ids, Array.isArray(body.constraints) ? body.constraints : [])
+      });
       return;
     }
     saveTeams(teams);
@@ -426,6 +429,10 @@ function requireAdmin(request, response) {
   return false;
 }
 
+function isPublicMutation(method, pathname) {
+  return method === "POST" && ["/api/teams", "/api/teams/manual"].includes(pathname);
+}
+
 function getState() {
   return {
     players: db.prepare(`
@@ -509,6 +516,38 @@ function getValidCandidates(ids, constraints, players) {
     .filter((teams) => satisfiesConstraints(teams, constraints))
     .map((teams) => ({ teams, diff: Math.abs(teamRating(teams.radiant, ratingById) - teamRating(teams.dire, ratingById)) }))
     .filter((candidate) => candidate.diff <= 1);
+}
+
+function getTeamGenerationDetails(ids, constraints) {
+  const players = getState().players;
+  const normalized = [...new Set(ids)].filter((id) => players.some((player) => player.id === id));
+  if (normalized.length !== 10) {
+    return {
+      validPlayerCount: normalized.length,
+      totalCombinations: 0,
+      afterConstraints: 0,
+      withinRatingLimit: 0,
+      bestDiff: null
+    };
+  }
+
+  const ratingById = new Map(players.map((player) => [player.id, Number(player.rating || 0)]));
+  const constrained = combinations(normalized, 5)
+    .map((radiant) => {
+      const radiantSet = new Set(radiant);
+      const dire = normalized.filter((id) => !radiantSet.has(id));
+      return { radiant, dire };
+    })
+    .filter((teams) => satisfiesConstraints(teams, constraints))
+    .map((teams) => Math.abs(teamRating(teams.radiant, ratingById) - teamRating(teams.dire, ratingById)));
+
+  return {
+    validPlayerCount: normalized.length,
+    totalCombinations: 252,
+    afterConstraints: constrained.length,
+    withinRatingLimit: constrained.filter((diff) => diff <= 1).length,
+    bestDiff: constrained.length ? Math.min(...constrained) : null
+  };
 }
 
 function satisfiesConstraints(teams, constraints) {
@@ -732,6 +771,8 @@ function parseExcelMatches(buffer) {
     }
 
     const parsed = parseExcelMatchSheet(sheetName, playerRecords, playerByName, records, rows.slice(1));
+    parsed.match.importErrors = parsed.errors;
+    parsed.match.importWarnings = parsed.warnings;
     matches.push(parsed.match);
     errors.push(...parsed.errors);
     warnings.push(...parsed.warnings);
@@ -741,8 +782,15 @@ function parseExcelMatches(buffer) {
     matches,
     errors,
     warnings,
-    canImport: matches.length > 0 && errors.length === 0
+    canImport: matches.some(canImportExcelMatch)
   };
+}
+
+function canImportExcelMatch(match) {
+  return !(
+    (Array.isArray(match.importErrors) && match.importErrors.length)
+    || (Array.isArray(match.missingPlayers) && match.missingPlayers.length)
+  );
 }
 
 function isExcelPlayerRecord(record) {
@@ -769,6 +817,7 @@ function parseExcelMatchSheet(sheetName, records, playerByName, allRecords = rec
   const matchId = String(findExcelMetaValue(["比赛ID", "比赛 Id", "Match ID", "match_id"], allRecords, rawRows) || "").trim();
   const duration = normalizeDuration(findExcelMetaValue(["比赛时长", "时长", "比赛时间", "Duration"], allRecords, rawRows));
   const usedIds = new Set();
+  const missingPlayers = [];
 
   if (!date) errors.push(`${sheetName}: 无法识别日期`);
   if (!winner) errors.push(`${sheetName}: 无法识别获胜方`);
@@ -777,8 +826,8 @@ function parseExcelMatchSheet(sheetName, records, playerByName, allRecords = rec
   }
 
   const teams = {
-    radiant: radiant.map((record) => getExcelPlayerId(record, playerByName, usedIds, sheetName, errors)),
-    dire: dire.map((record) => getExcelPlayerId(record, playerByName, usedIds, sheetName, errors))
+    radiant: radiant.map((record) => getExcelPlayerId(record, playerByName, usedIds, sheetName, errors, missingPlayers)),
+    dire: dire.map((record) => getExcelPlayerId(record, playerByName, usedIds, sheetName, errors, missingPlayers))
   };
   const playerDetails = {};
 
@@ -807,6 +856,9 @@ function parseExcelMatchSheet(sheetName, records, playerByName, allRecords = rec
   if (!records.some((record) => Object.hasOwn(record, "位置"))) {
     warnings.push(`${sheetName}: Excel 没有“位置”列，导入后需要手动补 1-5 号位`);
   }
+  if (missingPlayers.length) {
+    warnings.push(`${sheetName}: 有未录入选手：${missingPlayers.join("、")}`);
+  }
 
   return {
     match: {
@@ -820,7 +872,8 @@ function parseExcelMatchSheet(sheetName, records, playerByName, allRecords = rec
       radiant: teams.radiant.filter(Boolean),
       dire: teams.dire.filter(Boolean),
       positions: {},
-      playerDetails
+      playerDetails,
+      missingPlayers
     },
     errors,
     warnings
@@ -837,8 +890,20 @@ function validateExcelMatches(matches) {
     const radiant = Array.isArray(match.radiant) ? match.radiant : [];
     const dire = Array.isArray(match.dire) ? match.dire : [];
     const ids = [...radiant, ...dire];
+    const importErrors = Array.isArray(match.importErrors)
+      ? match.importErrors.map((error) => String(error || "").trim()).filter(Boolean)
+      : [];
+    const missingPlayers = Array.isArray(match.missingPlayers)
+      ? match.missingPlayers.map((name) => String(name || "").trim()).filter(Boolean)
+      : [];
 
-    if (radiant.length !== 5 || dire.length !== 5) errors.push(`${label}: 需要天辉/夜魇各 5 人`);
+    importErrors.forEach((error) => {
+      errors.push(error);
+    });
+    missingPlayers.forEach((name) => {
+      errors.push(`${label}: 选手不存在，请先新增：${name}`);
+    });
+    if (!importErrors.length && !missingPlayers.length && (radiant.length !== 5 || dire.length !== 5)) errors.push(`${label}: 需要天辉/夜魇各 5 人`);
     if (new Set(ids).size !== ids.length) errors.push(`${label}: 有重复选手`);
     ids.forEach((id) => {
       if (!validIds.has(id)) errors.push(`${label}: 选手 ID 不存在 ${id}`);
@@ -960,11 +1025,12 @@ function formatDurationSeconds(totalSeconds) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-function getExcelPlayerId(record, playerByName, usedIds, sheetName, errors) {
+function getExcelPlayerId(record, playerByName, usedIds, sheetName, errors, missingPlayers = []) {
   const name = String(record["选手"] || "").trim();
   const player = playerByName.get(normalizeName(name));
   if (!player) {
-    errors.push(`${sheetName}: 选手不存在，请先新增：${name || "未命名选手"}`);
+    const missingName = name || "未命名选手";
+    if (!missingPlayers.includes(missingName)) missingPlayers.push(missingName);
     return "";
   }
   if (usedIds.has(player.id)) errors.push(`${sheetName}: 选手重复：${name}`);
