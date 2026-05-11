@@ -165,11 +165,17 @@
             </div>
           </div>
 
-          <section class="hero-rank-grid" id="heroRankGrid"></section>
+          <section class="hero-rank-grid">
+            <div id="heroRankGrid" class="hero-rank-grid-inner"></div>
+          </section>
 
           <section class="panel">
             <div class="panel-header">
               <h3>选手英雄统计</h3>
+              <div class="rank-mode-control" aria-label="选手英雄统计排序方式">
+                <button data-hero-usage-sort="unique" type="button">英雄海</button>
+                <button class="is-active" data-hero-usage-sort="total" type="button">总场次</button>
+              </div>
             </div>
             <div id="playerHeroUsageList" class="hero-usage-list"></div>
           </section>

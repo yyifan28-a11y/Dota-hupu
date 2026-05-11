@@ -47,6 +47,11 @@ let heroUsageByPlayerId = new Map();
 let heroRankStats = [];
 let pairRankStats = { teammate: [], opponent: [] };
 let pendingExcelMatches = [];
+let heroRankModes = {
+  positive: "winrate",
+  negative: "winrate"
+};
+let heroUsageSort = "total";
 let pairRankModes = {
   bestFriends: "winrate",
   poorFriends: "winrate",
@@ -241,13 +246,14 @@ function getHeroIdentity(heroName) {
   };
 }
 
-function addHeroUsage(playerId, heroName) {
+function addHeroUsage(playerId, heroName, isWin) {
   const usage = heroUsageByPlayerId.get(playerId);
   if (!usage) return;
   const identity = getHeroIdentity(heroName);
   if (!identity.key) return;
-  const current = usage.get(identity.key) || { ...identity, count: 0 };
+  const current = usage.get(identity.key) || { ...identity, count: 0, wins: 0 };
   current.count += 1;
+  if (isWin) current.wins += 1;
   usage.set(identity.key, current);
 }
 
@@ -429,7 +435,7 @@ function rebuildDerivedStats() {
 
         const heroName = match.playerDetails?.[playerId]?.hero;
         if (!isBlank(heroName)) {
-          addHeroUsage(playerId, heroName);
+          addHeroUsage(playerId, heroName, isWin);
           addHeroRankGame(heroStatsByKey, heroName, isWin);
         }
       });
@@ -648,22 +654,21 @@ function renderAdvancedData() {
 }
 
 function renderHeroes() {
-  renderPlayerHeroUsage();
   renderHeroRankings();
+  renderPlayerHeroUsage();
 }
 
 function renderPlayerHeroUsage() {
   const target = $("#playerHeroUsageList");
   if (!target) return;
 
-  const players = db.players
-    .map((player) => {
-      const heroes = Array.from(heroUsageByPlayerId.get(player.id)?.values() || [])
-        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-Hans"));
-      const total = heroes.reduce((sum, hero) => sum + hero.count, 0);
-      return { ...player, heroes, uniqueHeroCount: heroes.length, total };
-    })
-    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, "zh-Hans"));
+  const players = getPlayersWithHeroUsage()
+    .sort((a, b) => {
+      if (heroUsageSort === "unique") {
+        return b.uniqueHeroCount - a.uniqueHeroCount || b.total - a.total || a.name.localeCompare(b.name, "zh-Hans");
+      }
+      return b.total - a.total || b.uniqueHeroCount - a.uniqueHeroCount || a.name.localeCompare(b.name, "zh-Hans");
+    });
 
   const rows = players.filter((player) => player.total > 0);
   if (!rows.length) {
@@ -674,22 +679,34 @@ function renderPlayerHeroUsage() {
   target.innerHTML = rows
     .map((player) => `
       <article class="hero-usage-row">
-        <strong><em>${escapeHtml(player.name)}</em><span>${player.uniqueHeroCount}</span></strong>
-        <div class="hero-usage-groups">
-          ${player.heroes.map(renderHeroUsageGroup).join("")}
+        <strong>
+          <em>${escapeHtml(player.name)}</em>
+          <span class="hero-usage-count-pair">
+            <b class="${heroUsageSort === "unique" ? "is-active" : ""}">${player.uniqueHeroCount}</b>
+            <i>|</i>
+            <b class="${heroUsageSort === "total" ? "is-active" : ""}">${player.total}</b>
+          </span>
+        </strong>
+        <div class="hero-usage-avatars" aria-label="${escapeHtml(player.name)} 英雄使用记录">
+          ${renderHeroUsageAvatars(player.heroes)}
         </div>
       </article>
     `)
     .join("");
+
+  updateHeroUsageSortControl();
 }
 
-function renderHeroUsageGroup(hero) {
-  const avatars = Array.from({ length: hero.count }, () => renderHeroUsageAvatar(hero.name)).join("");
-  return `
-    <span class="hero-usage-group" title="${escapeHtml(hero.name)} ${hero.count} 次" aria-label="${escapeHtml(hero.name)} ${hero.count} 次">
-      <span class="hero-usage-avatars">${avatars}</span>
-    </span>
-  `;
+function renderHeroUsageAvatars(heroes) {
+  return heroes
+    .map((hero) => Array.from({ length: hero.count }, () => renderHeroUsageAvatar(hero.name)).join(""))
+    .join("");
+}
+
+function updateHeroUsageSortControl() {
+  $$("[data-hero-usage-sort]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.heroUsageSort === heroUsageSort);
+  });
 }
 
 function renderHeroUsageAvatar(heroName) {
@@ -698,47 +715,84 @@ function renderHeroUsageAvatar(heroName) {
   return `<span class="hero-avatar hero-avatar-fallback">${escapeHtml(String(heroName || "-").slice(0, 1))}</span>`;
 }
 
+function getPlayersWithHeroUsage() {
+  return db.players
+    .map((player) => {
+      const heroes = Array.from(heroUsageByPlayerId.get(player.id)?.values() || [])
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-Hans"));
+      const total = heroes.reduce((sum, hero) => sum + hero.count, 0);
+      return { ...player, heroes, uniqueHeroCount: heroes.length, total };
+    })
+    .sort((a, b) => b.uniqueHeroCount - a.uniqueHeroCount || b.total - a.total || a.name.localeCompare(b.name, "zh-Hans"));
+}
+
 function renderHeroRankings() {
   const target = $("#heroRankGrid");
   if (!target) return;
   const rankedHeroes = heroRankStats.filter((hero) => hero.games > 0);
   const boards = [
     {
-      title: "胜率最高",
-      heroes: [...rankedHeroes].sort((a, b) => b.winrate - a.winrate || b.games - a.games || b.netWins - a.netWins),
-      value: (hero) => `${Math.round(hero.winrate * 100)}%`
+      key: "positive",
+      title: "版本答案",
+      heroes: sortHeroes(rankedHeroes, heroRankModes.positive, "desc"),
+      modes: ["winrate", "netWins"]
     },
     {
-      title: "净胜最高",
-      heroes: [...rankedHeroes].sort((a, b) => b.netWins - a.netWins || b.winrate - a.winrate || b.games - a.games),
-      value: (hero) => `${hero.netWins > 0 ? "+" : ""}${hero.netWins}`
+      key: "negative",
+      title: "版本垃圾",
+      heroes: sortHeroes(rankedHeroes, heroRankModes.negative, "asc"),
+      modes: ["winrate", "netWins"]
     },
     {
-      title: "总场次最高",
+      key: "games",
+      title: "热度榜",
       heroes: [...rankedHeroes].sort((a, b) => b.games - a.games || b.wins - a.wins || a.name.localeCompare(b.name, "zh-Hans")),
       value: (hero) => `${hero.games} 场`
     },
     {
-      title: "胜率最低",
-      heroes: [...rankedHeroes].sort((a, b) => a.winrate - b.winrate || b.games - a.games || a.netWins - b.netWins),
-      value: (hero) => `${Math.round(hero.winrate * 100)}%`
-    },
-    {
-      title: "净负最高",
-      heroes: [...rankedHeroes].sort((a, b) => a.netWins - b.netWins || a.winrate - b.winrate || b.games - a.games),
-      value: (hero) => `${hero.netWins}`
+      key: "singleHeat",
+      title: "绝活榜",
+      heroes: getSingleHeroHeatStats().sort((a, b) => b.count - a.count || a.playerName.localeCompare(b.playerName, "zh-Hans") || a.name.localeCompare(b.name, "zh-Hans")),
+      record: (hero) => `${hero.wins}-${hero.count - hero.wins}`,
+      value: (hero) => `（${hero.playerName}）${hero.count}场`
     }
   ];
 
   target.innerHTML = boards.map(renderHeroRankCard).join("");
 }
 
+function getSingleHeroHeatStats() {
+  return getPlayersWithHeroUsage()
+    .flatMap((player) => player.heroes.map((hero) => ({
+      ...hero,
+      playerName: player.name,
+      count: hero.count
+    })));
+}
+
+function sortHeroes(heroes, mode, direction) {
+  const multiplier = direction === "asc" ? 1 : -1;
+  return [...heroes].sort((a, b) => {
+    const valueDiff = multiplier * (getHeroModeValue(a, mode) - getHeroModeValue(b, mode));
+    if (valueDiff) return valueDiff;
+    return b.games - a.games || b.netWins - a.netWins || a.name.localeCompare(b.name, "zh-Hans");
+  });
+}
+
 function renderHeroRankCard(board) {
   const heroes = board.heroes.slice(0, 5);
+  const mode = heroRankModes[board.key] || "games";
   return `
     <section class="panel hero-rank-card">
       <div class="panel-header">
         <h3>${escapeHtml(board.title)}</h3>
+        ${board.modes ? `
+          <div class="rank-mode-control" aria-label="${escapeHtml(board.title)}排序方式">
+            ${board.modes.map((item) => `
+              <button class="${mode === item ? "is-active" : ""}" data-hero-rank="${board.key}" data-hero-mode="${item}" type="button">${getHeroModeLabel(item)}</button>
+            `).join("")}
+          </div>
+        ` : ""}
       </div>
       ${heroes.length ? `
         <ol class="hero-rank-list">
@@ -747,16 +801,33 @@ function renderHeroRankCard(board) {
               <span class="hero-rank-main">
                 ${renderHeroUsageAvatar(hero.name)}
                 <span>
-                  <em>${hero.wins}-${hero.losses}</em>
+                  <em>${board.record ? board.record(hero) : `${hero.wins}-${hero.losses}`}</em>
                 </span>
               </span>
-              <b>${escapeHtml(board.value(hero))}</b>
+              <b>${escapeHtml(board.value ? board.value(hero) : formatHeroModeValue(hero, mode))}</b>
             </li>
           `).join("")}
         </ol>
       ` : `<p class="muted">暂无数据</p>`}
     </section>
   `;
+}
+
+function getHeroModeValue(hero, mode) {
+  if (mode === "netWins") return hero.netWins;
+  return hero.winrate;
+}
+
+function formatHeroModeValue(hero, mode) {
+  if (mode === "netWins") return `${hero.netWins > 0 ? "+" : ""}${hero.netWins}`;
+  return `${Math.round(hero.winrate * 100)}%`;
+}
+
+function getHeroModeLabel(mode) {
+  return {
+    winrate: "胜率",
+    netWins: "净胜"
+  }[mode] || mode;
 }
 
 function renderRelations() {
@@ -777,7 +848,7 @@ function renderRelations() {
       title: "卧龙凤雏",
       pairs: sortPairs(teammatePairs, pairRankModes.poorFriends, getPairRankDirection("poorFriends", pairRankModes.poorFriends)),
       type: "teammate",
-      modes: ["games", "winrate", "netWins"]
+      modes: ["winrate", "netWins"]
     },
     {
       key: "stomp",
@@ -2076,6 +2147,20 @@ function bindEvents() {
     if (!button) return;
     pairRankModes[button.dataset.pairRank] = button.dataset.pairMode;
     renderRelations();
+  });
+
+  $("#heroes")?.addEventListener("click", (event) => {
+    const usageButton = event.target.closest("[data-hero-usage-sort]");
+    if (usageButton) {
+      heroUsageSort = usageButton.dataset.heroUsageSort;
+      renderPlayerHeroUsage();
+      return;
+    }
+
+    const button = event.target.closest("[data-hero-rank][data-hero-mode]");
+    if (!button) return;
+    heroRankModes[button.dataset.heroRank] = button.dataset.heroMode;
+    renderHeroRankings();
   });
 
   ["#basicData", "#advancedData"].forEach((selector) => {
