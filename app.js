@@ -47,6 +47,11 @@ let heroUsageByPlayerId = new Map();
 let heroRankStats = [];
 let pairRankStats = { teammate: [], opponent: [] };
 let pendingExcelMatches = [];
+let pairRankModes = {
+  bestFriends: "winrate",
+  poorFriends: "winrate",
+  stomp: "winrate"
+};
 
 const dataSortState = {
   basicData: { key: "rating", direction: "desc" },
@@ -761,42 +766,59 @@ function renderRelations() {
   const opponentPairs = pairRankStats.opponent.filter((pair) => pair.games > 0);
   const boards = [
     {
+      key: "bestFriends",
       title: "最佳挚友",
-      pairs: sortPairsByWinrate(teammatePairs, "desc"),
-      type: "teammate"
+      pairs: sortPairs(teammatePairs, pairRankModes.bestFriends, getPairRankDirection("bestFriends", pairRankModes.bestFriends)),
+      type: "teammate",
+      modes: ["winrate", "netWins"]
     },
     {
+      key: "poorFriends",
       title: "卧龙凤雏",
-      pairs: sortPairsByWinrate(teammatePairs, "asc"),
-      type: "teammate"
+      pairs: sortPairs(teammatePairs, pairRankModes.poorFriends, getPairRankDirection("poorFriends", pairRankModes.poorFriends)),
+      type: "teammate",
+      modes: ["games", "winrate", "netWins"]
     },
     {
+      key: "stomp",
       title: "爆杀榜",
-      pairs: sortPairsByWinrate(opponentPairs, "desc"),
+      pairs: sortPairs(opponentPairs, pairRankModes.stomp, getPairRankDirection("stomp", pairRankModes.stomp)),
       type: "opponent",
-      value: (pair) => `${pair.wins}-${pair.losses}`,
-      hideRecord: true
+      modes: ["games", "winrate", "netWins"],
+      hideRecord: true,
+      value: (pair, mode) => mode === "winrate" ? `${pair.wins}-${pair.losses}` : formatPairModeValue(pair, mode)
     }
   ];
 
   target.innerHTML = boards.map(renderPairRankCard).join("");
 }
 
-function sortPairsByWinrate(pairs, direction) {
+function getPairRankDirection(key, mode) {
+  if (key === "poorFriends" && mode !== "games") return "asc";
+  return "desc";
+}
+
+function sortPairs(pairs, mode, direction) {
   const multiplier = direction === "asc" ? 1 : -1;
   return [...pairs].sort((a, b) => {
-    const winrateDiff = multiplier * (a.winrate - b.winrate);
-    if (winrateDiff) return winrateDiff;
+    const valueDiff = multiplier * (getPairModeValue(a, mode) - getPairModeValue(b, mode));
+    if (valueDiff) return valueDiff;
     return b.games - a.games || b.netWins - a.netWins || formatPairNames(a).localeCompare(formatPairNames(b), "zh-Hans");
   });
 }
 
 function renderPairRankCard(board) {
   const pairs = board.pairs.slice(0, 5);
+  const mode = pairRankModes[board.key] || "winrate";
   return `
     <section class="panel pair-rank-card">
       <div class="panel-header">
         <h3>${escapeHtml(board.title)}</h3>
+        <div class="rank-mode-control" aria-label="${escapeHtml(board.title)}排序方式">
+          ${board.modes.map((item) => `
+            <button class="${mode === item ? "is-active" : ""}" data-pair-rank="${board.key}" data-pair-mode="${item}" type="button">${getPairModeLabel(item)}</button>
+          `).join("")}
+        </div>
       </div>
       ${pairs.length ? `
         <ol class="pair-rank-list">
@@ -806,13 +828,33 @@ function renderPairRankCard(board) {
                 <strong>${renderPairNames(pair, board.type)}</strong>
                 <em>${board.hideRecord ? "&nbsp;" : `${pair.wins}-${pair.losses}`}</em>
               </span>
-              <b>${escapeHtml(board.value ? board.value(pair) : `${Math.round(pair.winrate * 100)}%`)}</b>
+              <b>${escapeHtml(board.value ? board.value(pair, mode) : formatPairModeValue(pair, mode))}</b>
             </li>
           `).join("")}
         </ol>
       ` : `<p class="muted">暂无数据</p>`}
     </section>
   `;
+}
+
+function getPairModeValue(pair, mode) {
+  if (mode === "games") return pair.games;
+  if (mode === "netWins") return pair.netWins;
+  return pair.winrate;
+}
+
+function formatPairModeValue(pair, mode) {
+  if (mode === "games") return `${pair.games}场`;
+  if (mode === "netWins") return `${pair.netWins > 0 ? "+" : ""}${pair.netWins}`;
+  return `${Math.round(pair.winrate * 100)}%`;
+}
+
+function getPairModeLabel(mode) {
+  return {
+    games: "场次",
+    winrate: "胜率",
+    netWins: "净胜"
+  }[mode] || mode;
 }
 
 function formatPairNames(pair, type = "teammate") {
@@ -2027,6 +2069,13 @@ function bindEvents() {
       recordSortDirection = "desc";
     }
     renderPlayers();
+  });
+
+  $("#relations")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-pair-rank][data-pair-mode]");
+    if (!button) return;
+    pairRankModes[button.dataset.pairRank] = button.dataset.pairMode;
+    renderRelations();
   });
 
   ["#basicData", "#advancedData"].forEach((selector) => {

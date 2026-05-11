@@ -1482,12 +1482,44 @@ select:focus {
 
 .pair-rank-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  grid-template-columns: minmax(0, min(820px, 100%));
   gap: 14px;
 }
 
 .pair-rank-card {
   min-width: 0;
+}
+
+.pair-rank-card .panel-header {
+  align-items: center;
+}
+
+.rank-mode-control {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.rank-mode-control button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 10px;
+}
+
+.rank-mode-control button.is-active,
+.rank-mode-control button:hover,
+.rank-mode-control button:focus-visible {
+  background: var(--surface);
+  color: var(--green-dark);
+  outline: none;
 }
 
 .pair-rank-list {
@@ -1963,7 +1995,6 @@ select:focus {
   .stats-grid,
   .mini-rank-grid,
   .hero-rank-grid,
-  .pair-rank-grid,
   .content-grid,
   .teams-grid,
   .position-grid,
