@@ -45,7 +45,7 @@ let statsByPlayerId = new Map();
 let dataStatsByPlayerId = new Map();
 let heroUsageByPlayerId = new Map();
 let heroRankStats = [];
-let pairRankStats = { teammate: [], opponent: [] };
+let pairRankStats = { teammate: [], trio: [], opponent: [] };
 let pendingExcelMatches = [];
 let heroRankModes = {
   positive: "winrate",
@@ -54,6 +54,7 @@ let heroRankModes = {
 let heroUsageSort = "total";
 let pairRankModes = {
   bestFriends: "winrate",
+  bigThree: "winrate",
   poorFriends: "winrate",
   stomp: "winrate"
 };
@@ -285,8 +286,25 @@ function addTeammatePair(pairStatsByKey, a, b, isWin) {
   pairStatsByKey.set(key, stats);
 }
 
+function addTeammateTrio(trioStatsByKey, a, b, c, isWin) {
+  const key = trioStatKey(a, b, c);
+  const stats = trioStatsByKey.get(key) || {
+    key,
+    players: key.split("::"),
+    games: 0,
+    wins: 0
+  };
+  stats.games += 1;
+  if (isWin) stats.wins += 1;
+  trioStatsByKey.set(key, stats);
+}
+
 function pairStatKey(a, b) {
   return [a, b].sort().join("::");
+}
+
+function trioStatKey(a, b, c) {
+  return [a, b, c].sort().join("::");
 }
 
 function addOpponentPair(pairStatsByKey, playerId, opponentId, isWin) {
@@ -384,6 +402,7 @@ function rebuildDerivedStats() {
   heroUsageByPlayerId = new Map(db.players.map((player) => [player.id, new Map()]));
   const heroStatsByKey = new Map();
   const teammateStatsByKey = new Map();
+  const trioStatsByKey = new Map();
   const opponentStatsByKey = new Map();
 
   const dataTotals = new Map(db.players.map((player) => [player.id, {
@@ -447,6 +466,14 @@ function rebuildDerivedStats() {
           addTeammatePair(teammateStatsByKey, ids[index], ids[nextIndex], isWin);
         }
       }
+
+      for (let first = 0; first < ids.length; first += 1) {
+        for (let second = first + 1; second < ids.length; second += 1) {
+          for (let third = second + 1; third < ids.length; third += 1) {
+            addTeammateTrio(trioStatsByKey, ids[first], ids[second], ids[third], isWin);
+          }
+        }
+      }
     });
 
     (match.radiant || []).forEach((radiantId) => {
@@ -506,6 +533,7 @@ function rebuildDerivedStats() {
   });
   pairRankStats = {
     teammate: finalizePairStats(teammateStatsByKey),
+    trio: finalizePairStats(trioStatsByKey),
     opponent: finalizePairStats(opponentStatsByKey)
   };
 }
@@ -833,15 +861,25 @@ function getHeroModeLabel(mode) {
 }
 
 function renderRelations() {
+  renderTeammateQuery();
+  renderOpponentQuery();
   const target = $("#pairRankGrid");
   if (!target) return;
   const teammatePairs = pairRankStats.teammate.filter((pair) => pair.games > 0);
+  const teammateTrios = pairRankStats.trio.filter((trio) => trio.games > 0);
   const opponentPairs = pairRankStats.opponent.filter((pair) => pair.games > 0);
   const boards = [
     {
       key: "bestFriends",
       title: "最佳挚友",
       pairs: sortPairs(teammatePairs, pairRankModes.bestFriends, getPairRankDirection("bestFriends", pairRankModes.bestFriends)),
+      type: "teammate",
+      modes: ["winrate", "netWins"]
+    },
+    {
+      key: "bigThree",
+      title: "三巨头",
+      pairs: sortPairs(teammateTrios, pairRankModes.bigThree, getPairRankDirection("bigThree", pairRankModes.bigThree)),
       type: "teammate",
       modes: ["winrate", "netWins"]
     },
@@ -864,6 +902,217 @@ function renderRelations() {
   ];
 
   target.innerHTML = boards.map(renderPairRankCard).join("");
+}
+
+function renderTeammateQuery() {
+  const controls = $("#teammateQueryControls");
+  const result = $("#teammateQueryResult");
+  if (!controls || !result) return;
+
+  const previousValues = $$("[data-teammate-query-index]")
+    .sort((a, b) => Number(a.dataset.teammateQueryIndex) - Number(b.dataset.teammateQueryIndex))
+    .map((select) => select.value);
+  const selectedIds = [];
+  const fields = [];
+
+  for (let index = 0; index < 5; index += 1) {
+    const options = index === 0
+      ? db.players
+        .map((player) => ({ id: player.id, label: player.name }))
+        .sort((a, b) => a.label.localeCompare(b.label, "zh-Hans"))
+      : getTeammateCandidates(selectedIds);
+    const selectedValue = options.some((item) => item.id === previousValues[index]) ? previousValues[index] : "";
+
+    if (index > 0 && !selectedIds.length) break;
+    if (index > 0 && !options.length) break;
+
+    fields.push(renderTeammateQueryField(index, options, selectedValue));
+    if (!selectedValue) break;
+    selectedIds.push(selectedValue);
+  }
+
+  controls.innerHTML = fields.join("");
+  result.innerHTML = renderTeammateQueryResult(selectedIds);
+}
+
+function renderSelectOptions(options, placeholder) {
+  return [
+    `<option value="">${escapeHtml(placeholder)}</option>`,
+    ...options.map((item) => `<option value="${item.id}">${escapeHtml(item.label)}</option>`)
+  ].join("");
+}
+
+function renderTeammateQueryField(index, options, selectedValue) {
+  const label = String.fromCharCode(65 + index);
+  return `
+    <label>
+      选手 ${label}
+      <select data-teammate-query-index="${index}">
+        ${renderSelectOptions(options, `选择选手 ${label}`)}
+      </select>
+    </label>
+  `.replace(`value="${selectedValue}"`, `value="${selectedValue}" selected`);
+}
+
+function getTeammateCandidates(requiredIds) {
+  const candidates = new Set();
+  db.matches.forEach((match) => {
+    if (getMatchQuality(match) === "draft") return;
+    const side = getMatchSideWithPlayers(match, requiredIds);
+    if (!side) return;
+    getMatchTeamIds(match, side).forEach((playerId) => {
+      if (!requiredIds.includes(playerId)) candidates.add(playerId);
+    });
+  });
+
+  return [...candidates]
+    .map((id) => getPlayer(id))
+    .filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name, "zh-Hans"))
+    .map((player) => ({ id: player.id, label: player.name }));
+}
+
+function renderTeammateQueryResult(selectedIds) {
+  if (selectedIds.length < 2) {
+    return `<p class="muted">请选择 A 和 B，后续选手可选。</p>`;
+  }
+
+  const record = getTeammateGroupRecord(selectedIds);
+  const names = selectedIds.map((id) => getPlayer(id)?.name || "-").join(" + ");
+  if (!record.games) {
+    return `<p class="muted">${escapeHtml(names)} 暂无同队比赛。</p>`;
+  }
+
+  return `
+    <div class="teammate-query-summary">
+      <strong>${escapeHtml(names)}</strong>
+      <span>${record.wins}-${record.losses}</span>
+      <span>胜率 ${Math.round(record.winrate * 100)}%</span>
+      <span>共 ${record.games} 场</span>
+    </div>
+    <ol class="teammate-query-matches">
+      ${record.matches.slice(0, 8).map((item) => `
+        <li>
+          <span>${escapeHtml(formatAdminMatchCode(item.match))}</span>
+          <span>${item.side === "radiant" ? "天辉" : "夜魇"}</span>
+          <span>${escapeHtml(item.match.score || "-")}</span>
+          <b class="${item.isWin ? "is-win" : "is-loss"}">${item.isWin ? "胜" : "负"}</b>
+        </li>
+      `).join("")}
+    </ol>
+  `;
+}
+
+function getTeammateGroupRecord(playerIds) {
+  const matches = [];
+  let wins = 0;
+  db.matches.forEach((match) => {
+    if (getMatchQuality(match) === "draft") return;
+    const side = getMatchSideWithPlayers(match, playerIds);
+    if (!side) return;
+    const isWin = match.winner === side;
+    wins += isWin ? 1 : 0;
+    matches.push({ match, side, isWin });
+  });
+
+  const losses = matches.length - wins;
+  return {
+    games: matches.length,
+    wins,
+    losses,
+    winrate: matches.length ? wins / matches.length : 0,
+    matches
+  };
+}
+
+function getMatchSideWithPlayers(match, playerIds) {
+  if (!playerIds.length) return "";
+  const radiant = new Set(match.radiant || []);
+  const dire = new Set(match.dire || []);
+  if (playerIds.every((id) => radiant.has(id))) return "radiant";
+  if (playerIds.every((id) => dire.has(id))) return "dire";
+  return "";
+}
+
+function getMatchTeamIds(match, side) {
+  return side === "radiant" ? (match.radiant || []) : (match.dire || []);
+}
+
+function renderOpponentQuery() {
+  const selectA = $("#opponentQueryA");
+  const selectB = $("#opponentQueryB");
+  const result = $("#opponentQueryResult");
+  if (!selectA || !selectB || !result) return;
+
+  const oldA = selectA.value;
+  const oldB = selectB.value;
+  const playerOptions = db.players
+    .map((player) => ({ id: player.id, label: player.name }))
+    .sort((a, b) => a.label.localeCompare(b.label, "zh-Hans"));
+  const playerIds = new Set(playerOptions.map((player) => player.id));
+  const selectedA = playerIds.has(oldA) ? oldA : "";
+  const bOptions = playerOptions.filter((player) => player.id !== selectedA);
+  const selectedB = bOptions.some((player) => player.id === oldB) ? oldB : "";
+
+  selectA.innerHTML = renderSelectOptions(playerOptions, "选择选手 A");
+  selectA.value = selectedA;
+  selectB.innerHTML = renderSelectOptions(bOptions, "选择选手 B");
+  selectB.value = selectedB;
+  result.innerHTML = renderOpponentQueryResult(selectedA, selectedB);
+}
+
+function renderOpponentQueryResult(playerId, opponentId) {
+  if (!playerId || !opponentId) {
+    return `<p class="muted">请选择两名对手。</p>`;
+  }
+
+  const record = getOpponentRecord(playerId, opponentId);
+  const names = `${getPlayer(playerId)?.name || "-"} vs ${getPlayer(opponentId)?.name || "-"}`;
+  if (!record.games) {
+    return `<p class="muted">${escapeHtml(names)} 暂无交手记录。</p>`;
+  }
+
+  return `
+    <div class="teammate-query-summary">
+      <strong>${escapeHtml(names)}</strong>
+      <span>${record.wins}-${record.losses}</span>
+      <span>胜率 ${Math.round(record.winrate * 100)}%</span>
+      <span>共 ${record.games} 场</span>
+    </div>
+    <ol class="teammate-query-matches">
+      ${record.matches.slice(0, 8).map((item) => `
+        <li>
+          <span>${escapeHtml(formatAdminMatchCode(item.match))}</span>
+          <span>${item.side === "radiant" ? "天辉" : "夜魇"}</span>
+          <span>${escapeHtml(item.match.score || "-")}</span>
+          <b class="${item.isWin ? "is-win" : "is-loss"}">${item.isWin ? "胜" : "负"}</b>
+        </li>
+      `).join("")}
+    </ol>
+  `;
+}
+
+function getOpponentRecord(playerId, opponentId) {
+  const matches = [];
+  let wins = 0;
+  db.matches.forEach((match) => {
+    if (getMatchQuality(match) === "draft") return;
+    const playerSide = getMatchSideWithPlayers(match, [playerId]);
+    const opponentSide = getMatchSideWithPlayers(match, [opponentId]);
+    if (!playerSide || !opponentSide || playerSide === opponentSide) return;
+    const isWin = match.winner === playerSide;
+    wins += isWin ? 1 : 0;
+    matches.push({ match, side: playerSide, isWin });
+  });
+
+  const losses = matches.length - wins;
+  return {
+    games: matches.length,
+    wins,
+    losses,
+    winrate: matches.length ? wins / matches.length : 0,
+    matches
+  };
 }
 
 function getPairRankDirection(key, mode) {
@@ -2192,6 +2441,16 @@ function bindEvents() {
     if (!button) return;
     pairRankModes[button.dataset.pairRank] = button.dataset.pairMode;
     renderRelations();
+  });
+
+  $("#relations")?.addEventListener("change", (event) => {
+    if (event.target.closest("[data-teammate-query-index]")) {
+      renderTeammateQuery();
+      return;
+    }
+    if (event.target.closest("#opponentQueryA, #opponentQueryB")) {
+      renderOpponentQuery();
+    }
   });
 
   $("#heroes")?.addEventListener("click", (event) => {
