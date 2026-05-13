@@ -8,6 +8,8 @@ const POSITIONS = ["1", "2", "3", "4", "5"];
 const HEROES = Array.isArray(window.DOTA_HEROES) ? window.DOTA_HEROES : [];
 const HERO_IMAGE_BASE = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes";
 const ADMIN_PASSWORD_KEY = "dota-admin-password";
+const TEAM_GENERATION_COOLDOWN_KEY = "dota-team-generation-cooldown";
+const TEAM_GENERATION_COOLDOWN_MS = 60 * 1000;
 const REQUIRED_DETAIL_FIELDS = [
   "hero",
   "position",
@@ -30,6 +32,12 @@ const BALANCE_MODE_DESCRIPTIONS = {
   random: "在可用候选里随机抽一组，不额外考虑位置、胜率或历史组合。",
   winrate: "让两边平均胜率尽量接近。"
 };
+const BALANCE_MODE_LABELS = {
+  position: "位置优先",
+  combination: "组合优先",
+  random: "完全随机",
+  winrate: "胜率平衡"
+};
 
 let isAdmin = Boolean(sessionStorage.getItem(ADMIN_PASSWORD_KEY));
 let constraints = [];
@@ -40,6 +48,7 @@ let editingMatchId = null;
 let recordSort = "rating";
 let recordSortDirection = "desc";
 let hasGeneratedTeams = false;
+let generatedBalanceMode = "position";
 let playerById = new Map();
 let statsByPlayerId = new Map();
 let dataStatsByPlayerId = new Map();
@@ -47,6 +56,9 @@ let heroUsageByPlayerId = new Map();
 let heroRankStats = [];
 let pairRankStats = { teammate: [], trio: [], opponent: [] };
 let pendingExcelMatches = [];
+let showAllDashboardMatches = false;
+let activeDataViewMode = "basic";
+let teamGenerationCooldownTimer = null;
 let heroRankModes = {
   positive: "winrate",
   negative: "winrate"
@@ -591,7 +603,27 @@ function renderDashboard() {
     (player) => `${player.stats.games} 场`
   );
 
-  renderMatchCards($("#recentMatches"), db.matches.slice(0, 5));
+  renderDashboardMatches();
+}
+
+function renderDashboardMatches() {
+  const matches = getMatchesByScheduleDesc();
+  const visibleMatches = showAllDashboardMatches ? matches : matches.slice(0, 3);
+  renderMatchCards($("#recentMatches"), visibleMatches);
+  const toggleButton = $("#toggleAllMatches");
+  if (!toggleButton) return;
+  toggleButton.textContent = showAllDashboardMatches ? "收起比赛" : "显示所有比赛";
+  toggleButton.classList.toggle("is-hidden", matches.length <= 3);
+}
+
+function getMatchesByScheduleDesc(matches = db.matches) {
+  return [...matches].sort(compareMatchesByScheduleDesc);
+}
+
+function compareMatchesByScheduleDesc(a, b) {
+  const dateDiff = String(b.date || "").localeCompare(String(a.date || ""));
+  if (dateDiff) return dateDiff;
+  return Number(b.matchNo || 0) - Number(a.matchNo || 0);
 }
 
 function renderMiniRank(target, players, valueFormatter) {
@@ -675,12 +707,21 @@ function getRecordSortIcon(key) {
   return recordSortDirection === "desc" ? "▾" : "▴";
 }
 
-function renderBasicData() {
-  renderDataTable("basicData", BASIC_DATA_COLUMNS, $("#basicDataBody"));
+function renderDataView() {
+  const viewId = getActiveDataViewId();
+  const columns = activeDataViewMode === "advanced" ? ADVANCED_DATA_COLUMNS : BASIC_DATA_COLUMNS;
+  renderDataTable(viewId, columns, $("#dataViewBody"));
+  updateDataViewSwitch();
 }
 
-function renderAdvancedData() {
-  renderDataTable("advancedData", ADVANCED_DATA_COLUMNS, $("#advancedDataBody"));
+function getActiveDataViewId() {
+  return activeDataViewMode === "advanced" ? "advancedData" : "basicData";
+}
+
+function updateDataViewSwitch() {
+  $$("[data-data-view-mode]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.dataViewMode === activeDataViewMode);
+  });
 }
 
 function renderHeroes() {
@@ -1300,10 +1341,14 @@ function renderPicker() {
 function renderTeams() {
   const teamsGrid = $("#generatedTeams");
   if (teamsGrid) teamsGrid.classList.toggle("is-hidden", !hasGeneratedTeams);
+  $("#teamShareActions")?.classList.toggle("is-hidden", !hasGeneratedTeams);
   renderTeam($("#radiantTeam"), db.currentTeams.radiant);
   renderTeam($("#direTeam"), db.currentTeams.dire);
-  $("#radiantRating").textContent = `总评分 ${sumRating(db.currentTeams.radiant).toFixed(1)}`;
-  $("#direRating").textContent = `总评分 ${sumRating(db.currentTeams.dire).toFixed(1)}`;
+  const radiantRating = sumRating(db.currentTeams.radiant).toFixed(1);
+  const direRating = sumRating(db.currentTeams.dire).toFixed(1);
+  $("#radiantRating").textContent = `总分 ${radiantRating}`;
+  $("#direRating").textContent = `总分 ${direRating}`;
+  $("#generatedModeLabel").textContent = BALANCE_MODE_LABELS[generatedBalanceMode] || "位置优先";
   renderMatchEntryEditor();
 }
 
@@ -1320,6 +1365,222 @@ function renderTeam(target, ids) {
       return `<li><strong>${escapeHtml(player.name)}</strong><span>${formatRating(player.rating)}</span></li>`;
     })
     .join("");
+}
+
+async function copyTeamsScreenshot() {
+  const target = $("#generatedTeams");
+  if (!target || target.classList.contains("is-hidden")) {
+    alert("请先生成 5v5 对阵。");
+    return;
+  }
+
+  const button = $("#copyTeamsScreenshot");
+  const oldText = button?.textContent || "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "正在复制...";
+  }
+
+  try {
+    const canvas = renderTeamsToCanvas();
+    await copyCanvasToClipboard(canvas);
+    if (button) button.textContent = "已复制";
+    window.setTimeout(() => {
+      if (button) button.textContent = oldText;
+    }, 1200);
+  } catch (error) {
+    alert(`复制截图失败：${error.message || "请确认浏览器剪切板权限"}`);
+    if (button) button.textContent = oldText;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function renderTeamsToCanvas() {
+  const width = 1040;
+  const height = 520;
+  const canvas = document.createElement("canvas");
+  const scale = Math.max(2, Math.min(3, window.devicePixelRatio || 1));
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  const context = canvas.getContext("2d");
+  context.scale(scale, scale);
+  drawTeamsScreenshot(context, width, height);
+  return canvas;
+}
+
+async function copyCanvasToClipboard(canvas) {
+  if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+    try {
+      const blob = await canvasToPngBlob(canvas);
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      return;
+    } catch {
+      // Some embedded browsers deny async image clipboard writes. Fall back to a selected image copy.
+    }
+  }
+
+  if (copyCanvasViaSelection(canvas)) return;
+  throw new Error("当前浏览器拒绝写入图片剪切板");
+}
+
+function canvasToPngBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      blob ? resolve(blob) : reject(new Error("无法生成截图"));
+    }, "image/png");
+  });
+}
+
+function copyCanvasViaSelection(canvas) {
+  const container = document.createElement("div");
+  container.contentEditable = "true";
+  container.style.cssText = "position:fixed;left:-10000px;top:0;width:1px;height:1px;overflow:hidden;";
+  const image = document.createElement("img");
+  image.src = canvas.toDataURL("image/png");
+  container.append(image);
+  document.body.append(container);
+
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(container);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  const copied = document.execCommand("copy");
+  selection.removeAllRanges();
+  container.remove();
+  return copied;
+}
+
+function drawTeamsScreenshot(context, width, height) {
+  const palette = {
+    background: "#f3f6f4",
+    surface: "#ffffff",
+    soft: "#eef4f1",
+    line: "#d8e2dd",
+    ink: "#17211c",
+    muted: "#69766f",
+    green: "#1d7f5c",
+    greenDark: "#126246",
+    red: "#b94b43"
+  };
+  const font = `"Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif`;
+  const radiant = db.currentTeams.radiant || [];
+  const dire = db.currentTeams.dire || [];
+  const radiantRating = sumRating(radiant).toFixed(1);
+  const direRating = sumRating(dire).toFixed(1);
+  const modeLabel = BALANCE_MODE_LABELS[generatedBalanceMode] || "位置优先";
+
+  context.fillStyle = palette.background;
+  context.fillRect(0, 0, width, height);
+  drawRoundRect(context, 30, 30, width - 60, height - 60, 18, palette.surface, palette.line);
+
+  drawTeamCard(context, {
+    x: 58,
+    y: 70,
+    width: 380,
+    height: 380,
+    title: "天辉",
+    ids: radiant,
+    total: radiantRating,
+    accent: palette.green,
+    palette,
+    font
+  });
+
+  drawVersusBlock(context, {
+    x: 456,
+    y: 150,
+    width: 128,
+    modeLabel,
+    palette,
+    font
+  });
+
+  drawTeamCard(context, {
+    x: 602,
+    y: 70,
+    width: 380,
+    height: 380,
+    title: "夜魇",
+    ids: dire,
+    total: direRating,
+    accent: palette.red,
+    palette,
+    font
+  });
+}
+
+function drawTeamCard(context, options) {
+  const { x, y, width, height, title, ids, total, accent, palette, font } = options;
+  drawRoundRect(context, x, y, width, height, 14, "#fbfdfc", palette.line);
+  context.fillStyle = accent;
+  context.fillRect(x, y + 14, 4, height - 28);
+
+  context.fillStyle = palette.ink;
+  context.font = `900 24px ${font}`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(title, x + width / 2, y + 40);
+
+  ids.forEach((id, index) => {
+    const player = getPlayer(id);
+    const rowY = y + 78 + index * 52;
+    drawRoundRect(context, x + 32, rowY, width - 64, 42, 10, palette.soft, palette.line);
+    context.fillStyle = palette.ink;
+    context.font = `800 19px ${font}`;
+    context.textAlign = "left";
+    context.fillText(player?.name || "-", x + 48, rowY + 21);
+    context.fillStyle = palette.muted;
+    context.font = `700 18px ${font}`;
+    context.textAlign = "right";
+    context.fillText(formatRating(player?.rating || 0), x + width - 48, rowY + 21);
+  });
+
+  context.strokeStyle = palette.line;
+  context.beginPath();
+  context.moveTo(x + 100, y + height - 54);
+  context.lineTo(x + width - 100, y + height - 54);
+  context.stroke();
+
+  context.fillStyle = accent;
+  context.font = `900 19px ${font}`;
+  context.textAlign = "center";
+  context.fillText(`总分 ${total}`, x + width / 2, y + height - 26);
+}
+
+function drawVersusBlock(context, options) {
+  const { x, y, width, modeLabel, palette, font } = options;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillStyle = palette.muted;
+  context.font = `900 22px ${font}`;
+  context.fillText(modeLabel, x + width / 2, y);
+  context.fillStyle = palette.greenDark;
+  context.font = `900 42px ${font}`;
+  context.fillText("VS", x + width / 2, y + 76);
+}
+
+function drawRoundRect(context, x, y, width, height, radius, fill, stroke) {
+  context.beginPath();
+  context.moveTo(x + radius, y);
+  context.lineTo(x + width - radius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + radius);
+  context.lineTo(x + width, y + height - radius);
+  context.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  context.lineTo(x + radius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - radius);
+  context.lineTo(x, y + radius);
+  context.quadraticCurveTo(x, y, x + radius, y);
+  context.closePath();
+  if (fill) {
+    context.fillStyle = fill;
+    context.fill();
+  }
+  if (stroke) {
+    context.strokeStyle = stroke;
+    context.stroke();
+  }
 }
 
 function renderMatchEntryEditor() {
@@ -1497,11 +1758,6 @@ function renderSelectedMatchDetail() {
     </div>
   `;
   updateMatchEntryStatusIndicators();
-}
-
-function renderMatches() {
-  $("#matchesCountLabel").textContent = `${db.matches.length} 场`;
-  renderMatchCards($("#matchesList"), db.matches);
 }
 
 function renderAdmin() {
@@ -1698,13 +1954,11 @@ function renderCurrentView() {
   const renderers = {
     dashboard: renderDashboard,
     players: renderPlayers,
-    basicData: renderBasicData,
-    advancedData: renderAdvancedData,
+    data: renderDataView,
     heroes: renderHeroes,
     relations: renderRelations,
     generator: renderGenerator,
-    matches: renderMatches,
-    data: renderAdmin
+    admin: renderAdmin
   };
   renderers[activeView]?.();
   updateAdminUi();
@@ -1877,7 +2131,7 @@ function editMatch(matchId) {
   $("#matchNote").value = match.note || "";
   $("#matchSubmitButton").textContent = "保存修改";
   $("#matchForm").classList.remove("is-hidden");
-  switchView("data");
+  switchView("admin");
   renderMatchEntryEditor();
   revealMatchEntryPanel();
 }
@@ -2002,17 +2256,48 @@ async function saveTeams() {
     return;
   }
 
+  const mode = getBalanceMode();
   db.currentTeams = await api("/api/teams", {
     method: "POST",
     body: JSON.stringify({
       ids,
-      mode: getBalanceMode(),
+      mode,
       constraints
     })
   });
+  saveTeamGenerationCooldown(ids);
+  generatedBalanceMode = mode;
   hasGeneratedTeams = true;
   renderPicker();
   renderTeams();
+  updateGenerateTeamsButton();
+}
+
+function getTeamGenerationCooldown(ids) {
+  const key = teamGenerationKey(ids);
+  const record = readTeamGenerationCooldown();
+  if (!record || record.key !== key) return { remainingMs: 0 };
+  const remainingMs = TEAM_GENERATION_COOLDOWN_MS - (Date.now() - Number(record.createdAt || 0));
+  return { remainingMs: Math.max(0, remainingMs) };
+}
+
+function saveTeamGenerationCooldown(ids) {
+  localStorage.setItem(TEAM_GENERATION_COOLDOWN_KEY, JSON.stringify({
+    key: teamGenerationKey(ids),
+    createdAt: Date.now()
+  }));
+}
+
+function readTeamGenerationCooldown() {
+  try {
+    return JSON.parse(localStorage.getItem(TEAM_GENERATION_COOLDOWN_KEY) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function teamGenerationKey(ids) {
+  return [...new Set(ids)].sort().join("::");
 }
 
 function formatTeamGenerationError(error) {
@@ -2078,6 +2363,27 @@ function updateSelectionUi() {
     if (input) input.disabled = isFull && !checked;
   });
   renderConstraintOptions();
+  updateGenerateTeamsButton();
+}
+
+function updateGenerateTeamsButton() {
+  const button = $("#generateTeams");
+  if (!button) return;
+  const ids = getSelectedPlayerIds();
+  const cooldown = ids.length === 10 ? getTeamGenerationCooldown(ids) : { remainingMs: 0 };
+  const remainingSeconds = Math.ceil(cooldown.remainingMs / 1000);
+  const isCoolingDown = remainingSeconds > 0;
+  button.disabled = isCoolingDown;
+  button.classList.toggle("is-cooling-down", isCoolingDown);
+  button.textContent = isCoolingDown ? `${remainingSeconds}s 后可再次生成` : "生成 5v5 对阵";
+
+  if (teamGenerationCooldownTimer) {
+    window.clearTimeout(teamGenerationCooldownTimer);
+    teamGenerationCooldownTimer = null;
+  }
+  if (isCoolingDown) {
+    teamGenerationCooldownTimer = window.setTimeout(updateGenerateTeamsButton, 1000);
+  }
 }
 
 function updateAdminUi() {
@@ -2356,7 +2662,7 @@ function renderExcelImportPreview(result) {
       ${errors.length ? `<div class="excel-message error">${errors.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : ""}
       ${warnings.length ? `<div class="excel-message warning">${warnings.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : ""}
       ${rows ? `
-        <div class="table-wrap">
+        <div class="table-wrap excel-preview-table-wrap">
           <table class="excel-preview-table">
             <thead><tr><th>导入</th><th>Sheet</th><th>日期</th><th>场次</th><th>比赛ID</th><th>胜方</th><th>比分 / 时长</th><th>状态</th></tr></thead>
             <tbody>${rows}</tbody>
@@ -2418,6 +2724,10 @@ function bindEvents() {
 
   $("#recentMatches").addEventListener("click", handleMatchCardOpen);
   $("#recentMatches").addEventListener("keydown", handleMatchCardKeydown);
+  $("#toggleAllMatches")?.addEventListener("click", () => {
+    showAllDashboardMatches = !showAllDashboardMatches;
+    renderDashboardMatches();
+  });
   $("#closeMatchDialog").addEventListener("click", () => $("#matchDetailDialog").close());
   $("#matchDetailDialog").addEventListener("click", (event) => {
     if (event.target.id === "matchDetailDialog") event.target.close();
@@ -2467,12 +2777,18 @@ function bindEvents() {
     renderHeroRankings();
   });
 
-  ["#basicData", "#advancedData"].forEach((selector) => {
-    $(selector)?.addEventListener("click", (event) => {
+  $("#data")?.addEventListener("click", (event) => {
+    const modeButton = event.target.closest("[data-data-view-mode]");
+    if (modeButton) {
+      activeDataViewMode = modeButton.dataset.dataViewMode === "advanced" ? "advanced" : "basic";
+      renderDataView();
+      return;
+    }
+
     const sortButton = event.target.closest("[data-data-sort]");
     const sortKey = sortButton?.dataset.dataSort;
     if (!sortKey) return;
-    const viewId = event.currentTarget.id;
+    const viewId = getActiveDataViewId();
     const sortState = dataSortState[viewId];
     if (sortState.key === sortKey) {
       sortState.direction = sortState.direction === "desc" ? "asc" : "desc";
@@ -2480,8 +2796,7 @@ function bindEvents() {
       sortState.key = sortKey;
       sortState.direction = "desc";
     }
-      viewId === "basicData" ? renderBasicData() : renderAdvancedData();
-    });
+    renderDataView();
   });
 
   $("#playerForm").addEventListener("submit", async (event) => {
@@ -2601,6 +2916,7 @@ function bindEvents() {
   });
   updateBalanceModeDescription();
   $("#generateTeams").addEventListener("click", () => saveTeams().catch((error) => alert(formatTeamGenerationError(error))));
+  $("#copyTeamsScreenshot")?.addEventListener("click", () => copyTeamsScreenshot());
 
   $("#matchDate").valueAsDate = new Date();
 
@@ -2641,9 +2957,6 @@ function bindEvents() {
       alert(error.message);
     }
   });
-
-  $("#matchesList").addEventListener("click", handleMatchCardOpen);
-  $("#matchesList").addEventListener("keydown", handleMatchCardKeydown);
 
   $("#adminMatchesList").addEventListener("click", async (event) => {
     const editId = event.target.dataset.editMatch;

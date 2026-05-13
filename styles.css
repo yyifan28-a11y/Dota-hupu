@@ -320,6 +320,35 @@ button {
   width: 160px;
 }
 
+.data-view-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 4px;
+}
+
+.data-view-switch button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.data-view-switch button.is-active,
+.data-view-switch button:hover,
+.data-view-switch button:focus-visible {
+  background: var(--surface);
+  color: var(--green-dark);
+  outline: none;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -583,11 +612,25 @@ select:focus {
   background: var(--green-dark);
 }
 
+.primary-button:disabled,
+.primary-button.is-cooling-down {
+  cursor: not-allowed;
+  border-color: var(--line);
+  background: #dce4e0;
+  color: var(--muted);
+}
+
 .secondary-button,
 .ghost-button {
   border-color: var(--line);
   background: var(--surface);
   color: var(--ink);
+}
+
+.compact-button {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
 }
 
 .score-inputs,
@@ -832,39 +875,94 @@ select:focus {
 
 .teams-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: stretch;
+  gap: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 18px;
+  box-shadow: 0 12px 34px rgba(8, 28, 21, 0.08);
+}
+
+.team-share-actions {
+  display: flex;
+  justify-content: center;
 }
 
 .team-panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfdfc;
   padding: 18px;
 }
 
 .team-title {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   gap: 12px;
-  margin-bottom: 12px;
+  text-align: center;
 }
 
-.team-title span {
-  color: var(--muted);
-  font-size: 14px;
+.team-title h3 {
+  margin: 0;
 }
 
 .radiant {
-  border-top: 4px solid var(--green);
+  border-left: 4px solid var(--green);
 }
 
 .dire {
-  border-top: 4px solid var(--red);
+  border-right: 4px solid var(--red);
+}
+
+.versus-center {
+  align-self: center;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  min-width: 88px;
+}
+
+.generated-mode-label {
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.team-total-rating {
+  justify-self: center;
+  width: min(180px, 100%);
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  color: var(--green-dark);
+  font-size: 16px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.dire .team-total-rating {
+  color: var(--red);
+}
+
+.versus-mark {
+  color: var(--green-dark);
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: 0;
 }
 
 .team-list {
   display: grid;
   gap: 8px;
   margin: 0;
-  padding-left: 22px;
+  padding: 0;
+  list-style: none;
 }
 
 .team-list li,
@@ -2042,6 +2140,24 @@ select:focus {
   color: #8a4b0b;
 }
 
+.excel-preview-table-wrap {
+  max-height: 346px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.excel-preview-table-wrap .excel-preview-table {
+  min-width: 780px;
+}
+
+.excel-preview-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+
 .excel-preview-table th,
 .excel-preview-table td {
   white-space: nowrap;
@@ -2124,6 +2240,32 @@ select:focus {
   .detail-grid,
   .match-selection-layout {
     grid-template-columns: 1fr;
+  }
+
+  .teams-grid {
+    gap: 12px;
+  }
+
+  .versus-center {
+    justify-self: center;
+  }
+
+  .versus-mark {
+    font-size: 18px;
+  }
+
+  .radiant,
+  .dire {
+    border-right: 1px solid var(--line);
+    border-left: 1px solid var(--line);
+  }
+
+  .radiant {
+    border-top: 4px solid var(--green);
+  }
+
+  .dire {
+    border-top: 4px solid var(--red);
   }
 
   .form-grid {

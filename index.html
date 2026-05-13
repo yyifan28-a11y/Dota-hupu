@@ -20,13 +20,11 @@
         <nav class="nav-tabs" aria-label="主导航">
           <button class="nav-tab is-active" data-view="dashboard" type="button">总览</button>
           <button class="nav-tab" data-view="players" type="button">战绩</button>
-          <button class="nav-tab" data-view="basicData" type="button">基础数据</button>
-          <button class="nav-tab" data-view="advancedData" type="button">高阶数据</button>
+          <button class="nav-tab" data-view="data" type="button">数据</button>
           <button class="nav-tab" data-view="heroes" type="button">英雄</button>
           <button class="nav-tab" data-view="relations" type="button">队友对手</button>
           <button class="nav-tab" data-view="generator" type="button">对阵生成器</button>
-          <button class="nav-tab" data-view="matches" type="button">比赛</button>
-          <button class="nav-tab admin-nav-tab" data-view="data" type="button">
+          <button class="nav-tab admin-nav-tab" data-view="admin" type="button">
             <span>管理</span>
           </button>
         </nav>
@@ -81,6 +79,7 @@
           <section class="panel">
             <div class="panel-header">
               <h3>最近比赛</h3>
+              <button class="secondary-button compact-button" id="toggleAllMatches" type="button">显示所有比赛</button>
             </div>
             <div id="recentMatches" class="match-list"></div>
           </section>
@@ -121,37 +120,23 @@
           </section>
         </section>
 
-        <section class="view" id="basicData">
+        <section class="view" id="data">
           <div class="page-heading">
             <div>
-              <h2>基础数据</h2>
-              <p>评分、KDA 和核心输出表现。</p>
+              <h2>数据</h2>
+              <p>切换查看基础表现和高阶表现。</p>
             </div>
           </div>
 
           <section class="panel">
-            <div class="table-wrap">
-              <table>
-                <thead><tr></tr></thead>
-                <tbody id="basicDataBody"></tbody>
-              </table>
+            <div class="data-view-switch" aria-label="数据类型">
+              <button class="is-active" data-data-view-mode="basic" type="button">基础数据</button>
+              <button data-data-view-mode="advanced" type="button">高阶数据</button>
             </div>
-          </section>
-        </section>
-
-        <section class="view" id="advancedData">
-          <div class="page-heading">
-            <div>
-              <h2>高阶数据</h2>
-              <p>经济效率、参战、推进和承伤表现。</p>
-            </div>
-          </div>
-
-          <section class="panel">
             <div class="table-wrap">
-              <table>
+              <table id="dataViewTable">
                 <thead><tr></tr></thead>
-                <tbody id="advancedDataBody"></tbody>
+                <tbody id="dataViewBody"></tbody>
               </table>
             </div>
           </section>
@@ -291,31 +276,30 @@
             </div>
           </section>
 
+          <div class="team-share-actions is-hidden" id="teamShareActions">
+            <button class="secondary-button" id="copyTeamsScreenshot" type="button">复制对阵截图至剪切板</button>
+          </div>
           <section class="teams-grid is-hidden" id="generatedTeams">
             <div class="team-panel radiant">
               <div class="team-title">
                 <h3>天辉</h3>
-                <span id="radiantRating">总评分 0</span>
               </div>
               <ol id="radiantTeam" class="team-list"></ol>
+              <div id="radiantRating" class="team-total-rating">总分 0.0</div>
+            </div>
+            <div class="versus-center">
+              <span id="generatedModeLabel" class="generated-mode-label">位置优先</span>
+              <div class="versus-mark" aria-hidden="true">VS</div>
             </div>
             <div class="team-panel dire">
               <div class="team-title">
                 <h3>夜魇</h3>
-                <span id="direRating">总评分 0</span>
               </div>
               <ol id="direTeam" class="team-list"></ol>
+              <div id="direRating" class="team-total-rating">总分 0.0</div>
             </div>
           </section>
         </section>
-
-        <section class="view" id="matches">
-          <div class="page-heading">
-            <div>
-              <h2>比赛记录</h2>
-              <p>保存胜负时记录每个人本场位置，后续自动形成位置倾向。</p>
-            </div>
-          </div>
 
           <form class="match-form admin-only" id="matchForm">
             <h3 class="form-section-title">基本信息</h3>
@@ -368,16 +352,7 @@
             <button class="primary-button" id="matchSubmitButton" type="submit">录入比赛</button>
           </form>
 
-          <section class="panel">
-            <div class="panel-header">
-              <h3>历史比赛</h3>
-              <span id="matchesCountLabel">0 场</span>
-            </div>
-            <div id="matchesList" class="match-list"></div>
-          </section>
-        </section>
-
-        <section class="view" id="data">
+        <section class="view" id="admin">
           <div class="page-heading">
             <div>
               <h2>管理</h2>
