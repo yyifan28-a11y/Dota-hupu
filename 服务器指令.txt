@@ -1,0 +1,10 @@
+cd ~/Dota-hupu
+set -e
+
+git fetch origin
+git status
+git pull --rebase origin main
+
+npm install
+pm2 restart dota-hupu --update-env
+pm2 list

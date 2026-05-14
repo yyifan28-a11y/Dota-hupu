@@ -366,7 +366,16 @@
               <p id="adminStatus">未进入管理员模式。进入后可以添加/删除人员、改评分、保存比赛和管理数据。</p>
             </div>
             <div class="admin-login">
-              <input id="adminPasswordInput" type="password" placeholder="管理员密码" />
+              <div class="password-field">
+                <input id="adminPasswordInput" type="password" placeholder="管理员密码" autocomplete="current-password" />
+                <button class="password-toggle" id="adminPasswordToggle" type="button" aria-label="显示密码" aria-pressed="false">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </button>
+                <span class="caps-lock-hint" id="adminCapsLockHint" role="status" aria-live="polite">大写锁定已开启</span>
+              </div>
               <button class="primary-button" id="adminLogin" type="button">进入管理员模式</button>
               <button class="secondary-button" id="adminLogout" type="button">退出管理员模式</button>
             </div>

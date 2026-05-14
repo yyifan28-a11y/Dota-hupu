@@ -219,6 +219,7 @@ function getPlayerDataStats(playerId) {
 function createEmptyPositionStats() {
   return {
     counts: Object.fromEntries(POSITIONS.map((position) => [position, 0])),
+    records: Object.fromEntries(POSITIONS.map((position) => [position, { wins: 0, losses: 0 }])),
     total: 0,
     main: "-"
   };
@@ -463,6 +464,11 @@ function rebuildDerivedStats() {
         const position = match.playerDetails?.[playerId]?.position || match.positions?.[playerId];
         if (POSITIONS.includes(position)) {
           stats.positionStats.counts[position] += 1;
+          if (isWin) {
+            stats.positionStats.records[position].wins += 1;
+          } else {
+            stats.positionStats.records[position].losses += 1;
+          }
           stats.positionStats.total += 1;
         }
 
@@ -687,7 +693,10 @@ function renderRecordHeader(table) {
       </th>
     `).join("")}
     <th class="record-position-heading">
-      <span class="table-heading"><span>位置</span></span>
+      <span class="table-heading record-position-title">
+        <span>位置</span>
+        <span class="position-legend" aria-label="图例"><svg class="position-legend-star" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2.8l2.7 5.7 6.2.8-4.6 4.3 1.2 6.1-5.5-3.1-5.5 3.1 1.2-6.1-4.6-4.3 6.2-.8L12 2.8z" /></svg>=10</span>
+      </span>
       <span class="position-axis" aria-label="位置编号">
         ${positionColumns.map((column) => `
           <b>
@@ -1972,19 +1981,39 @@ function renderTendency(playerId) {
     <div class="tendency" title="共 ${stats.total} 场有位置记录">
       ${POSITIONS.map((position) => {
         const count = stats.counts[position];
-        const tens = Math.floor(count / 10);
-        const ones = count % 10;
-        const balls = [
-          ...Array.from({ length: tens }, () => `<i class="position-dot position-dot-${position} position-dot-ten" title="${position}号位 10 次">10</i>`),
-          ...Array.from({ length: ones }, () => `<i class="position-dot position-dot-${position}" title="${position}号位"></i>`)
-        ].join("");
+        const record = stats.records?.[position] || { wins: 0, losses: 0 };
         return `
-          <span class="position-zone" title="${position}号位 ${count} 次">
-            <span class="position-balls">${balls}</span>
+          <span class="position-zone position-zone-${position}" title="${position}号位 ${count} 次，胜负 ${record.wins}-${record.losses}">
+            ${renderPositionDots(count)}
+            <span class="position-record" aria-label="胜负 ${record.wins}-${record.losses}">
+              <span class="position-record-item">+${record.wins}</span>
+              <span class="position-record-divider"></span>
+              <span class="position-record-item">-${record.losses}</span>
+            </span>
           </span>
         `;
       }).join("")}
     </div>
+  `;
+}
+
+function renderPositionDots(count) {
+  const safeCount = Math.max(0, Math.floor(Number(count || 0)));
+  const tens = Math.floor(safeCount / 10);
+  const ones = safeCount % 10;
+  const tenDots = Array.from({ length: tens }, () => `
+    <span class="position-dot position-dot-ten" title="10 次">
+      <svg class="position-dot-star" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 2.8l2.7 5.7 6.2.8-4.6 4.3 1.2 6.1-5.5-3.1-5.5 3.1 1.2-6.1-4.6-4.3 6.2-.8L12 2.8z" />
+      </svg>
+    </span>
+  `).join("");
+  const oneDots = Array.from({ length: ones }, () => `<span class="position-dot position-dot-one" title="1 次"></span>`).join("");
+
+  return `
+    <span class="position-dot-count" aria-label="${safeCount} 次">
+      ${tenDots}${oneDots}
+    </span>
   `;
 }
 
@@ -2711,6 +2740,7 @@ function escapeHtml(value) {
 
 function bindEvents() {
   setupAdminLayout();
+  setupPasswordControls();
 
   document.addEventListener("error", (event) => {
     if (event.target?.classList?.contains("hero-avatar")) {
@@ -3107,6 +3137,31 @@ function setupAdminLayout() {
   if (mount && form && form.parentElement !== mount) {
     mount.appendChild(form);
   }
+}
+
+function setupPasswordControls() {
+  const input = $("#adminPasswordInput");
+  const toggle = $("#adminPasswordToggle");
+  const capsHint = $("#adminCapsLockHint");
+  if (!input) return;
+
+  const updateCapsHint = (event) => {
+    const isCapsLock = Boolean(event?.getModifierState?.("CapsLock"));
+    capsHint?.classList.toggle("is-visible", isCapsLock);
+  };
+
+  input.addEventListener("keydown", updateCapsHint);
+  input.addEventListener("keyup", updateCapsHint);
+  input.addEventListener("focus", updateCapsHint);
+  input.addEventListener("blur", () => capsHint?.classList.remove("is-visible"));
+
+  toggle?.addEventListener("click", () => {
+    const isVisible = input.type === "text";
+    input.type = isVisible ? "password" : "text";
+    toggle.setAttribute("aria-pressed", String(!isVisible));
+    toggle.setAttribute("aria-label", isVisible ? "显示密码" : "隐藏密码");
+    input.focus();
+  });
 }
 
 bindEvents();

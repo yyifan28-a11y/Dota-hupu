@@ -403,6 +403,40 @@ table {
   text-align: center;
 }
 
+.record-table th .record-position-title {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.position-legend {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.position-legend-star {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-linejoin: round;
+  stroke-width: 1.2;
+}
+
 .record-table td:nth-child(2),
 .record-table td:nth-child(3),
 .record-table td:nth-child(4),
@@ -998,7 +1032,7 @@ select:focus {
 
 .tendency {
   display: grid;
-  grid-template-columns: repeat(5, 70px);
+  grid-template-columns: repeat(5, 84px);
   gap: 6px;
   align-items: stretch;
   width: max-content;
@@ -1007,69 +1041,117 @@ select:focus {
 .position-zone {
   position: relative;
   display: block;
-  width: 70px;
-  height: 42px;
-  padding: 5px;
+  width: 84px;
+  height: 50px;
+  padding: 0;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.58);
 }
 
-.position-balls {
-  display: flex;
-  max-height: 30px;
-  flex-wrap: wrap;
-  align-items: center;
-  align-content: flex-start;
+.position-dot-count {
+  position: absolute;
+  left: 8px;
+  top: 7px;
+  right: 21px;
+  bottom: 7px;
+  display: grid;
+  grid-template-columns: repeat(4, 9px);
+  grid-auto-rows: 9px;
+  align-content: start;
   gap: 3px;
-  overflow: hidden;
+  overflow: visible;
+  color: var(--position-color);
 }
 
 .position-dot {
+  flex: 0 0 auto;
   display: inline-grid;
-  place-items: center;
   width: 9px;
   height: 9px;
-  border-radius: 50%;
-  color: #fff;
-  font-size: 0;
-  font-style: normal;
-  font-weight: 900;
-  line-height: 1;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+  place-items: center;
+  border-radius: 999px;
+  background: var(--position-color);
 }
 
 .position-dot-ten {
-  width: 18px;
-  height: 18px;
+  position: relative;
+  background: transparent;
+  color: var(--position-color);
+}
+
+.position-dot-star {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: grid;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  transform: translate(-50%, -50%);
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-linejoin: round;
+  stroke-width: 1.2;
+}
+
+.position-dot-one {
+  background: var(--position-color);
+}
+
+.position-record {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  bottom: 0;
+  display: grid;
+  width: 20px;
+  grid-template-rows: 1fr 2px 1fr;
+  place-items: center;
+  color: var(--muted);
   font-size: 10px;
-  letter-spacing: 0;
+  font-weight: 500;
+  line-height: 1;
 }
 
-.position-dot-1 {
-  background: #1f7a4d;
+.position-record-item {
+  display: block;
+  min-width: 16px;
+  text-align: center;
+  white-space: nowrap;
 }
 
-.position-dot-2 {
-  background: #2563eb;
+.position-record-divider {
+  width: 12px;
+  height: 1px;
+  border-radius: 999px;
+  background: var(--muted);
 }
 
-.position-dot-3 {
-  background: #d97706;
+.position-zone-1 {
+  --position-color: #1f7a4d;
 }
 
-.position-dot-4 {
-  background: #7c3aed;
+.position-zone-2 {
+  --position-color: #2563eb;
 }
 
-.position-dot-5 {
-  background: #dc2626;
+.position-zone-3 {
+  --position-color: #d97706;
+}
+
+.position-zone-4 {
+  --position-color: #7c3aed;
+}
+
+.position-zone-5 {
+  --position-color: #dc2626;
 }
 
 .position-axis {
   display: grid;
-  grid-template-columns: repeat(5, 70px);
+  grid-template-columns: repeat(5, 84px);
   gap: 6px;
   margin-top: 6px;
   width: max-content;
@@ -2006,7 +2088,7 @@ select:focus {
 }
 
 .is-admin .admin-entry-status h3,
-.is-admin .admin-entry-panel #adminPasswordInput,
+.is-admin .admin-entry-panel .password-field,
 .is-admin .admin-entry-panel #adminLogin {
   display: none;
 }
@@ -2096,6 +2178,63 @@ select:focus {
 
 .admin-login input {
   width: 180px;
+}
+
+.password-field {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  width: 198px;
+}
+
+.password-field input {
+  width: 100%;
+  padding-right: 38px;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.password-toggle:hover,
+.password-toggle:focus-visible {
+  background: rgba(20, 129, 89, 0.1);
+  color: var(--green-dark);
+  outline: none;
+}
+
+.password-toggle svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.caps-lock-hint {
+  display: none;
+  justify-self: end;
+  color: #d97706;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.caps-lock-hint.is-visible {
+  display: inline;
 }
 
 .excel-import-preview {
