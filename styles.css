@@ -213,6 +213,129 @@ button {
   min-height: 180px;
 }
 
+.records-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.record-card {
+  position: relative;
+  display: grid;
+  min-height: 116px;
+  grid-template-rows: auto 1fr auto;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 14px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.record-card::before {
+  content: "";
+  position: absolute;
+  inset: -14px;
+  z-index: -2;
+  background: var(--record-bg-image, none) center / cover no-repeat;
+  filter: none;
+  opacity: 0;
+  transform: scale(1.08);
+}
+
+.record-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.54) 0%, rgba(255, 255, 255, 0.32) 48%, rgba(255, 255, 255, 0) 100%);
+}
+
+.record-card.has-hero-bg::before {
+  opacity: 1;
+}
+
+.record-card.has-hero-bg::after {
+  backdrop-filter: none;
+}
+
+.record-card:hover,
+.record-card:focus-visible {
+  border-color: rgba(20, 129, 89, 0.42);
+  outline: none;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.11);
+}
+
+.record-card-title {
+  color: #000;
+  display: block;
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 19px;
+  font-weight: 900;
+  -webkit-text-stroke: 0.45px #f2b705;
+  paint-order: stroke fill;
+  text-shadow: 0 0 2px rgba(242, 183, 5, 0.34);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-card strong {
+  color: #000;
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1.05;
+}
+
+.record-card-body {
+  display: block;
+  align-items: center;
+}
+
+.record-card-main {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.record-card em,
+.record-card small {
+  overflow: hidden;
+  color: #000;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  -webkit-text-stroke: 0;
+  paint-order: normal;
+  text-shadow: none;
+  white-space: nowrap;
+}
+
+.record-card small {
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.record-card em {
+  color: #000;
+  font-size: 17px;
+  font-weight: 900;
+  -webkit-text-stroke: 0;
+  paint-order: normal;
+  text-shadow: none;
+}
+
+.record-card.is-empty {
+  cursor: default;
+  opacity: 0.62;
+}
+
 .mini-rank-list {
   display: grid;
   gap: 8px;
@@ -2364,6 +2487,7 @@ select:focus {
 
   .stats-grid,
   .mini-rank-grid,
+  .records-grid,
   .content-grid,
   .teams-grid,
   .position-grid,
@@ -2436,6 +2560,10 @@ select:focus {
   }
 
   .mini-rank-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .records-grid {
     grid-template-columns: 1fr;
   }
 

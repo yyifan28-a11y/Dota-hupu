@@ -1769,6 +1769,204 @@ function renderSelectedMatchDetail() {
   updateMatchEntryStatusIndicators();
 }
 
+function renderRecords() {
+  const target = $("#recordsGrid");
+  if (!target) return;
+
+  const records = getRecordCards();
+  target.innerHTML = records.map(renderRecordCard).join("");
+}
+
+function getRecordCards() {
+  const personalRecords = [
+    { key: "kills", label: "单场最高击杀", format: formatIntegerRecord },
+    { key: "deaths", label: "单场最高死亡", format: formatIntegerRecord },
+    { key: "assists", label: "单场最高助攻", format: formatIntegerRecord },
+    { key: "damage", label: "单局最高输出", format: formatIntegerRecord },
+    { key: "damageShare", label: "单局最高输出占比", format: formatPercentRecord },
+    { key: "gpm", label: "单局最高 GPM", format: formatIntegerRecord },
+    { key: "xpm", label: "单局最高 XPM", format: formatIntegerRecord },
+    { key: "participation", label: "最高参战率", format: formatPercentRecord },
+    { key: "buildingDamage", label: "最高建筑伤害", format: formatIntegerRecord },
+    { key: "kda", label: "单场最佳 KDA", format: formatKdaRecord, value: getDetailKda },
+    { key: "netWorth10", label: "最高10分钟经济", format: formatIntegerRecord },
+    { key: "damageTaken", label: "最高承受伤害", format: formatIntegerRecord }
+  ].map(findPersonalRecord);
+
+  return [
+    ...personalRecords,
+    findDurationRecord("单局最长时间", "longest"),
+    findDurationRecord("单局最短时间", "shortest"),
+    findMatchKillRecord("单场最多人头", "highest"),
+    findMatchKillRecord("单场最少人头", "lowest")
+  ];
+}
+
+function findPersonalRecord(config) {
+  let best = null;
+  db.matches.forEach((match) => {
+    Object.entries(match.playerDetails || {}).forEach(([playerId, detail]) => {
+      const value = config.value ? config.value(detail) : Number(detail?.[config.key]);
+      if (!Number.isFinite(value) || value < 0) return;
+      if (best && value <= best.rawValue) return;
+      best = {
+        type: "personal",
+        label: config.label,
+        rawValue: value,
+        value: config.format(value),
+        player: getPlayer(playerId),
+        hero: detail.hero,
+        matchLabel: formatRecordMatchLabel(match),
+        matchId: match.id
+      };
+    });
+  });
+  return best || { label: config.label };
+}
+
+function findDurationRecord(label, mode) {
+  let best = null;
+  db.matches.forEach((match) => {
+    const seconds = getMatchDurationSeconds(match);
+    if (!Number.isFinite(seconds)) return;
+    const isBetter = mode === "longest"
+      ? !best || seconds > best.rawValue
+      : !best || seconds < best.rawValue;
+    if (!isBetter) return;
+    best = {
+      label,
+      rawValue: seconds,
+      value: formatDurationRecord(seconds),
+      matchLabel: formatRecordMatchLabel(match),
+      hero: getWinnerPositionOneHero(match),
+      matchId: match.id
+    };
+  });
+  return best || { label };
+}
+
+function findMatchKillRecord(label, mode) {
+  let best = null;
+  db.matches.forEach((match) => {
+    const kills = getMatchTotalKills(match);
+    if (!Number.isFinite(kills)) return;
+    const isBetter = mode === "lowest"
+      ? !best || kills < best.rawValue
+      : !best || kills > best.rawValue;
+    if (!isBetter) return;
+    best = {
+      label,
+      rawValue: kills,
+      value: String(kills),
+      matchLabel: formatRecordMatchLabel(match),
+      hero: getWinnerPositionOneHero(match),
+      matchId: match.id
+    };
+  });
+  return best || { label };
+}
+
+function renderRecordCard(record) {
+  const disabled = !record.matchId;
+  const heroImage = getRecordHeroImageUrl(record.hero);
+  const cardStyle = heroImage ? ` style="--record-bg-image: url('${escapeHtml(heroImage)}')"` : "";
+  const cardClass = [
+    "record-card",
+    disabled ? "is-empty" : "",
+    heroImage ? "has-hero-bg" : ""
+  ].filter(Boolean).join(" ");
+  return `
+    <button class="${cardClass}"${cardStyle} ${disabled ? "disabled" : `data-open-match="${escapeHtml(record.matchId)}"`} type="button">
+      <span class="record-card-title">${escapeHtml(record.label)}</span>
+      ${disabled ? `
+        <strong>暂无数据</strong>
+      ` : `
+        <span class="record-card-body">
+          <span class="record-card-main">
+            <strong>${escapeHtml(record.value)}</strong>
+            ${record.type === "personal" ? `<em>${escapeHtml(getRecordPlayerId(record.player))}</em>` : ""}
+          </span>
+        </span>
+        ${record.type === "personal" ? "" : `<small>${escapeHtml(record.matchLabel || "比赛信息未录入")}</small>`}
+      `}
+    </button>
+  `;
+}
+
+function getRecordHeroImageUrl(heroName) {
+  const hero = findHero(heroName);
+  return hero ? heroImageUrl(hero) : "";
+}
+
+function getWinnerPositionOneHero(match) {
+  if (!match) return "";
+  const winnerIds = match.winner === "dire" ? match.dire : match.radiant;
+  const details = match.playerDetails || {};
+  const positions = match.positions || {};
+  const carryId = winnerIds.find((id) => String(details?.[id]?.position || positions?.[id] || "") === "1") || winnerIds[0];
+  return details?.[carryId]?.hero || "";
+}
+
+function formatRecordMatchLabel(match) {
+  if (!match) return "";
+  const dateParts = String(match.date || "").match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+  const dateLabel = dateParts
+    ? `${dateParts[2].padStart(2, "0")}-${dateParts[3].padStart(2, "0")}`
+    : "日期未录入";
+  return `${dateLabel}-${String(Number(match.matchNo || 1)).padStart(2, "0")}`;
+}
+
+function getRecordPlayerId(player) {
+  return player?.steam_id || player?.steamId || player?.name || "选手未录入";
+}
+
+function formatIntegerRecord(value) {
+  return String(Math.round(value));
+}
+
+function formatPercentRecord(value) {
+  const percent = value <= 1 ? value * 100 : value;
+  return `${percent.toFixed(1)}%`;
+}
+
+function formatKdaRecord(value) {
+  return value.toFixed(2);
+}
+
+function getDetailKda(detail) {
+  const kills = Number(detail?.kills);
+  const assists = Number(detail?.assists);
+  const deaths = Number(detail?.deaths);
+  if (!Number.isFinite(kills) || !Number.isFinite(assists) || !Number.isFinite(deaths)) return null;
+  return (kills + assists) / Math.max(1, deaths);
+}
+
+function getMatchDurationSeconds(match) {
+  const duration = String(match.score || "").split("/").slice(1).join("/").trim();
+  if (!duration) return null;
+  const parts = duration.match(/\d+/g)?.map(Number) || [];
+  if (parts.length >= 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 1) return parts[0] * 60;
+  return null;
+}
+
+function formatDurationRecord(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+function getMatchTotalKills(match) {
+  const score = String(match.score || "").split("/")[0] || "";
+  const scores = score.match(/\d+/g)?.map(Number) || [];
+  if (scores.length >= 2) return scores[0] + scores[1];
+
+  const detailKills = Object.values(match.playerDetails || {})
+    .map((detail) => Number(detail?.kills))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  return detailKills.length ? detailKills.reduce((sum, value) => sum + value, 0) : null;
+}
+
 function renderAdmin() {
   renderAdminPlayers();
   renderMatchEntryEditor();
@@ -1965,6 +2163,7 @@ function renderCurrentView() {
     players: renderPlayers,
     data: renderDataView,
     heroes: renderHeroes,
+    records: renderRecords,
     relations: renderRelations,
     generator: renderGenerator,
     admin: renderAdmin
@@ -2806,6 +3005,9 @@ function bindEvents() {
     heroRankModes[button.dataset.heroRank] = button.dataset.heroMode;
     renderHeroRankings();
   });
+
+  $("#records")?.addEventListener("click", handleMatchCardOpen);
+  $("#records")?.addEventListener("keydown", handleMatchCardKeydown);
 
   $("#data")?.addEventListener("click", (event) => {
     const modeButton = event.target.closest("[data-data-view-mode]");
