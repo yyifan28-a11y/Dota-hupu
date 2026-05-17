@@ -1046,7 +1046,7 @@ function getTeamKills(records) {
 function normalizeSide(value) {
   const text = String(value || "").trim();
   if (text === "天辉" || text.toLowerCase() === "radiant") return "radiant";
-  if (text === "夜魇" || text.toLowerCase() === "dire") return "dire";
+  if (text === "夜魇" || text === "夜魔" || text.toLowerCase() === "dire") return "dire";
   return "";
 }
 

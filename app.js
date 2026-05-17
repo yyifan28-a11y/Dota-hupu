@@ -59,6 +59,8 @@ let pendingExcelMatches = [];
 let showAllDashboardMatches = false;
 let activeDataViewMode = "basic";
 let teamGenerationCooldownTimer = null;
+let playerSearchSelectedId = "";
+let isComposingPlayerSearch = false;
 let heroRankModes = {
   positive: "winrate",
   negative: "winrate"
@@ -1328,6 +1330,7 @@ function renderPicker() {
   const picker = $("#playerPicker");
   if (!db.players.length) {
     renderEmpty(picker);
+    renderPlayerSearchResults();
     return;
   }
 
@@ -1344,7 +1347,109 @@ function renderPicker() {
       </label>
     `)
     .join("");
+  renderPlayerSearchResults();
   updateSelectionUi();
+}
+
+function renderPlayerSearchResults() {
+  const target = $("#playerSearchResults");
+  const input = $("#playerSearchInput");
+  if (!target || !input) return;
+
+  const query = normalizeSearchText(input.value);
+  if (!query) {
+    playerSearchSelectedId = "";
+    target.hidden = true;
+    target.innerHTML = "";
+    updatePlayerSearchConfirm();
+    return;
+  }
+
+  const selectedPlayer = getPlayer(playerSearchSelectedId);
+  if (selectedPlayer && normalizeSearchText(input.value) === normalizeSearchText(getPlayerSearchSelectionLabel(selectedPlayer))) {
+    target.hidden = true;
+    target.innerHTML = "";
+    updatePlayerSearchConfirm();
+    return;
+  }
+
+  const selectedIds = new Set(getSelectedPlayerIds());
+  const matches = db.players
+    .filter((player) => getPlayerSearchText(player).includes(query))
+    .slice(0, 8);
+
+  target.hidden = false;
+  if (!matches.length) {
+    playerSearchSelectedId = "";
+    target.innerHTML = `<span class="muted">&#27809;&#26377;&#21305;&#37197;&#30340;&#36873;&#25163;&#12290;</span>`;
+    updatePlayerSearchConfirm();
+    return;
+  }
+
+  if (!matches.some((player) => player.id === playerSearchSelectedId)) {
+    playerSearchSelectedId = matches[0].id;
+  }
+
+  target.innerHTML = matches.map((player) => {
+    const isSelected = player.id === playerSearchSelectedId;
+    const alreadyPicked = selectedIds.has(player.id);
+    return `
+      <button class="player-search-result ${isSelected ? "is-active" : ""} ${alreadyPicked ? "is-picked" : ""}" data-search-player="${player.id}" type="button">
+        <strong>${escapeHtml(player.name)}</strong>
+        <span>&#35780;&#20998; ${formatRating(player.rating)}${alreadyPicked ? " &middot; &#24050;&#36873;&#25321;" : ""}</span>
+      </button>
+    `;
+  }).join("");
+  updatePlayerSearchConfirm();
+}
+
+function updatePlayerSearchConfirm() {
+  const button = $("#confirmPlayerSearch");
+  if (!button) return;
+  const selectedIds = new Set(getSelectedPlayerIds());
+  const canAdd = Boolean(playerSearchSelectedId)
+    && !selectedIds.has(playerSearchSelectedId);
+  button.disabled = !canAdd;
+}
+
+function getPlayerSearchText(player) {
+  return normalizeSearchText([
+    player.name,
+    player.steamId,
+    player.steam_id
+  ].filter(Boolean).join(" "));
+}
+
+function getPlayerDisplayId(player) {
+  return player?.steam_id || player?.steamId || player?.name || "";
+}
+
+function getPlayerSearchSelectionLabel(player) {
+  return player?.name || getPlayerDisplayId(player);
+}
+
+function normalizeSearchText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function confirmPlayerSearchSelection() {
+  if (!playerSearchSelectedId) return;
+  const input = $$("#playerPicker input").find((item) => item.value === playerSearchSelectedId);
+  if (!input) return;
+  if (input.checked) {
+    alert("这个选手已经选择了。");
+    return;
+  }
+  if (getSelectedPlayerIds().length >= 10) {
+    alert("人数已满");
+    return;
+  }
+  input.checked = true;
+  const searchInput = $("#playerSearchInput");
+  if (searchInput) searchInput.value = "";
+  playerSearchSelectedId = "";
+  updateSelectionUi();
+  renderPlayerSearchResults();
 }
 
 function renderTeams() {
@@ -2590,6 +2695,7 @@ function updateSelectionUi() {
     chip.classList.toggle("is-dimmed", isFull && !checked);
     if (input) input.disabled = isFull && !checked;
   });
+  updatePlayerSearchConfirm();
   renderConstraintOptions();
   updateGenerateTeamsButton();
 }
@@ -3051,6 +3157,39 @@ function bindEvents() {
   });
 
   $("#playerPicker").addEventListener("change", handlePlayerPickerChange);
+  $("#playerSearchInput")?.addEventListener("input", () => {
+    if (isComposingPlayerSearch) return;
+    playerSearchSelectedId = "";
+    renderPlayerSearchResults();
+  });
+  $("#playerSearchInput")?.addEventListener("compositionstart", () => {
+    isComposingPlayerSearch = true;
+  });
+  $("#playerSearchInput")?.addEventListener("compositionend", () => {
+    isComposingPlayerSearch = false;
+    playerSearchSelectedId = "";
+    renderPlayerSearchResults();
+  });
+  $("#playerSearchInput")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    confirmPlayerSearchSelection();
+  });
+  $("#playerSearchResults")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-search-player]");
+    if (!button) return;
+    playerSearchSelectedId = button.dataset.searchPlayer;
+    const player = getPlayer(playerSearchSelectedId);
+    const input = $("#playerSearchInput");
+    if (input && player) input.value = getPlayerSearchSelectionLabel(player);
+    renderPlayerSearchResults();
+  });
+  document.addEventListener("click", (event) => {
+    if (event.target.closest(".player-search-panel")) return;
+    const target = $("#playerSearchResults");
+    if (target) target.hidden = true;
+  });
+  $("#confirmPlayerSearch")?.addEventListener("click", confirmPlayerSearchSelection);
 
   $("#matchPlayerPicker").addEventListener("click", (event) => {
     const assignButton = event.target.closest("[data-assign-side]");
