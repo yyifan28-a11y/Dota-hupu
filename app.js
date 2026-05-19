@@ -39,6 +39,19 @@ const BALANCE_MODE_LABELS = {
   winrate: "胜率平衡"
 };
 
+const RATING_TREND_COLORS = [
+  "#15803d",
+  "#2563eb",
+  "#dc2626",
+  "#9333ea",
+  "#d97706",
+  "#0891b2",
+  "#be185d",
+  "#4f46e5",
+  "#65a30d",
+  "#0f766e"
+];
+
 let isAdmin = Boolean(sessionStorage.getItem(ADMIN_PASSWORD_KEY));
 let constraints = [];
 let matchDetails = {};
@@ -56,11 +69,14 @@ let heroUsageByPlayerId = new Map();
 let heroRankStats = [];
 let pairRankStats = { teammate: [], trio: [], opponent: [] };
 let pendingExcelMatches = [];
+let pendingRatingSnapshots = [];
 let showAllDashboardMatches = false;
 let activeDataViewMode = "basic";
 let teamGenerationCooldownTimer = null;
 let playerSearchSelectedId = "";
 let isComposingPlayerSearch = false;
+let ratingTrendSelectedIds = [];
+let ratingTrendHasUserSelection = false;
 let heroRankModes = {
   positive: "winrate",
   negative: "winrate"
@@ -1245,6 +1261,164 @@ function renderPairNames(pair, type = "teammate") {
   return escapeHtml(formatPairNames(pair, type));
 }
 
+function renderRatingTrends() {
+  const snapshots = Array.isArray(db.ratingSnapshots) ? db.ratingSnapshots : [];
+  const playerList = $("#ratingTrendPlayerList");
+  const chart = $("#ratingTrendChart");
+  if (!playerList || !chart) return;
+
+  const initialRatings = new Map();
+  const playersWithHistory = db.players
+    .filter((player) => snapshots.some((item) => item.playerId === player.id))
+    .map((player) => {
+      const initialRating = getInitialRating(player.id, snapshots);
+      initialRatings.set(player.id, initialRating);
+      return player;
+    })
+    .sort((a, b) => initialRatings.get(b.id) - initialRatings.get(a.id) || a.name.localeCompare(b.name, "zh-Hans"));
+
+  if (!snapshots.length || !playersWithHistory.length) {
+    playerList.innerHTML = "";
+    chart.innerHTML = `<div class="empty-state">暂无评分走势数据</div>`;
+    return;
+  }
+
+  if (!ratingTrendSelectedIds.length && !ratingTrendHasUserSelection) {
+    ratingTrendSelectedIds = playersWithHistory.map((player) => player.id);
+  }
+  const validIds = new Set(playersWithHistory.map((player) => player.id));
+  const selectedSet = new Set(ratingTrendSelectedIds.filter((id) => validIds.has(id)));
+  ratingTrendSelectedIds = playersWithHistory.map((player) => player.id).filter((id) => selectedSet.has(id));
+
+  const controls = `
+    <div class="rating-trend-player-actions">
+      <button class="ghost-button compact-button" data-rating-trend-action="select-all" type="button">全选</button>
+      <button class="ghost-button compact-button" data-rating-trend-action="clear" type="button">清空</button>
+    </div>
+  `;
+  const playerItems = playersWithHistory.map((player) => {
+    const selectedIndex = ratingTrendSelectedIds.indexOf(player.id);
+    const isSelected = selectedIndex >= 0;
+    const color = isSelected ? RATING_TREND_COLORS[selectedIndex % RATING_TREND_COLORS.length] : "";
+    return `
+    <label class="rating-trend-player ${isSelected ? "is-selected" : ""}">
+      <input data-rating-trend-player="${player.id}" type="checkbox" ${isSelected ? "checked" : ""} />
+      <i class="rating-trend-player-dot" style="${color ? `background:${color}` : ""}"></i>
+      <span>${escapeHtml(player.name)}</span>
+      <em>${formatRating(initialRatings.get(player.id))}</em>
+    </label>
+  `;
+  }).join("");
+  playerList.innerHTML = controls + playerItems;
+
+  chart.innerHTML = renderRatingTrendChart(snapshots, ratingTrendSelectedIds);
+}
+
+function renderRatingTrendChart(snapshots, selectedIds) {
+  const dates = getRatingTrendDates(snapshots);
+  if (!dates.length) return `<div class="empty-state">暂无评分走势数据</div>`;
+
+  const series = selectedIds.length
+    ? selectedIds
+      .map((playerId, index) => buildRatingTrendSeries(playerId, dates, snapshots, index))
+      .filter((item) => item.points.some((point) => point.rating !== null))
+    : [];
+  if (selectedIds.length && !series.length) return `<div class="empty-state">所选选手暂无评分记录</div>`;
+
+  const ratings = series.length
+    ? series.flatMap((item) => item.points.map((point) => point.rating).filter((value) => value !== null))
+    : snapshots.map((snapshot) => Number(snapshot.rating)).filter(Number.isFinite);
+  if (!ratings.length) return `<div class="empty-state">暂无评分走势数据</div>`;
+  const minRating = Math.max(0, Math.floor(Math.min(...ratings) * 2) / 2 - 0.5);
+  const maxRating = Math.ceil(Math.max(...ratings) * 2) / 2 + 0.5;
+  const height = 620;
+  const margin = { top: 28, right: 34, bottom: 74, left: 58 };
+  const pointGap = 54;
+  const width = Math.max(760, margin.left + margin.right + Math.max(1, dates.length - 1) * pointGap);
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const xFor = (index) => margin.left + (dates.length === 1 ? plotWidth / 2 : (index / (dates.length - 1)) * plotWidth);
+  const yFor = (rating) => margin.top + (1 - ((rating - minRating) / (maxRating - minRating || 1))) * plotHeight;
+  const yTicks = Array.from({ length: Math.round((maxRating - minRating) / 0.5) + 1 }, (_, index) => Number((minRating + index * 0.5).toFixed(1)));
+  const dateStep = 1;
+
+  const grid = yTicks.map((tick) => {
+    const y = yFor(tick);
+    return `<g><line class="rating-trend-grid-line" x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" /><text class="rating-trend-axis" x="${margin.left - 12}" y="${y + 4}" text-anchor="end">${formatRating(tick)}</text></g>`;
+  }).join("");
+  const xLabels = dates.map((date, index) => {
+    if (index % dateStep !== 0 && index !== dates.length - 1) return "";
+    const x = xFor(index);
+    return `<text class="rating-trend-axis" x="${x}" y="${height - 32}" text-anchor="middle">${formatRatingTrendDateLabel(date, snapshots)}</text>`;
+  }).join("");
+  const paths = series.map((item) => {
+    const path = item.points.reduce((commands, point, index) => {
+      if (point.rating === null) return commands;
+      const command = commands ? "L" : "M";
+      return `${commands} ${command}${xFor(index).toFixed(1)} ${yFor(point.rating).toFixed(1)}`;
+    }, "");
+    const markers = item.points.map((point, index) => point.rating === null ? "" : `<circle class="rating-trend-dot" cx="${xFor(index).toFixed(1)}" cy="${yFor(point.rating).toFixed(1)}" r="3" fill="${item.color}"><title>${escapeHtml(item.name)} ${point.date}: ${formatRating(point.rating)}</title></circle>`).join("");
+    return `<path class="rating-trend-line" d="${path.trim()}" stroke="${item.color}" />${markers}`;
+  }).join("");
+  const emptySelectionLabel = selectedIds.length ? "" : `<text class="rating-trend-empty-label" x="${margin.left + plotWidth / 2}" y="${margin.top + plotHeight / 2}" text-anchor="middle">未选择选手</text>`;
+  return `
+    <svg class="rating-trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="选手评分走势折线图">
+      <rect class="rating-trend-plot-bg" x="${margin.left}" y="${margin.top}" width="${plotWidth}" height="${plotHeight}" />
+      ${grid}
+      <line class="rating-trend-axis-line" x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" />
+      <line class="rating-trend-axis-line" x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${height - margin.bottom}" />
+      ${xLabels}
+      ${emptySelectionLabel}
+      ${paths}
+    </svg>
+  `;
+}
+
+function getRatingTrendDates(snapshots) {
+  return [...new Set(snapshots.map((snapshot) => snapshot.date).filter(Boolean))].sort();
+}
+
+function buildRatingTrendSeries(playerId, dates, snapshots, index) {
+  const player = getPlayer(playerId);
+  const playerSnapshots = snapshots
+    .filter((snapshot) => snapshot.playerId === playerId)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const byDate = new Map(
+    playerSnapshots.map((snapshot) => [snapshot.date, Number(snapshot.rating)])
+  );
+  let carried = playerSnapshots
+    .filter((snapshot) => snapshot.date < dates[0] && Number.isFinite(Number(snapshot.rating)))
+    .map((snapshot) => Number(snapshot.rating))
+    .at(-1) ?? null;
+  return {
+    playerId,
+    name: player?.name || "-",
+    color: RATING_TREND_COLORS[index % RATING_TREND_COLORS.length],
+    points: dates.map((date) => {
+      if (Number.isFinite(byDate.get(date))) carried = byDate.get(date);
+      return { date, rating: carried };
+    })
+  };
+}
+
+function getInitialRating(playerId, snapshots) {
+  const playerSnapshots = snapshots
+    .filter((snapshot) => snapshot.playerId === playerId && Number.isFinite(Number(snapshot.rating)))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const first = playerSnapshots.find((snapshot) => snapshot.source === "import_initial") || playerSnapshots[0];
+  return first ? Number(first.rating) : 0;
+}
+
+function formatShortRatingDate(date) {
+  const [, month, day] = String(date || "").split("-");
+  return month && day ? `${month}-${day}` : date;
+}
+
+function formatRatingTrendDateLabel(date, snapshots) {
+  const isInitial = snapshots.some((snapshot) => snapshot.date === date && snapshot.source === "import_initial");
+  return isInitial ? "初始" : formatShortRatingDate(date);
+}
+
 function renderDataTable(viewId, columns, body) {
   if (!body) return;
   renderDataHeader(body.closest("table"), columns, viewId);
@@ -2100,7 +2274,10 @@ function renderAdminPlayers() {
       <tr>
         <td><strong>${escapeHtml(player.name)}</strong></td>
         <td>
-          <input class="rating-input" data-rating-input="${player.id}" type="number" min="0" step="0.5" value="${formatRating(player.rating)}" />
+          <div class="rating-editor">
+            <input class="rating-input" data-rating-input="${player.id}" type="number" min="0" step="0.5" value="${formatRating(player.rating)}" />
+            <button class="ghost-button compact-button rating-save-button" data-save-rating="${player.id}" type="button" hidden>保存</button>
+          </div>
         </td>
         <td>${formatDateTime(player.ratingUpdatedAt)}</td>
         <td>${escapeHtml(player.note || "-")}</td>
@@ -2110,6 +2287,16 @@ function renderAdminPlayers() {
       </tr>
     `)
     .join("");
+}
+
+function updateRatingSaveButton(input) {
+  const button = input?.closest(".rating-editor")?.querySelector("[data-save-rating]");
+  if (!button) return;
+  const player = getPlayer(input.dataset.ratingInput);
+  const inputRating = Number(input.value);
+  const currentRating = Number(player?.rating || 0);
+  const hasValidChange = Number.isFinite(inputRating) && inputRating >= 0 && inputRating !== currentRating;
+  button.hidden = !hasValidChange;
 }
 
 function renderAdminMatches() {
@@ -2270,6 +2457,7 @@ function renderCurrentView() {
     heroes: renderHeroes,
     records: renderRecords,
     relations: renderRelations,
+    ratingTrends: renderRatingTrends,
     generator: renderGenerator,
     admin: renderAdmin
   };
@@ -3011,6 +3199,47 @@ function renderExcelImportPreview(result) {
   `;
 }
 
+function renderRatingHistoryImportPreview(result) {
+  const target = $("#ratingHistoryImportPreview");
+  if (!target) return;
+
+  pendingRatingSnapshots = Array.isArray(result.snapshots) ? result.snapshots : [];
+  const errors = result.errors || [];
+  const unmatchedPlayers = result.unmatchedPlayers || [];
+  const dateColumns = result.dateColumns || [];
+  const skippedColumns = result.skippedColumns || [];
+  const matchedPlayers = result.matchedPlayers || [];
+  const previewRows = pendingRatingSnapshots.slice(0, 12).map((snapshot) => `
+    <tr>
+      <td>${escapeHtml(snapshot.date)}</td>
+      <td>${escapeHtml(snapshot.playerName || "-")}</td>
+      <td>${formatRating(snapshot.rating)}</td>
+    </tr>
+  `).join("");
+
+  target.innerHTML = `
+    <div class="excel-preview-card">
+      <h4>历史评分导入预览</h4>
+      <p>识别到 ${dateColumns.length} 个日期列，匹配 ${matchedPlayers.length} 名选手，可导入 ${pendingRatingSnapshots.length} 条评分记录。</p>
+      ${errors.length ? `<div class="excel-message error">${errors.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : ""}
+      ${unmatchedPlayers.length ? `<div class="excel-message warning"><p>未匹配选手：${escapeHtml(unmatchedPlayers.join("、"))}</p></div>` : ""}
+      ${skippedColumns.length ? `<div class="excel-message warning"><p>已跳过列：${escapeHtml(skippedColumns.join("、"))}</p></div>` : ""}
+      ${previewRows ? `
+        <div class="table-wrap excel-preview-table-wrap">
+          <table class="excel-preview-table">
+            <thead><tr><th>日期</th><th>选手</th><th>评分</th></tr></thead>
+            <tbody>${previewRows}</tbody>
+          </table>
+        </div>
+      ` : ""}
+      <div class="button-row">
+        <button class="primary-button" id="confirmRatingHistoryImport" type="button" ${result.canImport ? "" : "disabled"}>确认导入历史评分</button>
+        <button class="secondary-button" id="clearRatingHistoryImport" type="button">取消预览</button>
+      </div>
+    </div>
+  `;
+}
+
 function sortExcelPreviewMatches(matches, existingMatchKeys) {
   return [...matches].sort((a, b) => getExcelPreviewRank(a, existingMatchKeys) - getExcelPreviewRank(b, existingMatchKeys));
 }
@@ -3096,6 +3325,30 @@ function bindEvents() {
     if (event.target.closest("#opponentQueryA, #opponentQueryB")) {
       renderOpponentQuery();
     }
+  });
+
+  $("#ratingTrends")?.addEventListener("change", (event) => {
+    const input = event.target.closest("[data-rating-trend-player]");
+    if (!input) return;
+    ratingTrendHasUserSelection = true;
+    if (input.checked) {
+      ratingTrendSelectedIds = [...new Set([...ratingTrendSelectedIds, input.dataset.ratingTrendPlayer])];
+    } else {
+      ratingTrendSelectedIds = ratingTrendSelectedIds.filter((id) => id !== input.dataset.ratingTrendPlayer);
+    }
+    renderRatingTrends();
+  });
+
+  $("#ratingTrends")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-rating-trend-action]");
+    if (!button) return;
+    const snapshots = Array.isArray(db.ratingSnapshots) ? db.ratingSnapshots : [];
+    const validIds = new Set(snapshots.map((snapshot) => snapshot.playerId));
+    ratingTrendHasUserSelection = true;
+    ratingTrendSelectedIds = button.dataset.ratingTrendAction === "select-all"
+      ? db.players.filter((player) => validIds.has(player.id)).map((player) => player.id)
+      : [];
+    renderRatingTrends();
   });
 
   $("#heroes")?.addEventListener("click", (event) => {
@@ -3251,18 +3504,28 @@ function bindEvents() {
     }
   });
 
-  $("#adminPlayersBody").addEventListener("change", async (event) => {
+  $("#adminPlayersBody").addEventListener("input", (event) => {
     const input = event.target.closest("[data-rating-input]");
+    if (!input) return;
+    updateRatingSaveButton(input);
+  });
+
+  $("#adminPlayersBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-save-rating]");
+    if (!button) return;
+    const input = button.closest(".rating-editor")?.querySelector("[data-rating-input]");
     if (!input) return;
 
     try {
-      await adminApi(`/api/players/${input.dataset.ratingInput}/rating`, {
+      button.disabled = true;
+      await adminApi(`/api/players/${button.dataset.saveRating}/rating`, {
         method: "PUT",
         body: JSON.stringify({ rating: input.value })
       });
       await loadState();
     } catch (error) {
       alert(error.message);
+      button.disabled = false;
     }
   });
 
@@ -3432,6 +3695,56 @@ function bindEvents() {
       $("#excelImportPreview").innerHTML = "";
       renderAll();
       alert(`已导入 ${result.imported} 场比赛。`);
+    } catch (error) {
+      alert(error.details?.join("\n") || error.message);
+    }
+  });
+
+  $("#importRatingHistoryData")?.addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    try {
+      const result = await adminApi("/api/rating-history/preview", {
+        method: "POST",
+        body: JSON.stringify({
+          fileName: file.name,
+          fileBase64: await fileToBase64(file)
+        })
+      });
+      renderRatingHistoryImportPreview(result);
+    } catch (error) {
+      alert(error.message || "历史评分 Excel 解析失败，请确认文件格式。");
+    } finally {
+      event.target.value = "";
+    }
+  });
+
+  $("#ratingHistoryImportPreview")?.addEventListener("click", async (event) => {
+    if (event.target.id === "clearRatingHistoryImport") {
+      pendingRatingSnapshots = [];
+      $("#ratingHistoryImportPreview").innerHTML = "";
+      return;
+    }
+
+    if (event.target.id !== "confirmRatingHistoryImport") return;
+    if (!pendingRatingSnapshots.length) {
+      alert("没有可导入的历史评分。");
+      return;
+    }
+    if (!confirm(`确认导入 ${pendingRatingSnapshots.length} 条历史评分记录吗？`)) return;
+
+    try {
+      const result = await adminApi("/api/rating-history/import", {
+        method: "POST",
+        body: JSON.stringify({ snapshots: pendingRatingSnapshots })
+      });
+      db = result.state;
+      rebuildDerivedStats();
+      pendingRatingSnapshots = [];
+      $("#ratingHistoryImportPreview").innerHTML = "";
+      renderAll();
+      alert(`已导入 ${result.imported} 条历史评分记录。`);
     } catch (error) {
       alert(error.details?.join("\n") || error.message);
     }

@@ -86,6 +86,16 @@ function initDatabase() {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS rating_snapshots (
+      date TEXT NOT NULL,
+      player_id TEXT NOT NULL,
+      rating REAL NOT NULL,
+      source TEXT DEFAULT 'manual',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (date, player_id)
+    );
   `);
 
   addColumnIfMissing("players", "rating", "REAL DEFAULT 5");
@@ -177,18 +187,21 @@ async function handleApi(request, response, url) {
     }
 
     const now = new Date().toISOString();
+    const id = crypto.randomUUID();
+    const rating = clampRating(body.rating);
     db.prepare(`
       INSERT INTO players (id, name, steam_id, rating, rating_updated_at, note, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
-      crypto.randomUUID(),
+      id,
       body.name.trim(),
       body.steamId?.trim() || "",
-      clampRating(body.rating),
+      rating,
       now,
       body.note?.trim() || "",
       now
     );
+    upsertRatingSnapshot({ playerId: id, rating, source: "manual" });
     sendJson(response, 201, getState());
     return;
   }
@@ -196,8 +209,10 @@ async function handleApi(request, response, url) {
   if (method === "PUT" && url.pathname.startsWith("/api/players/") && url.pathname.endsWith("/rating")) {
     const id = decodeURIComponent(url.pathname.replace("/api/players/", "").replace("/rating", ""));
     const body = await readJson(request);
+    const rating = clampRating(body.rating);
     db.prepare("UPDATE players SET rating = ?, rating_updated_at = ? WHERE id = ?")
-      .run(clampRating(body.rating), new Date().toISOString(), id);
+      .run(rating, new Date().toISOString(), id);
+    upsertRatingSnapshot({ playerId: id, rating, source: "manual" });
     sendJson(response, 200, getState());
     return;
   }
@@ -205,6 +220,7 @@ async function handleApi(request, response, url) {
   if (method === "DELETE" && url.pathname.startsWith("/api/players/")) {
     const id = decodeURIComponent(url.pathname.replace("/api/players/", ""));
     db.prepare("DELETE FROM players WHERE id = ?").run(id);
+    db.prepare("DELETE FROM rating_snapshots WHERE player_id = ?").run(id);
     const teams = getTeams();
     saveTeams({
       radiant: teams.radiant.filter((playerId) => playerId !== id),
@@ -335,7 +351,7 @@ async function handleApi(request, response, url) {
       return;
     }
 
-    db.exec("DELETE FROM players; DELETE FROM matches;");
+    db.exec("DELETE FROM players; DELETE FROM matches; DELETE FROM rating_snapshots;");
     const insertPlayer = db.prepare(`
       INSERT INTO players (id, name, steam_id, rating, rating_updated_at, note, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -376,6 +392,10 @@ async function handleApi(request, response, url) {
       );
     });
 
+    if (Array.isArray(body.ratingSnapshots)) {
+      importRatingSnapshots(body.ratingSnapshots);
+    }
+
     saveTeams(body.currentTeams || { radiant: [], dire: [] });
     sendJson(response, 200, getState());
     return;
@@ -411,8 +431,32 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (method === "POST" && url.pathname === "/api/rating-history/preview") {
+    const body = await readJson(request);
+    const buffer = Buffer.from(String(body.fileBase64 || ""), "base64");
+    if (!buffer.length) {
+      sendJson(response, 400, { error: "璇峰厛閫夋嫨 Excel 鏂囦欢" });
+      return;
+    }
+
+    sendJson(response, 200, parseRatingHistoryExcel(buffer, Number(body.year || new Date().getFullYear())));
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/rating-history/import") {
+    const body = await readJson(request);
+    if (!Array.isArray(body.snapshots) || !body.snapshots.length) {
+      sendJson(response, 400, { error: "娌℃湁鍙鍏ョ殑璇勫垎璁板綍" });
+      return;
+    }
+
+    const result = importRatingSnapshots(body.snapshots);
+    sendJson(response, 200, { ...result, state: getState() });
+    return;
+  }
+
   if (method === "POST" && url.pathname === "/api/reset") {
-    db.exec("DELETE FROM players; DELETE FROM matches;");
+    db.exec("DELETE FROM players; DELETE FROM matches; DELETE FROM rating_snapshots;");
     saveTeams({ radiant: [], dire: [] });
     sendJson(response, 200, getState());
     return;
@@ -451,6 +495,11 @@ function getState() {
       positions: parseJsonObject(match.positions),
       playerDetails: parseJsonObject(match.playerDetails)
     })),
+    ratingSnapshots: db.prepare(`
+      SELECT date, player_id AS playerId, rating, source, created_at AS createdAt, updated_at AS updatedAt
+      FROM rating_snapshots
+      ORDER BY date ASC, player_id ASC
+    `).all(),
     currentTeams: getTeams()
   };
 }
@@ -742,6 +791,191 @@ function teamPairPenalty(ids, pairCounts) {
 
 function pairKey(a, b) {
   return [a, b].sort().join("::");
+}
+
+function getTodayDate() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
+}
+
+function upsertRatingSnapshot({ playerId, rating, date = getTodayDate(), source = "manual" }) {
+  if (!playerId || !isValidDateString(date)) return;
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO rating_snapshots (date, player_id, rating, source, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(date, player_id) DO UPDATE SET
+      rating = excluded.rating,
+      source = excluded.source,
+      updated_at = excluded.updated_at
+  `).run(date, playerId, clampRating(rating), source, now, now);
+}
+
+function parseRatingHistoryExcel(buffer, year) {
+  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: false });
+  const players = getState().players;
+  const playerByName = new Map(players.map((player) => [normalizeRatingHistoryPlayerName(player.name), player]));
+  const sheetName = workbook.SheetNames.find((name) => {
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: "" });
+    return rows.some((row) => row.some((cell) => normalizeName(cell) === normalizeName("选手")));
+  }) || workbook.SheetNames[0];
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "" });
+  const headerIndex = rows.findIndex((row) => row.some((cell) => normalizeName(cell) === normalizeName("选手")));
+
+  if (headerIndex < 0) {
+    return {
+      sheetName,
+      year,
+      dateColumns: [],
+      snapshots: [],
+      matchedPlayers: [],
+      unmatchedPlayers: [],
+      skippedColumns: [],
+      errors: ["无法找到“选手”表头"],
+      canImport: false
+    };
+  }
+
+  const headers = rows[headerIndex].map((cell) => String(cell || "").trim());
+  const playerColumn = headers.findIndex((header) => normalizeName(header) === normalizeName("选手"));
+  const dateColumns = [];
+  const skippedColumns = [];
+
+  headers.forEach((header, index) => {
+    if (index === playerColumn || !header) return;
+    const date = parseRatingHistoryDateHeader(header, year);
+    if (date) {
+      dateColumns.push({ index, header, date });
+    } else {
+      skippedColumns.push(header);
+    }
+  });
+
+  const initialColumn = headers.findIndex((header, index) => {
+    if (index === playerColumn) return false;
+    const normalized = normalizeName(header);
+    return normalized.includes(normalizeName("初始工资")) || normalized === normalizeName("初始");
+  });
+  if (initialColumn >= 0 && dateColumns.length) {
+    const firstDate = [...dateColumns].sort((a, b) => a.date.localeCompare(b.date))[0].date;
+    dateColumns.unshift({
+      index: initialColumn,
+      header: headers[initialColumn],
+      date: getPreviousDate(firstDate),
+      source: "import_initial"
+    });
+    const skippedIndex = skippedColumns.indexOf(headers[initialColumn]);
+    if (skippedIndex >= 0) skippedColumns.splice(skippedIndex, 1);
+  }
+
+  const snapshots = [];
+  const matchedNames = new Set();
+  const unmatchedPlayers = new Set();
+
+  rows.slice(headerIndex + 1).forEach((row) => {
+    const rawName = String(row[playerColumn] || "").trim();
+    if (!rawName) return;
+
+    const player = playerByName.get(normalizeRatingHistoryPlayerName(rawName));
+    if (!player) {
+      unmatchedPlayers.add(rawName);
+      return;
+    }
+
+    matchedNames.add(rawName);
+    dateColumns.forEach((column) => {
+      const rating = parseRatingValue(row[column.index]);
+      if (rating === null) return;
+      snapshots.push({
+        date: column.date,
+        playerId: player.id,
+        playerName: player.name,
+        rating,
+        source: column.source || "import"
+      });
+    });
+  });
+
+  return {
+    sheetName,
+    year,
+    dateColumns: dateColumns.map(({ header, date }) => ({ header, date })),
+    snapshots,
+    matchedPlayers: [...matchedNames],
+    unmatchedPlayers: [...unmatchedPlayers],
+    skippedColumns,
+    errors: [],
+    canImport: snapshots.length > 0
+  };
+}
+
+function parseRatingHistoryDateHeader(header, year) {
+  const digits = String(header || "").match(/\d+/)?.[0] || "";
+  if (!digits || digits.length < 3 || digits.length > 4) return "";
+  const padded = digits.padStart(4, "0");
+  const month = Number(padded.slice(0, 2));
+  const day = Number(padded.slice(2, 4));
+  if (!Number.isInteger(month) || !Number.isInteger(day) || month < 1 || month > 12 || day < 1 || day > 31) return "";
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function getPreviousDate(date) {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  parsed.setUTCDate(parsed.getUTCDate() - 1);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function parseRatingValue(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const rating = Number(value);
+  if (!Number.isFinite(rating)) return null;
+  return clampRating(rating);
+}
+
+function importRatingSnapshots(snapshots) {
+  const validPlayers = new Set(getState().players.map((player) => player.id));
+  let imported = 0;
+  const skipped = [];
+  const latestByPlayer = new Map();
+
+  snapshots.forEach((snapshot, index) => {
+    const playerId = String(snapshot.playerId || snapshot.player_id || "");
+    const date = String(snapshot.date || "");
+    const rating = parseRatingValue(snapshot.rating);
+    if (!validPlayers.has(playerId)) {
+      skipped.push({ index, reason: "player_not_found", playerId });
+      return;
+    }
+    if (!isValidDateString(date)) {
+      skipped.push({ index, reason: "invalid_date", date });
+      return;
+    }
+    if (rating === null) {
+      skipped.push({ index, reason: "invalid_rating", rating: snapshot.rating });
+      return;
+    }
+    upsertRatingSnapshot({ playerId, date, rating, source: snapshot.source || "import" });
+    const latest = latestByPlayer.get(playerId);
+    if (!latest || date > latest.date) {
+      latestByPlayer.set(playerId, { date, rating });
+    }
+    imported += 1;
+  });
+
+  const now = new Date().toISOString();
+  latestByPlayer.forEach(({ rating }, playerId) => {
+    db.prepare("UPDATE players SET rating = ?, rating_updated_at = ? WHERE id = ?")
+      .run(rating, now, playerId);
+  });
+
+  return { imported, skipped };
+}
+
+function isValidDateString(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+}
+
+function normalizeRatingHistoryPlayerName(value) {
+  return String(value || "").trim();
 }
 
 function parseExcelMatches(buffer) {
