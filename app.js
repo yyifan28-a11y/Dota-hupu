@@ -40,16 +40,38 @@ const BALANCE_MODE_LABELS = {
 };
 
 const RATING_TREND_COLORS = [
-  "#15803d",
+  "#d61f69",
   "#2563eb",
-  "#dc2626",
-  "#9333ea",
-  "#d97706",
+  "#f59e0b",
+  "#16a34a",
+  "#7c3aed",
+  "#ef4444",
   "#0891b2",
-  "#be185d",
+  "#c2410c",
+  "#84cc16",
+  "#db2777",
   "#4f46e5",
+  "#ca8a04",
+  "#0d9488",
+  "#e11d48",
+  "#9333ea",
   "#65a30d",
-  "#0f766e"
+  "#ea580c",
+  "#0284c7",
+  "#a21caf",
+  "#b45309",
+  "#059669",
+  "#dc2626",
+  "#6366f1",
+  "#be123c",
+  "#22c55e",
+  "#f97316",
+  "#06b6d4",
+  "#a855f7",
+  "#eab308",
+  "#14b8a6",
+  "#f43f5e",
+  "#8b5cf6"
 ];
 
 let isAdmin = Boolean(sessionStorage.getItem(ADMIN_PASSWORD_KEY));
@@ -60,6 +82,7 @@ let matchEntryTeams = { radiant: [], dire: [] };
 let editingMatchId = null;
 let recordSort = "rating";
 let recordSortDirection = "desc";
+let recordCardActiveRanks = {};
 let hasGeneratedTeams = false;
 let generatedBalanceMode = "position";
 let playerById = new Map();
@@ -79,7 +102,8 @@ let ratingTrendSelectedIds = [];
 let ratingTrendHasUserSelection = false;
 let heroRankModes = {
   positive: "winrate",
-  negative: "winrate"
+  negative: "winrate",
+  singleHeat: "total"
 };
 let heroUsageSort = "total";
 let pairRankModes = {
@@ -352,6 +376,20 @@ function addOpponentPair(pairStatsByKey, playerId, opponentId, isWin) {
   pairStatsByKey.set(key, stats);
 }
 
+function addOpponentMatchup(pairStatsByKey, playerId, opponentId) {
+  const players = [playerId, opponentId].sort();
+  const key = players.join("::");
+  const stats = pairStatsByKey.get(key) || {
+    key,
+    playerId: players[0],
+    opponentId: players[1],
+    games: 0,
+    wins: 0
+  };
+  stats.games += 1;
+  pairStatsByKey.set(key, stats);
+}
+
 function finalizePairStats(stats) {
   return Array.from(stats.values()).map((item) => {
     const losses = item.games - item.wins;
@@ -435,6 +473,7 @@ function rebuildDerivedStats() {
   const teammateStatsByKey = new Map();
   const trioStatsByKey = new Map();
   const opponentStatsByKey = new Map();
+  const opponentMatchupStatsByKey = new Map();
 
   const dataTotals = new Map(db.players.map((player) => [player.id, {
     kills: 0,
@@ -516,6 +555,7 @@ function rebuildDerivedStats() {
       (match.dire || []).forEach((direId) => {
         addOpponentPair(opponentStatsByKey, radiantId, direId, match.winner === "radiant");
         addOpponentPair(opponentStatsByKey, direId, radiantId, match.winner === "dire");
+        addOpponentMatchup(opponentMatchupStatsByKey, radiantId, direId);
       });
     });
 
@@ -570,7 +610,8 @@ function rebuildDerivedStats() {
   pairRankStats = {
     teammate: finalizePairStats(teammateStatsByKey),
     trio: finalizePairStats(trioStatsByKey),
-    opponent: finalizePairStats(opponentStatsByKey)
+    opponent: finalizePairStats(opponentStatsByKey),
+    opponentMatchup: finalizePairStats(opponentMatchupStatsByKey)
   };
 }
 
@@ -652,20 +693,29 @@ function compareMatchesByScheduleDesc(a, b) {
 
 function renderMiniRank(target, players, valueFormatter) {
   if (!target) return;
-  const topThree = players.slice(0, 3);
-  if (!topThree.length) {
+  const topFive = players.slice(0, 5);
+  if (!topFive.length) {
     target.innerHTML = `<li class="muted">暂无数据</li>`;
     return;
   }
 
-  target.innerHTML = topThree
+  target.innerHTML = topFive
     .map((player) => `
       <li>
-        <span>${escapeHtml(player.name)}</span>
+        <span class="mini-rank-player">
+          <b>${escapeHtml(player.name)}</b>
+          <em>${formatMiniRankRecord(player)}</em>
+        </span>
         <strong>${escapeHtml(valueFormatter(player))}</strong>
       </li>
     `)
     .join("");
+}
+
+function formatMiniRankRecord(player) {
+  const wins = Number(player.stats?.wins || 0);
+  const losses = Number(player.stats?.losses || 0);
+  return `${wins}-${losses}`;
 }
 
 function renderPlayers() {
@@ -850,9 +900,10 @@ function renderHeroRankings() {
     {
       key: "singleHeat",
       title: "绝活榜",
-      heroes: getSingleHeroHeatStats().sort((a, b) => b.count - a.count || a.playerName.localeCompare(b.playerName, "zh-Hans") || a.name.localeCompare(b.name, "zh-Hans")),
+      heroes: sortSingleHeroHeatStats(getSingleHeroHeatStats(), heroRankModes.singleHeat),
+      modes: ["total", "wins", "perfect"],
       record: (hero) => `${hero.wins}-${hero.count - hero.wins}`,
-      value: (hero) => `（${hero.playerName}）${hero.count}场`
+      value: (hero) => formatSingleHeroHeatValue(hero, heroRankModes.singleHeat)
     }
   ];
 
@@ -866,6 +917,23 @@ function getSingleHeroHeatStats() {
       playerName: player.name,
       count: hero.count
     })));
+}
+
+function sortSingleHeroHeatStats(heroes, mode = "total") {
+  const ranked = mode === "perfect"
+    ? heroes.filter((hero) => hero.count > 0 && hero.wins === hero.count)
+    : heroes;
+  return [...ranked].sort((a, b) => {
+    if (mode === "wins") {
+      return b.wins - a.wins || b.count - a.count || a.playerName.localeCompare(b.playerName, "zh-Hans") || a.name.localeCompare(b.name, "zh-Hans");
+    }
+    return b.count - a.count || b.wins - a.wins || a.playerName.localeCompare(b.playerName, "zh-Hans") || a.name.localeCompare(b.name, "zh-Hans");
+  });
+}
+
+function formatSingleHeroHeatValue(hero, mode = "total") {
+  const suffix = mode === "wins" ? `${hero.wins}胜` : `${hero.count}场`;
+  return `（${hero.playerName}）${suffix}`;
 }
 
 function sortHeroes(heroes, mode, direction) {
@@ -887,7 +955,7 @@ function renderHeroRankCard(board) {
         ${board.modes ? `
           <div class="rank-mode-control" aria-label="${escapeHtml(board.title)}排序方式">
             ${board.modes.map((item) => `
-              <button class="${mode === item ? "is-active" : ""}" data-hero-rank="${board.key}" data-hero-mode="${item}" type="button">${getHeroModeLabel(item)}</button>
+              <button class="${mode === item ? "is-active" : ""}" data-hero-rank="${board.key}" data-hero-mode="${item}" type="button">${getHeroModeLabel(item, board.key)}</button>
             `).join("")}
           </div>
         ` : ""}
@@ -921,10 +989,13 @@ function formatHeroModeValue(hero, mode) {
   return `${Math.round(hero.winrate * 100)}%`;
 }
 
-function getHeroModeLabel(mode) {
+function getHeroModeLabel(mode, boardKey = "") {
   return {
     winrate: "胜率",
-    netWins: "净胜"
+    netWins: boardKey === "negative" ? "净负" : "净胜",
+    total: "总数",
+    wins: "胜场",
+    perfect: "胜率"
   }[mode] || mode;
 }
 
@@ -936,6 +1007,9 @@ function renderRelations() {
   const teammatePairs = pairRankStats.teammate.filter((pair) => pair.games > 0);
   const teammateTrios = pairRankStats.trio.filter((trio) => trio.games > 0);
   const opponentPairs = pairRankStats.opponent.filter((pair) => pair.games > 0);
+  const opponentMatchups = (pairRankStats.opponentMatchup || []).filter((pair) => pair.games > 0);
+  const stompMode = pairRankModes.stomp || "winrate";
+  const stompPairs = stompMode === "games" ? opponentMatchups : opponentPairs;
   const boards = [
     {
       key: "bestFriends",
@@ -961,7 +1035,7 @@ function renderRelations() {
     {
       key: "stomp",
       title: "爆杀榜",
-      pairs: sortPairs(opponentPairs, pairRankModes.stomp, getPairRankDirection("stomp", pairRankModes.stomp)),
+      pairs: sortPairs(stompPairs, stompMode, getPairRankDirection("stomp", stompMode)),
       type: "opponent",
       modes: ["games", "winrate", "netWins"],
       hideRecord: true,
@@ -1215,7 +1289,7 @@ function renderPairRankCard(board) {
           ${pairs.map((pair) => `
             <li>
               <span class="pair-rank-main">
-                <strong>${renderPairNames(pair, board.type)}</strong>
+                <strong>${renderPairNames(pair, board.type, mode)}</strong>
                 <em>${board.hideRecord ? "&nbsp;" : `${pair.wins}-${pair.losses}`}</em>
               </span>
               <b>${escapeHtml(board.value ? board.value(pair, mode) : formatPairModeValue(pair, mode))}</b>
@@ -1254,9 +1328,12 @@ function formatPairNames(pair, type = "teammate") {
   return (pair.players || []).map((id) => getPlayer(id)?.name || "-").join(" + ");
 }
 
-function renderPairNames(pair, type = "teammate") {
+function renderPairNames(pair, type = "teammate", mode = "") {
   if (type === "opponent") {
-    return `${escapeHtml(getPlayer(pair.playerId)?.name || "-")} <span class="pair-vs-icon" aria-label="对阵" title="对阵"></span> ${escapeHtml(getPlayer(pair.opponentId)?.name || "-")}`;
+    const separator = mode === "games"
+      ? `<span class="pair-vs-text">VS</span>`
+      : `<span class="pair-vs-icon" aria-label="对阵" title="对阵"></span>`;
+    return `${escapeHtml(getPlayer(pair.playerId)?.name || "-")} ${separator} ${escapeHtml(getPlayer(pair.opponentId)?.name || "-")}`;
   }
   return escapeHtml(formatPairNames(pair, type));
 }
@@ -1267,15 +1344,15 @@ function renderRatingTrends() {
   const chart = $("#ratingTrendChart");
   if (!playerList || !chart) return;
 
-  const initialRatings = new Map();
+  const latestRatings = new Map();
   const playersWithHistory = db.players
     .filter((player) => snapshots.some((item) => item.playerId === player.id))
     .map((player) => {
-      const initialRating = getInitialRating(player.id, snapshots);
-      initialRatings.set(player.id, initialRating);
+      const latestRating = getLatestRating(player.id, snapshots);
+      latestRatings.set(player.id, latestRating);
       return player;
     })
-    .sort((a, b) => initialRatings.get(b.id) - initialRatings.get(a.id) || a.name.localeCompare(b.name, "zh-Hans"));
+    .sort((a, b) => latestRatings.get(b.id) - latestRatings.get(a.id) || a.name.localeCompare(b.name, "zh-Hans"));
 
   if (!snapshots.length || !playersWithHistory.length) {
     playerList.innerHTML = "";
@@ -1297,15 +1374,14 @@ function renderRatingTrends() {
     </div>
   `;
   const playerItems = playersWithHistory.map((player) => {
-    const selectedIndex = ratingTrendSelectedIds.indexOf(player.id);
-    const isSelected = selectedIndex >= 0;
-    const color = isSelected ? RATING_TREND_COLORS[selectedIndex % RATING_TREND_COLORS.length] : "";
+    const isSelected = ratingTrendSelectedIds.includes(player.id);
+    const color = getRatingTrendPlayerColor(player.id);
     return `
     <label class="rating-trend-player ${isSelected ? "is-selected" : ""}">
       <input data-rating-trend-player="${player.id}" type="checkbox" ${isSelected ? "checked" : ""} />
-      <i class="rating-trend-player-dot" style="${color ? `background:${color}` : ""}"></i>
+      <i class="rating-trend-player-dot" style="background:${color}"></i>
       <span>${escapeHtml(player.name)}</span>
-      <em>${formatRating(initialRatings.get(player.id))}</em>
+      <em>${formatRating(latestRatings.get(player.id))}</em>
     </label>
   `;
   }).join("");
@@ -1320,7 +1396,7 @@ function renderRatingTrendChart(snapshots, selectedIds) {
 
   const series = selectedIds.length
     ? selectedIds
-      .map((playerId, index) => buildRatingTrendSeries(playerId, dates, snapshots, index))
+      .map((playerId) => buildRatingTrendSeries(playerId, dates, snapshots))
       .filter((item) => item.points.some((point) => point.rating !== null))
     : [];
   if (selectedIds.length && !series.length) return `<div class="empty-state">所选选手暂无评分记录</div>`;
@@ -1332,7 +1408,7 @@ function renderRatingTrendChart(snapshots, selectedIds) {
   const minRating = Math.max(0, Math.floor(Math.min(...ratings) * 2) / 2 - 0.5);
   const maxRating = Math.ceil(Math.max(...ratings) * 2) / 2 + 0.5;
   const height = 620;
-  const margin = { top: 28, right: 34, bottom: 74, left: 58 };
+  const margin = { top: 28, right: 112, bottom: 48, left: 58 };
   const pointGap = 54;
   const width = Math.max(760, margin.left + margin.right + Math.max(1, dates.length - 1) * pointGap);
   const plotWidth = width - margin.left - margin.right;
@@ -1349,7 +1425,7 @@ function renderRatingTrendChart(snapshots, selectedIds) {
   const xLabels = dates.map((date, index) => {
     if (index % dateStep !== 0 && index !== dates.length - 1) return "";
     const x = xFor(index);
-    return `<text class="rating-trend-axis" x="${x}" y="${height - 32}" text-anchor="middle">${formatRatingTrendDateLabel(date, snapshots)}</text>`;
+    return `<text class="rating-trend-axis" x="${x}" y="${height - margin.bottom + 18}" text-anchor="middle">${formatRatingTrendDateLabel(date, snapshots)}</text>`;
   }).join("");
   const paths = series.map((item) => {
     const path = item.points.reduce((commands, point, index) => {
@@ -1357,8 +1433,20 @@ function renderRatingTrendChart(snapshots, selectedIds) {
       const command = commands ? "L" : "M";
       return `${commands} ${command}${xFor(index).toFixed(1)} ${yFor(point.rating).toFixed(1)}`;
     }, "");
+    const lastPointIndex = item.points.findLastIndex((point) => point.rating !== null);
+    const lastPoint = item.points[lastPointIndex];
+    const label = lastPoint
+      ? `<text class="rating-trend-series-label" x="${xFor(lastPointIndex) + 10}" y="${yFor(lastPoint.rating) + 4}" fill="${item.color}">${escapeHtml(item.name)}</text>`
+      : "";
     const markers = item.points.map((point, index) => point.rating === null ? "" : `<circle class="rating-trend-dot" cx="${xFor(index).toFixed(1)}" cy="${yFor(point.rating).toFixed(1)}" r="3" fill="${item.color}"><title>${escapeHtml(item.name)} ${point.date}: ${formatRating(point.rating)}</title></circle>`).join("");
-    return `<path class="rating-trend-line" d="${path.trim()}" stroke="${item.color}" />${markers}`;
+    return `
+      <g class="rating-trend-series">
+        <path class="rating-trend-hit-line" d="${path.trim()}" />
+        <path class="rating-trend-line" d="${path.trim()}" stroke="${item.color}" />
+        ${markers}
+        ${label}
+      </g>
+    `;
   }).join("");
   const emptySelectionLabel = selectedIds.length ? "" : `<text class="rating-trend-empty-label" x="${margin.left + plotWidth / 2}" y="${margin.top + plotHeight / 2}" text-anchor="middle">未选择选手</text>`;
   return `
@@ -1378,7 +1466,7 @@ function getRatingTrendDates(snapshots) {
   return [...new Set(snapshots.map((snapshot) => snapshot.date).filter(Boolean))].sort();
 }
 
-function buildRatingTrendSeries(playerId, dates, snapshots, index) {
+function buildRatingTrendSeries(playerId, dates, snapshots) {
   const player = getPlayer(playerId);
   const playerSnapshots = snapshots
     .filter((snapshot) => snapshot.playerId === playerId)
@@ -1393,12 +1481,21 @@ function buildRatingTrendSeries(playerId, dates, snapshots, index) {
   return {
     playerId,
     name: player?.name || "-",
-    color: RATING_TREND_COLORS[index % RATING_TREND_COLORS.length],
+    color: getRatingTrendPlayerColor(playerId),
     points: dates.map((date) => {
       if (Number.isFinite(byDate.get(date))) carried = byDate.get(date);
       return { date, rating: carried };
     })
   };
+}
+
+function getRatingTrendPlayerColor(playerId) {
+  const value = String(playerId || "");
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+  }
+  return RATING_TREND_COLORS[Math.abs(hash) % RATING_TREND_COLORS.length];
 }
 
 function getInitialRating(playerId, snapshots) {
@@ -1407,6 +1504,14 @@ function getInitialRating(playerId, snapshots) {
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const first = playerSnapshots.find((snapshot) => snapshot.source === "import_initial") || playerSnapshots[0];
   return first ? Number(first.rating) : 0;
+}
+
+function getLatestRating(playerId, snapshots) {
+  const playerSnapshots = snapshots
+    .filter((snapshot) => snapshot.playerId === playerId && Number.isFinite(Number(snapshot.rating)))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const latest = playerSnapshots.at(-1);
+  return latest ? Number(latest.rating) : 0;
 }
 
 function formatShortRatingDate(date) {
@@ -2070,106 +2175,139 @@ function getRecordCards() {
     { key: "kda", label: "单场最佳 KDA", format: formatKdaRecord, value: getDetailKda },
     { key: "netWorth10", label: "最高10分钟经济", format: formatIntegerRecord },
     { key: "damageTaken", label: "最高承受伤害", format: formatIntegerRecord }
-  ].map(findPersonalRecord);
+  ].map(findPersonalRecords);
 
   return [
     ...personalRecords,
-    findDurationRecord("单局最长时间", "longest"),
-    findDurationRecord("单局最短时间", "shortest"),
-    findMatchKillRecord("单场最多人头", "highest"),
-    findMatchKillRecord("单场最少人头", "lowest")
+    findDurationRecords("单局最长时间", "longest"),
+    findDurationRecords("单局最短时间", "shortest"),
+    findMatchKillRecords("单场最多人头", "highest"),
+    findMatchKillRecords("单场最少人头", "lowest")
   ];
 }
 
-function findPersonalRecord(config) {
-  let best = null;
+function findPersonalRecords(config) {
+  const entries = [];
   db.matches.forEach((match) => {
     Object.entries(match.playerDetails || {}).forEach(([playerId, detail]) => {
       const value = config.value ? config.value(detail) : Number(detail?.[config.key]);
       if (!Number.isFinite(value) || value < 0) return;
-      if (best && value <= best.rawValue) return;
-      best = {
+      entries.push({
         type: "personal",
-        label: config.label,
         rawValue: value,
         value: config.format(value),
         player: getPlayer(playerId),
         hero: detail.hero,
         matchLabel: formatRecordMatchLabel(match),
         matchId: match.id
-      };
+      });
     });
   });
-  return best || { label: config.label };
+  entries.sort((a, b) => b.rawValue - a.rawValue || String(a.matchLabel).localeCompare(String(b.matchLabel), "zh-Hans"));
+  return { key: config.key, label: config.label, entries: entries.slice(0, 3) };
 }
 
-function findDurationRecord(label, mode) {
-  let best = null;
+function findDurationRecords(label, mode) {
+  const entries = [];
   db.matches.forEach((match) => {
     const seconds = getMatchDurationSeconds(match);
     if (!Number.isFinite(seconds)) return;
-    const isBetter = mode === "longest"
-      ? !best || seconds > best.rawValue
-      : !best || seconds < best.rawValue;
-    if (!isBetter) return;
-    best = {
-      label,
+    entries.push({
       rawValue: seconds,
       value: formatDurationRecord(seconds),
       matchLabel: formatRecordMatchLabel(match),
       hero: getWinnerPositionOneHero(match),
       matchId: match.id
-    };
+    });
   });
-  return best || { label };
+  entries.sort((a, b) => {
+    const valueDiff = mode === "longest" ? b.rawValue - a.rawValue : a.rawValue - b.rawValue;
+    return valueDiff || String(a.matchLabel).localeCompare(String(b.matchLabel), "zh-Hans");
+  });
+  return { key: `duration-${mode}`, label, entries: entries.slice(0, 3) };
 }
 
-function findMatchKillRecord(label, mode) {
-  let best = null;
+function findMatchKillRecords(label, mode) {
+  const entries = [];
   db.matches.forEach((match) => {
     const kills = getMatchTotalKills(match);
     if (!Number.isFinite(kills)) return;
-    const isBetter = mode === "lowest"
-      ? !best || kills < best.rawValue
-      : !best || kills > best.rawValue;
-    if (!isBetter) return;
-    best = {
-      label,
+    entries.push({
       rawValue: kills,
       value: String(kills),
       matchLabel: formatRecordMatchLabel(match),
       hero: getWinnerPositionOneHero(match),
       matchId: match.id
-    };
+    });
   });
-  return best || { label };
+  entries.sort((a, b) => {
+    const valueDiff = mode === "lowest" ? a.rawValue - b.rawValue : b.rawValue - a.rawValue;
+    return valueDiff || String(a.matchLabel).localeCompare(String(b.matchLabel), "zh-Hans");
+  });
+  return { key: `match-kills-${mode}`, label, entries: entries.slice(0, 3) };
 }
 
 function renderRecordCard(record) {
-  const disabled = !record.matchId;
-  const heroImage = getRecordHeroImageUrl(record.hero);
+  const entries = record.entries || [];
+  const activeRank = Math.min(entries.length - 1, Math.max(0, Number(recordCardActiveRanks[record.key] || 0)));
+  const stackClass = [
+    "record-card-stack",
+    `is-rank-${activeRank + 1}`,
+    entries.length ? "" : "is-empty"
+  ].filter(Boolean).join(" ");
+  if (!entries.length) {
+    return `
+      <article class="${stackClass}">
+        <button class="record-card is-empty" disabled type="button">
+          <span class="record-card-title">${escapeHtml(record.label)}</span>
+          <strong>暂无数据</strong>
+        </button>
+      </article>
+    `;
+  }
+
+  return `
+    <article class="${stackClass}" data-record-card="${escapeHtml(record.key)}">
+      ${[0, 1, 2].map((rank) => renderRecordRankPanel(record, entries[rank], rank, activeRank)).join("")}
+    </article>
+  `;
+}
+
+function renderRecordRankPanel(record, entry, rank, activeRank) {
+  const isActive = rank === activeRank;
+  const disabled = !entry?.matchId;
+  const heroImage = getRecordHeroImageUrl(entry?.hero);
   const cardStyle = heroImage ? ` style="--record-bg-image: url('${escapeHtml(heroImage)}')"` : "";
   const cardClass = [
     "record-card",
+    "record-rank-panel",
+    isActive ? "is-expanded" : "is-collapsed",
     disabled ? "is-empty" : "",
     heroImage ? "has-hero-bg" : ""
   ].filter(Boolean).join(" ");
+  const actionAttribute = isActive && !disabled
+    ? `data-open-match="${escapeHtml(entry.matchId)}"`
+    : `data-record-rank="${rank}" data-record-key="${escapeHtml(record.key)}"`;
+
   return `
-    <button class="${cardClass}"${cardStyle} ${disabled ? "disabled" : `data-open-match="${escapeHtml(record.matchId)}"`} type="button">
-      <span class="record-card-title">${escapeHtml(record.label)}</span>
-      ${disabled ? `
-        <strong>暂无数据</strong>
-      ` : `
+    <button class="${cardClass}"${cardStyle} ${disabled ? "disabled" : actionAttribute} type="button" aria-label="${escapeHtml(record.label)} 第 ${rank + 1} 名">
+      <span class="record-rank-badge record-rank-badge-${rank + 1}" aria-hidden="true">${formatRecordRankLabel(rank)}</span>
+      ${isActive ? `
+        <span class="record-card-title">${escapeHtml(record.label)}</span>
         <span class="record-card-body">
           <span class="record-card-main">
-            <strong>${escapeHtml(record.value)}</strong>
-            ${record.type === "personal" ? `<em>${escapeHtml(getRecordPlayerId(record.player))}</em>` : ""}
+            <strong>${escapeHtml(entry.value)}</strong>
+            ${entry.type === "personal" ? `<em>${escapeHtml(getRecordPlayerId(entry.player))}</em>` : ""}
           </span>
         </span>
-        ${record.type === "personal" ? "" : `<small>${escapeHtml(record.matchLabel || "比赛信息未录入")}</small>`}
-      `}
+        ${entry.type === "personal" ? "" : `<small>${escapeHtml(entry.matchLabel || "比赛信息未录入")}</small>`}
+      ` : ""}
     </button>
   `;
+}
+
+function formatRecordRankLabel(rank) {
+  return ["1st", "2nd", "3rd"][rank] || `${rank + 1}th`;
 }
 
 function getRecordHeroImageUrl(heroName) {
@@ -2399,6 +2537,13 @@ function renderMatchDialog(match) {
 }
 
 function handleMatchCardOpen(event) {
+  const rankButton = event.target.closest("[data-record-rank]");
+  if (rankButton) {
+    recordCardActiveRanks[rankButton.dataset.recordKey] = Number(rankButton.dataset.recordRank || 0);
+    renderRecords();
+    return;
+  }
+
   const card = event.target.closest("[data-open-match]");
   if (!card) return;
   const match = db.matches.find((item) => item.id === card.dataset.openMatch);

@@ -12,8 +12,7 @@
         <div class="brand">
           <span class="brand-mark">D2</span>
           <div>
-        <h1>Hupu内战记录器</h1>
-            <p>V1.0</p>
+            <h1>Hupu内战记录器</h1>
           </div>
         </div>
 
@@ -43,7 +42,7 @@
             <span>队友对手</span>
           </button>
           <button class="nav-tab" data-view="ratingTrends" type="button">
-            <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 19h16" /><path d="M4 15l4-4 4 3 6-8 2 2" /><path d="M8 11v8M12 14v5M18 6v13" /></svg>
+            <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 19V5" /><path d="M4 19h16" /><path d="m7 15 4-5 4 3 5-7" /><path d="M7 15h2M11 10h2M15 13h2M20 6h-2" /></svg>
             <span>评分走势</span>
           </button>
           <button class="nav-tab" data-view="generator" type="button">
@@ -85,6 +84,12 @@
             </section>
             <section class="panel mini-rank-panel">
               <div class="panel-header">
+                <h3>参赛榜</h3>
+              </div>
+              <ol id="gamesTopList" class="mini-rank-list"></ol>
+            </section>
+            <section class="panel mini-rank-panel">
+              <div class="panel-header">
                 <h3>胜率榜</h3>
               </div>
               <ol id="winrateTopList" class="mini-rank-list"></ol>
@@ -94,12 +99,6 @@
                 <h3>净胜榜</h3>
               </div>
               <ol id="netWinsTopList" class="mini-rank-list"></ol>
-            </section>
-            <section class="panel mini-rank-panel">
-              <div class="panel-header">
-                <h3>参赛榜</h3>
-              </div>
-              <ol id="gamesTopList" class="mini-rank-list"></ol>
             </section>
           </section>
 
