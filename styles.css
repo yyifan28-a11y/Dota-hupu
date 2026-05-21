@@ -236,18 +236,8 @@ button {
 }
 
 .record-card-stack {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px 44px;
+  display: flex;
   min-height: 116px;
-  transition: grid-template-columns 0.18s ease;
-}
-
-.record-card-stack.is-rank-2 {
-  grid-template-columns: 44px minmax(0, 1fr) 44px;
-}
-
-.record-card-stack.is-rank-3 {
-  grid-template-columns: 44px 44px minmax(0, 1fr);
 }
 
 .record-card {
@@ -269,8 +259,35 @@ button {
 }
 
 .record-rank-panel {
+  flex: 0 0 44px;
   min-width: 0;
+  width: 44px;
   border-radius: 0;
+  transition:
+    flex-basis 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    flex-grow 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    padding 0.22s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.record-rank-panel.is-expanded,
+.record-rank-panel:hover,
+.record-rank-panel:focus-visible {
+  flex: 1 1 0;
+  width: auto;
+}
+
+.record-card-stack.is-rank-2 .record-rank-panel-1,
+.record-card-stack.is-rank-3 .record-rank-panel-1,
+.record-card-stack:has(.record-rank-panel-2:hover) .record-rank-panel-1,
+.record-card-stack:has(.record-rank-panel-2:focus-visible) .record-rank-panel-1,
+.record-card-stack:has(.record-rank-panel-3:hover) .record-rank-panel-1,
+.record-card-stack:has(.record-rank-panel-3:focus-visible) .record-rank-panel-1 {
+  flex: 0 0 44px;
+  width: 44px;
+  place-items: center;
+  padding: 0;
 }
 
 .record-rank-panel:first-child {
@@ -286,17 +303,77 @@ button {
   padding: 0;
 }
 
+.record-rank-panel.is-collapsed:hover,
+.record-rank-panel.is-collapsed:focus-visible {
+  place-items: stretch;
+  padding: 14px;
+}
+
 .record-rank-panel.is-collapsed::before {
   filter: blur(2px);
   opacity: 0.72;
+}
+
+.record-rank-panel.is-collapsed:hover::before,
+.record-rank-panel.is-collapsed:focus-visible::before {
+  filter: none;
+  opacity: 1;
 }
 
 .record-rank-panel.is-collapsed::after {
   background: linear-gradient(180deg, rgba(7, 18, 14, 0.52), rgba(7, 18, 14, 0.76));
 }
 
+.record-rank-panel.is-collapsed:hover::after,
+.record-rank-panel.is-collapsed:focus-visible::after {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.54) 0%, rgba(255, 255, 255, 0.32) 48%, rgba(255, 255, 255, 0) 100%);
+}
+
 .record-rank-panel.is-collapsed.has-hero-bg::after {
   backdrop-filter: none;
+}
+
+.record-card-stack.is-rank-2 .record-rank-panel-1::before,
+.record-card-stack.is-rank-3 .record-rank-panel-1::before,
+.record-card-stack:has(.record-rank-panel-2:hover) .record-rank-panel-1::before,
+.record-card-stack:has(.record-rank-panel-2:focus-visible) .record-rank-panel-1::before,
+.record-card-stack:has(.record-rank-panel-3:hover) .record-rank-panel-1::before,
+.record-card-stack:has(.record-rank-panel-3:focus-visible) .record-rank-panel-1::before {
+  filter: blur(2px);
+  opacity: 0.72;
+}
+
+.record-card-stack.is-rank-2 .record-rank-panel-1::after,
+.record-card-stack.is-rank-3 .record-rank-panel-1::after,
+.record-card-stack:has(.record-rank-panel-2:hover) .record-rank-panel-1::after,
+.record-card-stack:has(.record-rank-panel-2:focus-visible) .record-rank-panel-1::after,
+.record-card-stack:has(.record-rank-panel-3:hover) .record-rank-panel-1::after,
+.record-card-stack:has(.record-rank-panel-3:focus-visible) .record-rank-panel-1::after {
+  background: linear-gradient(180deg, rgba(7, 18, 14, 0.52), rgba(7, 18, 14, 0.76));
+}
+
+.record-rank-panel > :not(.record-rank-badge) {
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease 0.06s, transform 0.2s ease 0.06s;
+}
+
+.record-rank-panel.is-expanded > :not(.record-rank-badge),
+.record-rank-panel:hover > :not(.record-rank-badge),
+.record-rank-panel:focus-visible > :not(.record-rank-badge) {
+  opacity: 1;
+  transform: none;
+}
+
+.record-card-stack.is-rank-2 .record-rank-panel-1 > :not(.record-rank-badge),
+.record-card-stack.is-rank-3 .record-rank-panel-1 > :not(.record-rank-badge),
+.record-card-stack:has(.record-rank-panel-2:hover) .record-rank-panel-1 > :not(.record-rank-badge),
+.record-card-stack:has(.record-rank-panel-2:focus-visible) .record-rank-panel-1 > :not(.record-rank-badge),
+.record-card-stack:has(.record-rank-panel-3:hover) .record-rank-panel-1 > :not(.record-rank-badge),
+.record-card-stack:has(.record-rank-panel-3:focus-visible) .record-rank-panel-1 > :not(.record-rank-badge) {
+  opacity: 0;
+  transform: translateY(4px);
+  transition-delay: 0s;
 }
 
 .record-rank-badge {
@@ -342,6 +419,7 @@ button {
   filter: none;
   opacity: 0;
   transform: scale(1.08);
+  transition: filter 0.22s ease, opacity 0.22s ease, transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .record-card::after {
@@ -350,6 +428,7 @@ button {
   inset: 0;
   z-index: -1;
   background: linear-gradient(90deg, rgba(255, 255, 255, 0.54) 0%, rgba(255, 255, 255, 0.32) 48%, rgba(255, 255, 255, 0) 100%);
+  transition: background 0.22s ease;
 }
 
 .record-card.has-hero-bg::before {
@@ -372,6 +451,7 @@ button {
   display: block;
   overflow: hidden;
   max-width: 100%;
+  font-family: "Alimama ShuHeiTi Bold", "Alimama ShuHeiTi", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
   font-size: 19px;
   font-weight: 900;
   -webkit-text-stroke: 0.45px #f2b705;
@@ -420,11 +500,16 @@ button {
 
 .record-card em {
   color: #000;
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 900;
+  line-height: 1;
   -webkit-text-stroke: 0;
   paint-order: normal;
   text-shadow: none;
+}
+
+.record-card em.record-player-id-lowercase {
+  font-size: 24px;
 }
 
 .record-card.is-empty {
@@ -804,6 +889,22 @@ table {
   vertical-align: middle;
 }
 
+.record-table tbody tr,
+.rankings-table tbody tr {
+  transition: background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.record-table tbody tr:hover,
+.rankings-table tbody tr:hover {
+  background: rgba(29, 127, 92, 0.08);
+  box-shadow: inset 3px 0 0 rgba(29, 127, 92, 0.72);
+}
+
+.record-table tbody tr:hover td,
+.rankings-table tbody tr:hover td {
+  background: rgba(29, 127, 92, 0.08);
+}
+
 .record-table th:first-child {
   text-align: left;
 }
@@ -935,6 +1036,10 @@ table {
   width: 140px;
   background: var(--surface);
   text-align: left;
+}
+
+.rankings-table tbody tr:hover td:first-child {
+  background: #edf7f2;
 }
 
 .rankings-table th:first-child {

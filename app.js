@@ -2277,27 +2277,32 @@ function renderRecordRankPanel(record, entry, rank, activeRank) {
   const isActive = rank === activeRank;
   const disabled = !entry?.matchId;
   const heroImage = getRecordHeroImageUrl(entry?.hero);
+  const playerId = entry?.type === "personal" ? getRecordPlayerId(entry.player) : "";
+  const playerIdClass = hasLowercaseLatin(playerId) ? " record-player-id-lowercase" : "";
   const cardStyle = heroImage ? ` style="--record-bg-image: url('${escapeHtml(heroImage)}')"` : "";
   const cardClass = [
     "record-card",
     "record-rank-panel",
+    `record-rank-panel-${rank + 1}`,
     isActive ? "is-expanded" : "is-collapsed",
     disabled ? "is-empty" : "",
     heroImage ? "has-hero-bg" : ""
   ].filter(Boolean).join(" ");
-  const actionAttribute = isActive && !disabled
-    ? `data-open-match="${escapeHtml(entry.matchId)}"`
-    : `data-record-rank="${rank}" data-record-key="${escapeHtml(record.key)}"`;
+  const actionAttribute = [
+    !disabled ? `data-open-match="${escapeHtml(entry.matchId)}"` : "",
+    `data-record-rank="${rank}"`,
+    `data-record-key="${escapeHtml(record.key)}"`
+  ].filter(Boolean).join(" ");
 
   return `
     <button class="${cardClass}"${cardStyle} ${disabled ? "disabled" : actionAttribute} type="button" aria-label="${escapeHtml(record.label)} 第 ${rank + 1} 名">
       <span class="record-rank-badge record-rank-badge-${rank + 1}" aria-hidden="true">${formatRecordRankLabel(rank)}</span>
-      ${isActive ? `
+      ${entry ? `
         <span class="record-card-title">${escapeHtml(record.label)}</span>
         <span class="record-card-body">
           <span class="record-card-main">
             <strong>${escapeHtml(entry.value)}</strong>
-            ${entry.type === "personal" ? `<em>${escapeHtml(getRecordPlayerId(entry.player))}</em>` : ""}
+            ${entry.type === "personal" ? `<em class="record-player-id${playerIdClass}">${escapeHtml(playerId)}</em>` : ""}
           </span>
         </span>
         ${entry.type === "personal" ? "" : `<small>${escapeHtml(entry.matchLabel || "比赛信息未录入")}</small>`}
@@ -2335,6 +2340,10 @@ function formatRecordMatchLabel(match) {
 
 function getRecordPlayerId(player) {
   return player?.steam_id || player?.steamId || player?.name || "选手未录入";
+}
+
+function hasLowercaseLatin(value) {
+  return /[a-z]/.test(String(value || ""));
 }
 
 function formatIntegerRecord(value) {
@@ -2537,17 +2546,33 @@ function renderMatchDialog(match) {
 }
 
 function handleMatchCardOpen(event) {
-  const rankButton = event.target.closest("[data-record-rank]");
-  if (rankButton) {
-    recordCardActiveRanks[rankButton.dataset.recordKey] = Number(rankButton.dataset.recordRank || 0);
-    renderRecords();
-    return;
-  }
-
   const card = event.target.closest("[data-open-match]");
   if (!card) return;
   const match = db.matches.find((item) => item.id === card.dataset.openMatch);
   renderMatchDialog(match);
+}
+
+function setRecordStackActiveRank(stack, activeRank) {
+  const rank = Math.max(0, Math.min(2, Number(activeRank) || 0));
+  const recordKey = stack?.dataset.recordCard;
+  if (!stack || !recordKey) return;
+
+  recordCardActiveRanks[recordKey] = rank;
+  stack.classList.toggle("is-rank-1", rank === 0);
+  stack.classList.toggle("is-rank-2", rank === 1);
+  stack.classList.toggle("is-rank-3", rank === 2);
+  stack.querySelectorAll(".record-rank-panel").forEach((panel) => {
+    const isActive = Number(panel.dataset.recordRank || 0) === rank;
+    panel.classList.toggle("is-expanded", isActive);
+    panel.classList.toggle("is-collapsed", !isActive);
+  });
+}
+
+function handleRecordCardPreview(event) {
+  const card = event.target.closest("[data-record-rank][data-record-key]");
+  if (!card) return;
+  const stack = card.closest("[data-record-card]");
+  setRecordStackActiveRank(stack, card.dataset.recordRank);
 }
 
 function handleMatchCardKeydown(event) {
@@ -3511,6 +3536,10 @@ function bindEvents() {
   });
 
   $("#records")?.addEventListener("click", handleMatchCardOpen);
+  $("#records")?.addEventListener("pointerover", handleRecordCardPreview);
+  $("#records")?.addEventListener("mouseover", handleRecordCardPreview);
+  $("#records")?.addEventListener("mousemove", handleRecordCardPreview);
+  $("#records")?.addEventListener("focusin", handleRecordCardPreview);
   $("#records")?.addEventListener("keydown", handleMatchCardKeydown);
 
   $("#data")?.addEventListener("click", (event) => {
