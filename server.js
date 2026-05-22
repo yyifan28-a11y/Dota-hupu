@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { existsSync, mkdirSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -39,7 +39,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    await serveStatic(response, url.pathname);
+    await serveStatic(request, response, url.pathname);
   } catch (error) {
     sendJson(response, 500, { error: error.message });
   }
@@ -1390,7 +1390,7 @@ async function readJson(request) {
   return raw ? JSON.parse(raw) : {};
 }
 
-async function serveStatic(response, pathname) {
+async function serveStatic(request, response, pathname) {
   const requested = pathname === "/" ? "/index.html" : pathname;
   const filePath = normalize(join(__dirname, decodeURIComponent(requested)));
 
@@ -1399,10 +1399,53 @@ async function serveStatic(response, pathname) {
     return;
   }
 
+  const type = contentType(filePath);
+  const stat = statSync(filePath);
+  const cacheControl = requested.startsWith("/assets/") ? "public, max-age=3600" : "no-store";
+  const range = request.headers.range;
+
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!match) {
+      response.writeHead(416, { "Content-Range": `bytes */${stat.size}` });
+      response.end();
+      return;
+    }
+
+    const start = match[1] ? Number(match[1]) : 0;
+    const end = match[2] ? Number(match[2]) : stat.size - 1;
+    if (start > end || start >= stat.size || end >= stat.size) {
+      response.writeHead(416, { "Content-Range": `bytes */${stat.size}` });
+      response.end();
+      return;
+    }
+
+    response.writeHead(206, {
+      "Content-Type": type,
+      "Content-Length": end - start + 1,
+      "Content-Range": `bytes ${start}-${end}/${stat.size}`,
+      "Accept-Ranges": "bytes",
+      "Cache-Control": cacheControl
+    });
+    createReadStream(filePath, { start, end }).pipe(response);
+    return;
+  }
+
+  if (type.startsWith("video/")) {
+    response.writeHead(200, {
+      "Content-Type": type,
+      "Content-Length": stat.size,
+      "Accept-Ranges": "bytes",
+      "Cache-Control": cacheControl
+    });
+    createReadStream(filePath).pipe(response);
+    return;
+  }
+
   const content = await readFile(filePath);
   response.writeHead(200, {
-    "Content-Type": contentType(filePath),
-    "Cache-Control": "no-store"
+    "Content-Type": type,
+    "Cache-Control": cacheControl
   });
   response.end(content);
 }
@@ -1412,7 +1455,12 @@ function contentType(filePath) {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
-    ".json": "application/json; charset=utf-8"
+    ".json": "application/json; charset=utf-8",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".mp4": "video/mp4"
   };
   return types[extname(filePath)] || "application/octet-stream";
 }

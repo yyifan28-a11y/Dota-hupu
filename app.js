@@ -4006,10 +4006,31 @@ function initializeSplashScreen() {
   const video = splash?.querySelector(".splash-video");
   const splashTransitionDuration = 720;
   const appRevealDuration = 1280;
+  let hasLoadedVideo = false;
 
   video?.addEventListener("error", () => {
     video.classList.add("is-hidden");
   });
+  video?.addEventListener("canplay", () => {
+    video.classList.add("is-ready");
+  });
+
+  const loadVideo = () => {
+    if (!video || hasLoadedVideo || document.body.classList.contains("has-entered")) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+    hasLoadedVideo = true;
+    video.src = video.dataset.src || "";
+    video.load();
+    video.play().catch(() => {
+      video.classList.add("is-hidden");
+    });
+  };
+
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(loadVideo, { timeout: 1200 });
+  } else {
+    window.setTimeout(loadVideo, 700);
+  }
 
   const enterApp = (targetView) => {
     if (document.body.classList.contains("is-entering") || document.body.classList.contains("has-entered")) return;

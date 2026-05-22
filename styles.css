@@ -75,7 +75,13 @@ button {
 
 .splash-video {
   z-index: 1;
+  opacity: 0;
   object-fit: cover;
+  transition: opacity 420ms ease;
+}
+
+.splash-video.is-ready {
+  opacity: 1;
 }
 
 .splash-video.is-hidden {
