@@ -24,6 +24,11 @@ body {
   font-family: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+body:not(.has-entered),
+body.is-entering {
+  overflow: hidden;
+}
+
 button,
 input,
 select {
@@ -34,8 +39,310 @@ button {
   cursor: pointer;
 }
 
-.app-shell {
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
   display: grid;
+  place-items: center;
+  min-width: 320px;
+  overflow: hidden;
+  background: #07120f;
+  color: white;
+  transition:
+    opacity 720ms ease,
+    transform 720ms ease,
+    filter 720ms ease;
+}
+
+.splash-screen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(29, 127, 92, 0.2), transparent 34%),
+    linear-gradient(180deg, rgba(5, 12, 10, 0.26), rgba(5, 12, 10, 0.82));
+}
+
+.splash-video,
+.splash-fallback {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.splash-video {
+  z-index: 1;
+  object-fit: cover;
+}
+
+.splash-video.is-hidden {
+  display: none;
+}
+
+.splash-fallback {
+  z-index: 0;
+  background:
+    linear-gradient(120deg, rgba(18, 98, 70, 0.25), transparent 42%),
+    radial-gradient(circle at 18% 18%, rgba(242, 183, 5, 0.18), transparent 26%),
+    radial-gradient(circle at 82% 72%, rgba(185, 75, 67, 0.18), transparent 30%),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 18px),
+    #07120f;
+  animation: splashDrift 16s ease-in-out infinite alternate;
+}
+
+.splash-content {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  justify-items: center;
+  width: min(640px, calc(100% - 40px));
+  text-align: center;
+}
+
+.splash-title-lock {
+  position: relative;
+  isolation: isolate;
+  display: inline-block;
+  margin-top: 22px;
+  font-size: clamp(34px, 7vw, 72px);
+  line-height: 1.05;
+}
+
+.splash-mark {
+  position: absolute;
+  top: 0.72em;
+  left: calc(100% + 0.08em);
+  z-index: 0;
+  display: block;
+  width: 2.18em;
+  height: 2.18em;
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: none;
+  overflow: hidden;
+  opacity: 0.72;
+  transform: translate(-50%, -50%) rotate(10deg);
+  pointer-events: none;
+}
+
+.splash-logo-icon {
+  display: block;
+  width: 114%;
+  height: 114%;
+  object-fit: contain;
+}
+
+.splash-content h1 {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  color: rgba(245, 252, 255, 0.78);
+  font-size: 1em;
+  line-height: inherit;
+  letter-spacing: 0.12em;
+  text-indent: 0.12em;
+  white-space: nowrap;
+  text-shadow:
+    0 0 12px rgba(255, 255, 255, 0.26),
+    0 0 30px rgba(255, 255, 255, 0.16),
+    0 2px 10px rgba(0, 0, 0, 0.28),
+    0 16px 34px rgba(0, 0, 0, 0.22);
+}
+
+.splash-meta {
+  display: grid;
+  gap: 7px;
+  margin-top: 16px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: clamp(14px, 1.8vw, 17px);
+  font-weight: 500;
+  line-height: 1.35;
+  text-shadow: 0 8px 24px rgba(0, 0, 0, 0.42);
+}
+
+.splash-actions {
+  display: flex;
+  gap: 34px;
+  justify-content: center;
+  margin-top: 30px;
+}
+
+.splash-enter-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  min-width: 150px;
+  min-height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.92);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 12px 26px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.splash-enter-button span {
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.86;
+}
+
+.splash-enter-button:hover,
+.splash-enter-button:focus-visible {
+  background: white;
+  color: #101817;
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.app-shell {
+  display: none;
+}
+
+body.is-entering .splash-screen {
+  opacity: 0;
+  transform: scale(1.035);
+  filter: blur(8px);
+  pointer-events: none;
+}
+
+body.has-entered .splash-screen {
+  display: none;
+}
+
+body.is-entering .app-shell,
+body.has-entered .app-shell {
+  display: grid;
+}
+
+body.is-entering .brand,
+body.is-entering .nav-tab {
+  animation: sidebarFloatIn 620ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+body.is-entering .brand {
+  animation-delay: 120ms;
+}
+
+body.is-entering .nav-tab:nth-child(1) {
+  animation-delay: 190ms;
+}
+
+body.is-entering .nav-tab:nth-child(2) {
+  animation-delay: 250ms;
+}
+
+body.is-entering .nav-tab:nth-child(3) {
+  animation-delay: 310ms;
+}
+
+body.is-entering .nav-tab:nth-child(4) {
+  animation-delay: 370ms;
+}
+
+body.is-entering .nav-tab:nth-child(5) {
+  animation-delay: 430ms;
+}
+
+body.is-entering .nav-tab:nth-child(6) {
+  animation-delay: 490ms;
+}
+
+body.is-entering .nav-tab:nth-child(7) {
+  animation-delay: 550ms;
+}
+
+body.is-entering .nav-tab:nth-child(8) {
+  animation-delay: 610ms;
+}
+
+body.is-entering .nav-tab:nth-child(9) {
+  animation-delay: 670ms;
+}
+
+body.is-entering .view.is-active .page-heading,
+body.is-entering .view.is-active .stat-card,
+body.is-entering .view.is-active .panel,
+body.is-entering .view.is-active .record-card-stack,
+body.is-entering .view.is-active .generator-panel,
+body.is-entering .view.is-active .data-panel {
+  animation: contentFadeUp 700ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+body.is-entering .view.is-active .page-heading {
+  animation-delay: 210ms;
+}
+
+body.is-entering .view.is-active .stat-card:nth-child(1),
+body.is-entering .view.is-active .panel:nth-of-type(1),
+body.is-entering .view.is-active .record-card-stack:nth-child(1) {
+  animation-delay: 320ms;
+}
+
+body.is-entering .view.is-active .stat-card:nth-child(2),
+body.is-entering .view.is-active .panel:nth-of-type(2),
+body.is-entering .view.is-active .record-card-stack:nth-child(2) {
+  animation-delay: 410ms;
+}
+
+body.is-entering .view.is-active .panel:nth-of-type(3),
+body.is-entering .view.is-active .record-card-stack:nth-child(3) {
+  animation-delay: 500ms;
+}
+
+body.is-entering .view.is-active .panel:nth-of-type(4),
+body.is-entering .view.is-active .record-card-stack:nth-child(4) {
+  animation-delay: 590ms;
+}
+
+body.is-entering .view.is-active .panel:nth-of-type(n + 5),
+body.is-entering .view.is-active .record-card-stack:nth-child(n + 5),
+body.is-entering .view.is-active .generator-panel,
+body.is-entering .view.is-active .data-panel {
+  animation-delay: 680ms;
+}
+
+@keyframes splashDrift {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.06);
+  }
+}
+
+@keyframes sidebarFloatIn {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes contentFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(22px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.app-shell {
   grid-template-columns: 280px minmax(0, 1fr);
   min-height: 100vh;
 }
@@ -62,10 +369,15 @@ button {
   height: 44px;
   place-items: center;
   border-radius: 8px;
-  background: var(--green);
-  color: white;
-  font-size: 17px;
-  font-weight: 800;
+  background: transparent;
+  overflow: hidden;
+}
+
+.brand-mark img {
+  display: block;
+  width: 118%;
+  height: 118%;
+  object-fit: contain;
 }
 
 .brand h1 {

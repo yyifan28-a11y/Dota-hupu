@@ -231,7 +231,15 @@ async function restoreAdminSession() {
 async function loadState() {
   db = await api("/api/state");
   rebuildDerivedStats();
+  updateSplashStats();
   renderAll();
+}
+
+function updateSplashStats() {
+  const playerCount = $("#splashPlayerCount");
+  const matchCount = $("#splashMatchCount");
+  if (playerCount) playerCount.textContent = db.players.length;
+  if (matchCount) matchCount.textContent = db.matches.length;
 }
 
 function getPlayer(id) {
@@ -3992,6 +4000,38 @@ function setupPasswordControls() {
   });
 }
 
+function initializeSplashScreen() {
+  const splash = $("#splashScreen");
+  const enterButtons = $$(".splash-enter-button");
+  const video = splash?.querySelector(".splash-video");
+  const splashTransitionDuration = 720;
+  const appRevealDuration = 1280;
+
+  video?.addEventListener("error", () => {
+    video.classList.add("is-hidden");
+  });
+
+  const enterApp = (targetView) => {
+    if (document.body.classList.contains("is-entering") || document.body.classList.contains("has-entered")) return;
+    if (targetView && targetView !== "dashboard") {
+      switchView(targetView);
+    }
+    document.body.classList.add("is-entering");
+    video?.pause?.();
+    window.setTimeout(() => {
+      document.body.classList.add("has-entered");
+    }, splashTransitionDuration);
+    window.setTimeout(() => {
+      document.body.classList.remove("is-entering");
+    }, appRevealDuration);
+  };
+
+  enterButtons.forEach((button) => {
+    button.addEventListener("click", () => enterApp(button.dataset.splashTarget || "dashboard"));
+  });
+}
+
+initializeSplashScreen();
 bindEvents();
 restoreAdminSession().then(loadState).catch((error) => {
   document.body.innerHTML = `

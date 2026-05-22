@@ -7,12 +7,34 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <section class="splash-screen" id="splashScreen" aria-label="刀塔内战记录器首页">
+      <video class="splash-video" autoplay muted loop playsinline poster="./assets/splash-poster.jpg" aria-hidden="true">
+        <source src="./assets/splash.mp4" type="video/mp4" />
+      </video>
+      <div class="splash-fallback" aria-hidden="true"></div>
+      <div class="splash-content">
+        <div class="splash-title-lock">
+          <h1>刀塔内战记录器</h1>
+          <span class="splash-mark" aria-label="Dota 2">
+            <img class="splash-logo-icon" src="./assets/splash-logo.png" alt="" />
+          </span>
+        </div>
+        <div class="splash-meta" aria-label="赛季记录">
+          <span>S2赛季</span>
+          <span>现已记录<span id="splashPlayerCount">0</span>名选手，<span id="splashMatchCount">0</span>场比赛</span>
+        </div>
+        <div class="splash-actions" aria-label="首页入口">
+          <button class="splash-enter-button" id="enterAppButton" type="button" data-splash-target="dashboard">数据查询<span aria-hidden="true">→</span></button>
+          <button class="splash-enter-button" type="button" data-splash-target="generator">对战生成器<span aria-hidden="true">→</span></button>
+        </div>
+      </div>
+    </section>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <span class="brand-mark">D2</span>
+          <span class="brand-mark"><img src="./assets/splash-logo.png" alt="" /></span>
           <div>
-            <h1>Hupu内战记录器</h1>
+            <h1>刀塔内战记录器</h1>
           </div>
         </div>
 
