@@ -235,11 +235,16 @@ async function loadState() {
   renderAll();
 }
 
-function updateSplashStats() {
+async function loadSplashSummary() {
+  const summary = await api("/api/summary");
+  updateSplashStats(summary);
+}
+
+function updateSplashStats(summary = null) {
   const playerCount = $("#splashPlayerCount");
   const matchCount = $("#splashMatchCount");
-  if (playerCount) playerCount.textContent = db.players.length;
-  if (matchCount) matchCount.textContent = db.matches.length;
+  if (playerCount) playerCount.textContent = summary?.players ?? db.players.length;
+  if (matchCount) matchCount.textContent = summary?.matches ?? db.matches.length;
 }
 
 function getPlayer(id) {
@@ -4026,16 +4031,41 @@ function initializeSplashScreen() {
     });
   };
 
-  if ("requestIdleCallback" in window) {
-    window.requestIdleCallback(loadVideo, { timeout: 1200 });
-  } else {
-    window.setTimeout(loadVideo, 700);
-  }
+  window.setTimeout(() => {
+    if ("requestIdleCallback" in window) {
+      window.requestIdleCallback(loadVideo, { timeout: 1800 });
+    } else {
+      loadVideo();
+    }
+  }, 400);
 
-  const enterApp = (targetView) => {
+  const enterApp = async (targetView) => {
     if (document.body.classList.contains("is-entering") || document.body.classList.contains("has-entered")) return;
+    enterButtons.forEach((button) => {
+      button.disabled = true;
+    });
     if (targetView && targetView !== "dashboard") {
       switchView(targetView);
+    }
+    if (!db.players.length && !db.matches.length) {
+      try {
+        await loadState();
+      } catch (error) {
+        enterButtons.forEach((button) => {
+          button.disabled = false;
+        });
+        document.body.innerHTML = `
+          <main style="padding: 32px; font-family: system-ui, sans-serif;">
+            <h1>鍚庣鏈嶅姟娌℃湁杩炴帴涓?/h1>
+            <p>璇峰湪椤圭洰鐩綍杩愯 <code>npm start</code>锛岀劧鍚庢墦寮€ <code>http://localhost:3000</code>銆?/p>
+            <pre>${escapeHtml(error.message)}</pre>
+          </main>
+        `;
+        return;
+      }
+      if (targetView && targetView !== "dashboard") {
+        switchView(targetView);
+      }
     }
     document.body.classList.add("is-entering");
     video?.pause?.();
@@ -4054,12 +4084,9 @@ function initializeSplashScreen() {
 
 initializeSplashScreen();
 bindEvents();
-restoreAdminSession().then(loadState).catch((error) => {
-  document.body.innerHTML = `
-    <main style="padding: 32px; font-family: system-ui, sans-serif;">
-      <h1>后端服务没有连接上</h1>
-      <p>请在项目目录运行 <code>npm start</code>，然后打开 <code>http://localhost:3000</code>。</p>
-      <pre>${escapeHtml(error.message)}</pre>
-    </main>
-  `;
+Promise.allSettled([restoreAdminSession(), loadSplashSummary()]).then((results) => {
+  updateAdminUi();
+  if (results[1]?.status === "rejected") {
+    updateSplashStats({ players: 0, matches: 0 });
+  }
 });

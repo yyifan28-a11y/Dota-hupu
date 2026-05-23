@@ -95,6 +95,7 @@ button {
     radial-gradient(circle at 18% 18%, rgba(242, 183, 5, 0.18), transparent 26%),
     radial-gradient(circle at 82% 72%, rgba(185, 75, 67, 0.18), transparent 30%),
     repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 18px),
+    url("./assets/splash-poster.jpg") center / cover no-repeat,
     #07120f;
   animation: splashDrift 16s ease-in-out infinite alternate;
 }

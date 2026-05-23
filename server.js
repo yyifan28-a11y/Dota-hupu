@@ -170,6 +170,11 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (method === "GET" && url.pathname === "/api/summary") {
+    sendJson(response, 200, getSummary());
+    return;
+  }
+
   if (method !== "GET" && !isPublicMutation(method, url.pathname) && !requireAdmin(request, response)) {
     return;
   }
@@ -502,6 +507,12 @@ function getState() {
     `).all(),
     currentTeams: getTeams()
   };
+}
+
+function getSummary() {
+  const players = db.prepare("SELECT COUNT(*) AS count FROM players").get().count;
+  const matches = db.prepare("SELECT COUNT(*) AS count FROM matches").get().count;
+  return { players, matches };
 }
 
 function getTeams() {
