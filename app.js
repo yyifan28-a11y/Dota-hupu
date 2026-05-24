@@ -112,6 +112,7 @@ let pairRankModes = {
   poorFriends: "winrate",
   stomp: "winrate"
 };
+let stateLoadPromise = null;
 
 const dataSortState = {
   basicData: { key: "rating", direction: "desc" },
@@ -233,6 +234,15 @@ async function loadState() {
   rebuildDerivedStats();
   updateSplashStats();
   renderAll();
+}
+
+function ensureStateLoaded() {
+  if (stateLoadPromise) return stateLoadPromise;
+  stateLoadPromise = loadState().catch((error) => {
+    stateLoadPromise = null;
+    throw error;
+  });
+  return stateLoadPromise;
 }
 
 async function loadSplashSummary() {
@@ -4011,7 +4021,6 @@ function initializeSplashScreen() {
   const video = splash?.querySelector(".splash-video");
   const splashTransitionDuration = 720;
   const appRevealDuration = 1280;
-  let hasLoadedVideo = false;
 
   video?.addEventListener("error", () => {
     video.classList.add("is-hidden");
@@ -4019,25 +4028,40 @@ function initializeSplashScreen() {
   video?.addEventListener("canplay", () => {
     video.classList.add("is-ready");
   });
+  video?.addEventListener("loadeddata", () => {
+    video.classList.add("is-ready");
+  });
 
-  const loadVideo = () => {
-    if (!video || hasLoadedVideo || document.body.classList.contains("has-entered")) return;
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
-    hasLoadedVideo = true;
-    video.src = video.dataset.src || "";
-    video.load();
+  const playVideo = () => {
+    if (!video || document.body.classList.contains("has-entered")) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+      video.pause();
+      video.classList.add("is-hidden");
+      return;
+    }
     video.play().catch(() => {
       video.classList.add("is-hidden");
     });
   };
 
-  window.setTimeout(() => {
-    if ("requestIdleCallback" in window) {
-      window.requestIdleCallback(loadVideo, { timeout: 1800 });
-    } else {
-      loadVideo();
-    }
-  }, 400);
+  playVideo();
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) playVideo();
+  });
+
+  const showStateLoadError = (error) => {
+    enterButtons.forEach((button) => {
+      button.disabled = false;
+    });
+    document.body.classList.remove("is-entering", "has-entered");
+    document.body.innerHTML = `
+      <main style="padding: 32px; font-family: system-ui, sans-serif;">
+        <h1>閸氬海顏張宥呭濞屸剝婀佹潻鐐村复娑?/h1>
+        <p>鐠囧嘲婀い鍦窗閻╊喖缍嶆潻鎰攽 <code>npm start</code>閿涘瞼鍔ч崥搴㈠ⅵ瀵偓 <code>http://localhost:3000</code>閵?/p>
+        <pre>${escapeHtml(error.message)}</pre>
+      </main>
+    `;
+  };
 
   const enterApp = async (targetView) => {
     if (document.body.classList.contains("is-entering") || document.body.classList.contains("has-entered")) return;
@@ -4047,9 +4071,17 @@ function initializeSplashScreen() {
     if (targetView && targetView !== "dashboard") {
       switchView(targetView);
     }
+    document.body.classList.add("is-entering");
+    video?.pause?.();
+    window.setTimeout(() => {
+      document.body.classList.add("has-entered");
+    }, splashTransitionDuration);
+    window.setTimeout(() => {
+      document.body.classList.remove("is-entering");
+    }, appRevealDuration);
     if (!db.players.length && !db.matches.length) {
       try {
-        await loadState();
+        await ensureStateLoaded();
       } catch (error) {
         enterButtons.forEach((button) => {
           button.disabled = false;
@@ -4066,15 +4098,8 @@ function initializeSplashScreen() {
       if (targetView && targetView !== "dashboard") {
         switchView(targetView);
       }
+      return;
     }
-    document.body.classList.add("is-entering");
-    video?.pause?.();
-    window.setTimeout(() => {
-      document.body.classList.add("has-entered");
-    }, splashTransitionDuration);
-    window.setTimeout(() => {
-      document.body.classList.remove("is-entering");
-    }, appRevealDuration);
   };
 
   enterButtons.forEach((button) => {
@@ -4090,3 +4115,16 @@ Promise.allSettled([restoreAdminSession(), loadSplashSummary()]).then((results) 
     updateSplashStats({ players: 0, matches: 0 });
   }
 });
+
+window.setTimeout(() => {
+  const preloadState = () => {
+    if (!db.players.length && !db.matches.length) {
+      ensureStateLoaded().catch(() => {});
+    }
+  };
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(preloadState, { timeout: 1600 });
+  } else {
+    preloadState();
+  }
+}, 900);
