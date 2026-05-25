@@ -8,6 +8,8 @@ const POSITIONS = ["1", "2", "3", "4", "5"];
 const HEROES = Array.isArray(window.DOTA_HEROES) ? window.DOTA_HEROES : [];
 const HERO_IMAGE_BASE = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes";
 const ADMIN_PASSWORD_KEY = "dota-admin-password";
+const APP_ENTERED_KEY = "dota-app-entered";
+const ACTIVE_VIEW_KEY = "dota-active-view";
 const TEAM_GENERATION_COOLDOWN_KEY = "dota-team-generation-cooldown";
 const TEAM_GENERATION_COOLDOWN_MS = 60 * 1000;
 const REQUIRED_DETAIL_FIELDS = [
@@ -103,7 +105,8 @@ let ratingTrendHasUserSelection = false;
 let heroRankModes = {
   positive: "winrate",
   negative: "winrate",
-  singleHeat: "total"
+  singleHeat: "total",
+  reverseSingleHeat: "netLoss"
 };
 let heroUsageSort = "total";
 let pairRankModes = {
@@ -647,6 +650,9 @@ function renderEmpty(target) {
 }
 
 function switchView(viewId) {
+  const hasTargetView = Boolean($(`#${viewId}`));
+  if (!hasTargetView) viewId = "dashboard";
+
   $$(".nav-tab").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.view === viewId);
   });
@@ -656,6 +662,7 @@ function switchView(viewId) {
   });
 
   renderCurrentView();
+  sessionStorage.setItem(ACTIVE_VIEW_KEY, viewId);
 }
 
 function renderDashboard() {
@@ -915,22 +922,99 @@ function renderHeroRankings() {
       modes: ["winrate", "netWins"]
     },
     {
-      key: "games",
-      title: "热度榜",
-      heroes: [...rankedHeroes].sort((a, b) => b.games - a.games || b.wins - a.wins || a.name.localeCompare(b.name, "zh-Hans")),
-      value: (hero) => `${hero.games} 场`
-    },
-    {
       key: "singleHeat",
       title: "绝活榜",
       heroes: sortSingleHeroHeatStats(getSingleHeroHeatStats(), heroRankModes.singleHeat),
-      modes: ["total", "wins", "perfect"],
+      modes: ["total", "perfect", "wins"],
+      note: heroRankModes.singleHeat === "perfect" ? "胜率统计仅展示使用场数 ≥ 3 场的记录" : "",
       record: (hero) => `${hero.wins}-${hero.count - hero.wins}`,
       value: (hero) => formatSingleHeroHeatValue(hero, heroRankModes.singleHeat)
+    },
+    {
+      key: "reverseSingleHeat",
+      title: "反向绝活榜",
+      heroes: sortReverseSingleHeroHeatStats(getSingleHeroHeatStats(), heroRankModes.reverseSingleHeat),
+      modes: ["perfectLoss", "netLoss"],
+      note: heroRankModes.reverseSingleHeat === "perfectLoss" ? "胜率统计仅展示使用场数 ≥ 3 场的记录" : "",
+      record: (hero) => `${hero.wins}-${hero.count - hero.wins}`,
+      value: (hero) => formatReverseSingleHeroHeatValue(hero, heroRankModes.reverseSingleHeat)
     }
   ];
 
-  target.innerHTML = boards.map(renderHeroRankCard).join("");
+  target.innerHTML = [
+    ...boards.map(renderHeroRankCard),
+    renderHeroAppearanceBoard(rankedHeroes)
+  ].join("");
+}
+
+function renderHeroAppearanceBoard(heroes) {
+  const groups = getHeroAppearanceGroups(heroes);
+  const unplayedHeroes = getUnplayedHeroes(heroes);
+  return `
+    <section class="panel hero-appearance-card">
+      <div class="panel-header">
+        <h3>英雄出场场次</h3>
+      </div>
+      ${groups.length ? `
+        <div class="hero-appearance-table" role="table" aria-label="英雄出场场次">
+          ${groups.map((group) => `
+            <div class="hero-appearance-row" role="row">
+              <div class="hero-appearance-count" role="cell">
+                <strong>${group.games}</strong>
+                <span>场</span>
+              </div>
+              <div class="hero-appearance-heroes" role="cell">
+                ${group.heroes.map((hero) => renderHeroAppearanceAvatar(hero)).join("")}
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      ` : `<p class="muted">暂无数据</p>`}
+      <div class="hero-unplayed">
+        <div class="hero-unplayed-header">
+          <h4>未出场英雄</h4>
+          <span>${unplayedHeroes.length} 位</span>
+        </div>
+        ${unplayedHeroes.length ? `
+          <div class="hero-unplayed-list" aria-label="未出场英雄">
+            ${unplayedHeroes.map((hero) => renderHeroAppearanceAvatar({ ...hero, name: hero.cn, wins: 0, losses: 0 })).join("")}
+          </div>
+        ` : `<p class="muted">所有英雄均有出场记录</p>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderHeroAppearanceAvatar(hero) {
+  const title = `${hero.name} ${hero.wins}-${hero.losses}`;
+  const matchedHero = findHero(hero.name);
+  if (matchedHero) {
+    return `<img class="hero-avatar" src="${heroImageUrl(matchedHero)}" alt="" title="${escapeHtml(title)}" loading="lazy" />`;
+  }
+  return `<span class="hero-avatar hero-avatar-fallback" title="${escapeHtml(title)}">${escapeHtml(String(hero.name || "-").slice(0, 1))}</span>`;
+}
+
+function getUnplayedHeroes(playedHeroes) {
+  const playedSlugs = new Set(playedHeroes.map((hero) => hero.key).filter(Boolean));
+  return HEROES
+    .filter((hero) => !playedSlugs.has(hero.slug))
+    .sort((a, b) => a.cn.localeCompare(b.cn, "zh-Hans"));
+}
+
+function getHeroAppearanceGroups(heroes) {
+  const sortedHeroes = [...heroes]
+    .filter((hero) => hero.games > 0)
+    .sort((a, b) => b.games - a.games || b.wins - a.wins || a.name.localeCompare(b.name, "zh-Hans"));
+  const groups = [];
+  sortedHeroes.forEach((hero) => {
+    let group = groups[groups.length - 1];
+    if (!group || group.games !== hero.games) {
+      group = { games: hero.games, heroes: [] };
+      groups.push(group);
+    }
+    group.heroes.push(hero);
+  });
+  return groups;
 }
 
 function getSingleHeroHeatStats() {
@@ -944,7 +1028,7 @@ function getSingleHeroHeatStats() {
 
 function sortSingleHeroHeatStats(heroes, mode = "total") {
   const ranked = mode === "perfect"
-    ? heroes.filter((hero) => hero.count > 0 && hero.wins === hero.count)
+    ? heroes.filter((hero) => hero.count >= 3 && hero.wins === hero.count)
     : heroes;
   return [...ranked].sort((a, b) => {
     if (mode === "wins") {
@@ -955,7 +1039,41 @@ function sortSingleHeroHeatStats(heroes, mode = "total") {
 }
 
 function formatSingleHeroHeatValue(hero, mode = "total") {
-  const suffix = mode === "wins" ? `${hero.wins}胜` : `${hero.count}场`;
+  const suffix = mode === "perfect"
+    ? `${Math.round((hero.wins / hero.count) * 100)}%`
+    : mode === "wins" ? `${hero.wins}胜` : `${hero.count}场`;
+  return `（${hero.playerName}）${suffix}`;
+}
+
+function sortReverseSingleHeroHeatStats(heroes, mode = "losses") {
+  const ranked = mode === "perfectLoss"
+    ? heroes.filter((hero) => hero.count >= 3 && hero.wins === 0)
+    : heroes;
+  return [...ranked].sort((a, b) => {
+    const aLosses = a.count - a.wins;
+    const bLosses = b.count - b.wins;
+    if (mode === "netLoss") {
+      return (bLosses - b.wins) - (aLosses - a.wins)
+        || bLosses - aLosses
+        || b.count - a.count
+        || a.playerName.localeCompare(b.playerName, "zh-Hans")
+        || a.name.localeCompare(b.name, "zh-Hans");
+    }
+    return bLosses - aLosses
+      || b.count - a.count
+      || a.wins - b.wins
+      || a.playerName.localeCompare(b.playerName, "zh-Hans")
+      || a.name.localeCompare(b.name, "zh-Hans");
+  });
+}
+
+function formatReverseSingleHeroHeatValue(hero, mode = "losses") {
+  const losses = hero.count - hero.wins;
+  const netLoss = losses - hero.wins;
+  const suffix = mode === "netLoss"
+    ? (netLoss > 0 ? `-${netLoss}` : netLoss < 0 ? `+${Math.abs(netLoss)}` : "0")
+    : mode === "perfectLoss" ? `${Math.round((losses / hero.count) * 100)}%`
+    : `${losses}负`;
   return `（${hero.playerName}）${suffix}`;
 }
 
@@ -974,7 +1092,10 @@ function renderHeroRankCard(board) {
   return `
     <section class="panel hero-rank-card">
       <div class="panel-header">
-        <h3>${escapeHtml(board.title)}</h3>
+        <div class="hero-rank-heading">
+          <h3>${escapeHtml(board.title)}</h3>
+          ${board.note ? `<small>${escapeHtml(board.note)}</small>` : ""}
+        </div>
         ${board.modes ? `
           <div class="rank-mode-control" aria-label="${escapeHtml(board.title)}排序方式">
             ${board.modes.map((item) => `
@@ -1018,7 +1139,10 @@ function getHeroModeLabel(mode, boardKey = "") {
     netWins: boardKey === "negative" ? "净负" : "净胜",
     total: "总数",
     wins: "胜场",
-    perfect: "胜率"
+    perfect: "胜率",
+    losses: "负场",
+    netLoss: "净负",
+    perfectLoss: "胜率"
   }[mode] || mode;
 }
 
@@ -4018,9 +4142,20 @@ function setupPasswordControls() {
 function initializeSplashScreen() {
   const splash = $("#splashScreen");
   const enterButtons = $$(".splash-enter-button");
+  const returnToSplashButton = $("#returnToSplashHome");
   const video = splash?.querySelector(".splash-video");
+  const playButton = $("#playSplashVideo");
+  const returnButton = $("#returnSplashHome");
+  const progress = $("#splashVideoProgress");
+  const progressText = $("#splashVideoProgressText");
+  const progressBar = $("#splashVideoProgressBar");
   const splashTransitionDuration = 720;
   const appRevealDuration = 1280;
+  let splashVideoObjectUrl = "";
+  let splashVideoRequest = null;
+  let isSplashVideoLoading = false;
+  let hasSplashVideoLoaded = false;
+  let isLeavingSplash = false;
 
   video?.addEventListener("error", () => {
     video.classList.add("is-hidden");
@@ -4032,22 +4167,130 @@ function initializeSplashScreen() {
     video.classList.add("is-ready");
   });
 
-  const playVideo = () => {
-    if (!video || document.body.classList.contains("has-entered")) return;
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
-      video.pause();
-      video.classList.add("is-hidden");
-      return;
-    }
-    video.play().catch(() => {
-      video.classList.add("is-hidden");
-    });
+  const setVideoProgress = (value) => {
+    const percent = Math.max(0, Math.min(100, Math.round(value)));
+    if (progressText) progressText.textContent = `${percent}%`;
+    if (progressBar) progressBar.style.width = `${percent}%`;
   };
 
-  playVideo();
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) playVideo();
+  const showSplashHome = ({ replayIntro = false } = {}) => {
+    if (splashVideoRequest) {
+      splashVideoRequest.abort();
+      splashVideoRequest = null;
+    }
+    isSplashVideoLoading = false;
+    document.body.classList.toggle("has-splash-video-returned", !replayIntro);
+    document.body.classList.remove("is-splash-video-mode", "is-splash-video-playing");
+    video?.pause();
+    if (video) {
+      try {
+        video.currentTime = 0;
+      } catch {
+        // Video metadata may not exist yet when a download is cancelled.
+      }
+      video.removeAttribute("src");
+      video.load();
+      video.classList.remove("is-ready", "is-hidden");
+    }
+    if (splashVideoObjectUrl) {
+      URL.revokeObjectURL(splashVideoObjectUrl);
+      splashVideoObjectUrl = "";
+    }
+    hasSplashVideoLoaded = false;
+    if (progress) progress.hidden = true;
+    setVideoProgress(0);
+    if (playButton) {
+      playButton.disabled = false;
+      playButton.textContent = "播放动画";
+    }
+  };
+
+  const showSplashVideoLoading = () => {
+    document.body.classList.remove("has-splash-video-returned");
+    document.body.classList.add("is-splash-video-mode");
+    document.body.classList.remove("is-splash-video-playing");
+    if (progress) progress.hidden = false;
+    setVideoProgress(0);
+    if (playButton) {
+      playButton.disabled = true;
+      playButton.textContent = "正在加载";
+    }
+  };
+
+  const showSplashVideoPlaying = () => {
+    document.body.classList.add("is-splash-video-mode", "is-splash-video-playing");
+    if (progress) progress.hidden = true;
+  };
+
+  const loadSplashVideo = () => new Promise((resolve, reject) => {
+    if (!video) {
+      reject(new Error("未找到开场影片"));
+      return;
+    }
+    if (hasSplashVideoLoaded) {
+      resolve();
+      return;
+    }
+
+    const source = video.dataset.src;
+    if (!source) {
+      reject(new Error("未配置开场影片"));
+      return;
+    }
+
+    splashVideoRequest = new XMLHttpRequest();
+    splashVideoRequest.open("GET", source);
+    splashVideoRequest.responseType = "blob";
+    splashVideoRequest.onprogress = (event) => {
+      if (event.lengthComputable) {
+        setVideoProgress((event.loaded / event.total) * 100);
+      }
+    };
+    splashVideoRequest.onabort = () => reject(new Error("开场影片加载已取消"));
+    splashVideoRequest.onerror = () => reject(new Error("开场影片加载失败"));
+    splashVideoRequest.onload = () => {
+      if (splashVideoRequest.status < 200 || splashVideoRequest.status >= 300) {
+        reject(new Error(`开场影片加载失败：${splashVideoRequest.status}`));
+        return;
+      }
+
+      if (splashVideoObjectUrl) URL.revokeObjectURL(splashVideoObjectUrl);
+      splashVideoObjectUrl = URL.createObjectURL(splashVideoRequest.response);
+      video.addEventListener("loadeddata", () => {
+        hasSplashVideoLoaded = true;
+        setVideoProgress(100);
+        resolve();
+      }, { once: true });
+      video.addEventListener("error", () => reject(new Error("开场影片无法播放")), { once: true });
+      video.src = splashVideoObjectUrl;
+      video.load();
+    };
+    splashVideoRequest.onloadend = () => {
+      splashVideoRequest = null;
+    };
+    splashVideoRequest.send();
   });
+
+  playButton?.addEventListener("click", async () => {
+    if (isSplashVideoLoading || document.body.classList.contains("has-entered")) return;
+    isSplashVideoLoading = true;
+    showSplashVideoLoading();
+
+    try {
+      await loadSplashVideo();
+      video.classList.add("is-ready");
+      await video.play();
+      showSplashVideoPlaying();
+    } catch (error) {
+      if (isLeavingSplash || !document.body.classList.contains("is-splash-video-mode")) return;
+      showSplashHome();
+      alert(error.message);
+    } finally {
+      isSplashVideoLoading = false;
+    }
+  });
+
+  returnButton?.addEventListener("click", () => showSplashHome());
 
   const showStateLoadError = (error) => {
     enterButtons.forEach((button) => {
@@ -4056,8 +4299,8 @@ function initializeSplashScreen() {
     document.body.classList.remove("is-entering", "has-entered");
     document.body.innerHTML = `
       <main style="padding: 32px; font-family: system-ui, sans-serif;">
-        <h1>閸氬海顏張宥呭濞屸剝婀佹潻鐐村复娑?/h1>
-        <p>鐠囧嘲婀い鍦窗閻╊喖缍嶆潻鎰攽 <code>npm start</code>閿涘瞼鍔ч崥搴㈠ⅵ瀵偓 <code>http://localhost:3000</code>閵?/p>
+        <h1>后端服务没有连接上</h1>
+        <p>请在项目目录运行 <code>npm start</code>，然后打开 <code>http://localhost:3000</code>。</p>
         <pre>${escapeHtml(error.message)}</pre>
       </main>
     `;
@@ -4065,9 +4308,15 @@ function initializeSplashScreen() {
 
   const enterApp = async (targetView) => {
     if (document.body.classList.contains("is-entering") || document.body.classList.contains("has-entered")) return;
+    isLeavingSplash = true;
+    sessionStorage.setItem(APP_ENTERED_KEY, "1");
+    if (splashVideoRequest) splashVideoRequest.abort();
     enterButtons.forEach((button) => {
       button.disabled = true;
     });
+    if (playButton) {
+      playButton.disabled = true;
+    }
     if (targetView && targetView !== "dashboard") {
       switchView(targetView);
     }
@@ -4083,16 +4332,7 @@ function initializeSplashScreen() {
       try {
         await ensureStateLoaded();
       } catch (error) {
-        enterButtons.forEach((button) => {
-          button.disabled = false;
-        });
-        document.body.innerHTML = `
-          <main style="padding: 32px; font-family: system-ui, sans-serif;">
-            <h1>鍚庣鏈嶅姟娌℃湁杩炴帴涓?/h1>
-            <p>璇峰湪椤圭洰鐩綍杩愯 <code>npm start</code>锛岀劧鍚庢墦寮€ <code>http://localhost:3000</code>銆?/p>
-            <pre>${escapeHtml(error.message)}</pre>
-          </main>
-        `;
+        showStateLoadError(error);
         return;
       }
       if (targetView && targetView !== "dashboard") {
@@ -4105,6 +4345,27 @@ function initializeSplashScreen() {
   enterButtons.forEach((button) => {
     button.addEventListener("click", () => enterApp(button.dataset.splashTarget || "dashboard"));
   });
+
+  returnToSplashButton?.addEventListener("click", () => {
+    sessionStorage.removeItem(APP_ENTERED_KEY);
+    sessionStorage.removeItem(ACTIVE_VIEW_KEY);
+    isLeavingSplash = false;
+    document.body.classList.remove("has-entered", "is-entering", "has-splash-video-returned");
+    showSplashHome({ replayIntro: true });
+    enterButtons.forEach((button) => {
+      button.disabled = false;
+    });
+    switchView("dashboard");
+    sessionStorage.removeItem(ACTIVE_VIEW_KEY);
+    updateSplashStats();
+  });
+
+  if (sessionStorage.getItem(APP_ENTERED_KEY) === "1") {
+    isLeavingSplash = true;
+    document.body.classList.add("has-entered");
+    switchView(sessionStorage.getItem(ACTIVE_VIEW_KEY) || "dashboard");
+    ensureStateLoaded().catch(showStateLoadError);
+  }
 }
 
 initializeSplashScreen();
@@ -4115,16 +4376,3 @@ Promise.allSettled([restoreAdminSession(), loadSplashSummary()]).then((results) 
     updateSplashStats({ players: 0, matches: 0 });
   }
 });
-
-window.setTimeout(() => {
-  const preloadState = () => {
-    if (!db.players.length && !db.matches.length) {
-      ensureStateLoaded().catch(() => {});
-    }
-  };
-  if ("requestIdleCallback" in window) {
-    window.requestIdleCallback(preloadState, { timeout: 1600 });
-  } else {
-    preloadState();
-  }
-}, 900);

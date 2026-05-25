@@ -8,13 +8,13 @@
   </head>
   <body>
     <section class="splash-screen" id="splashScreen" aria-label="刀塔内战记录器首页">
-      <video class="splash-video" muted loop playsinline preload="auto" poster="./assets/splash-poster.jpg" src="./assets/splash.mp4" aria-hidden="true"></video>
+      <video class="splash-video" muted loop playsinline preload="none" poster="./assets/splash-bg.webp" data-src="./assets/splash.mp4" aria-hidden="true"></video>
       <div class="splash-fallback" aria-hidden="true"></div>
       <div class="splash-content">
         <div class="splash-title-lock">
           <h1>刀塔内战记录器</h1>
           <span class="splash-mark" aria-label="Dota 2">
-            <img class="splash-logo-icon" src="./assets/splash-logo.png" alt="" />
+            <img class="splash-logo-icon" src="./assets/splash-logo.webp" alt="" />
           </span>
         </div>
         <div class="splash-meta" aria-label="赛季记录">
@@ -25,12 +25,20 @@
           <button class="splash-enter-button" id="enterAppButton" type="button" data-splash-target="dashboard">数据查询<span aria-hidden="true">→</span></button>
           <button class="splash-enter-button" type="button" data-splash-target="generator">对战生成器<span aria-hidden="true">→</span></button>
         </div>
+        <div class="splash-video-controls" aria-live="polite">
+          <button class="splash-video-button" id="playSplashVideo" type="button">播放动画</button>
+          <div class="splash-video-progress" id="splashVideoProgress" hidden>
+            <span id="splashVideoProgressText">0%</span>
+            <span class="splash-video-progress-track"><span id="splashVideoProgressBar"></span></span>
+          </div>
+          <button class="splash-return-button" id="returnSplashHome" type="button">返回首页</button>
+        </div>
       </div>
     </section>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <span class="brand-mark"><img src="./assets/splash-logo.png" alt="" /></span>
+          <span class="brand-mark"><img src="./assets/splash-logo.webp" alt="" /></span>
           <div>
             <h1>刀塔内战记录器</h1>
           </div>
@@ -74,6 +82,10 @@
             <span>管理</span>
           </button>
         </nav>
+        <button class="nav-tab sidebar-home-button" id="returnToSplashHome" type="button">
+          <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M3 11 12 3l9 8" /><path d="M5 10v10h14V10" /><path d="M9 20v-6h6v6" /></svg>
+          <span>返回首页</span>
+        </button>
       </aside>
 
       <main class="main">
