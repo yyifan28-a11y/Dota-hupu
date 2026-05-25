@@ -1028,11 +1028,18 @@ function getSingleHeroHeatStats() {
 
 function sortSingleHeroHeatStats(heroes, mode = "total") {
   const ranked = mode === "perfect"
-    ? heroes.filter((hero) => hero.count >= 3 && hero.wins === hero.count)
+    ? heroes.filter((hero) => hero.count >= 3)
     : heroes;
   return [...ranked].sort((a, b) => {
     if (mode === "wins") {
       return b.wins - a.wins || b.count - a.count || a.playerName.localeCompare(b.playerName, "zh-Hans") || a.name.localeCompare(b.name, "zh-Hans");
+    }
+    if (mode === "perfect") {
+      return (b.wins / b.count) - (a.wins / a.count)
+        || b.count - a.count
+        || b.wins - a.wins
+        || a.playerName.localeCompare(b.playerName, "zh-Hans")
+        || a.name.localeCompare(b.name, "zh-Hans");
     }
     return b.count - a.count || b.wins - a.wins || a.playerName.localeCompare(b.playerName, "zh-Hans") || a.name.localeCompare(b.name, "zh-Hans");
   });
@@ -1047,11 +1054,18 @@ function formatSingleHeroHeatValue(hero, mode = "total") {
 
 function sortReverseSingleHeroHeatStats(heroes, mode = "losses") {
   const ranked = mode === "perfectLoss"
-    ? heroes.filter((hero) => hero.count >= 3 && hero.wins === 0)
+    ? heroes.filter((hero) => hero.count >= 3)
     : heroes;
   return [...ranked].sort((a, b) => {
     const aLosses = a.count - a.wins;
     const bLosses = b.count - b.wins;
+    if (mode === "perfectLoss") {
+      return (a.wins / a.count) - (b.wins / b.count)
+        || b.count - a.count
+        || bLosses - aLosses
+        || a.playerName.localeCompare(b.playerName, "zh-Hans")
+        || a.name.localeCompare(b.name, "zh-Hans");
+    }
     if (mode === "netLoss") {
       return (bLosses - b.wins) - (aLosses - a.wins)
         || bLosses - aLosses
@@ -1072,7 +1086,7 @@ function formatReverseSingleHeroHeatValue(hero, mode = "losses") {
   const netLoss = losses - hero.wins;
   const suffix = mode === "netLoss"
     ? (netLoss > 0 ? `-${netLoss}` : netLoss < 0 ? `+${Math.abs(netLoss)}` : "0")
-    : mode === "perfectLoss" ? `${Math.round((losses / hero.count) * 100)}%`
+    : mode === "perfectLoss" ? `${Math.round((hero.wins / hero.count) * 100)}%`
     : `${losses}负`;
   return `（${hero.playerName}）${suffix}`;
 }
