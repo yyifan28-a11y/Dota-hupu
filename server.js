@@ -621,14 +621,6 @@ function satisfiesConstraints(teams, constraints) {
   });
 }
 
-function shuffleTeams(ids) {
-  const shuffled = [...ids].sort(() => Math.random() - 0.5);
-  return {
-    radiant: shuffled.slice(0, 5),
-    dire: shuffled.slice(5, 10)
-  };
-}
-
 function teamRating(ids, ratingById) {
   return ids.reduce((total, id) => total + (ratingById.get(id) || 0), 0);
 }

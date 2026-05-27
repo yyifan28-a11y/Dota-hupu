@@ -97,6 +97,10 @@ let pendingExcelMatches = [];
 let pendingRatingSnapshots = [];
 let showAllDashboardMatches = false;
 let activeDataViewMode = "basic";
+let selectedPlayerProfileId = "";
+let selectedPlayerProfilePosition = "";
+let selectedPlayerProfileHeroKey = "";
+let showAllPlayerProfileMatches = false;
 let teamGenerationCooldownTimer = null;
 let playerSearchSelectedId = "";
 let isComposingPlayerSearch = false;
@@ -652,9 +656,21 @@ function renderEmpty(target) {
 function switchView(viewId) {
   const hasTargetView = Boolean($(`#${viewId}`));
   if (!hasTargetView) viewId = "dashboard";
+  const navGroups = {
+    players: ["players", "data", "heroes"],
+    playerProfile: ["playerProfile", "relations", "ratingTrends", "records"]
+  };
+  const parentView = Object.entries(navGroups).find(([, views]) => views.includes(viewId))?.[0] || "";
 
   $$(".nav-tab").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.view === viewId);
+    const isExact = button.dataset.view === viewId;
+    const isParent = button.dataset.navDefault === parentView;
+    button.classList.toggle("is-active", isExact);
+    button.classList.toggle("is-section-active", isParent);
+  });
+
+  $$(".nav-sub-group").forEach((group) => {
+    group.classList.toggle("is-open", group.dataset.navGroup === parentView);
   });
 
   $$(".view").forEach((view) => {
@@ -806,6 +822,219 @@ function renderRecordHeader(table) {
         `).join("")}
       </span>
     </th>
+  `;
+}
+
+function getPlayerProfilePlayers() {
+  return getPlayersWithStats()
+    .sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0) || a.name.localeCompare(b.name, "zh-Hans"));
+}
+
+function ensureSelectedPlayerProfileId(players) {
+  if (players.some((player) => player.id === selectedPlayerProfileId)) return;
+  selectedPlayerProfileId = players[0]?.id || "";
+  selectedPlayerProfilePosition = "";
+  selectedPlayerProfileHeroKey = "";
+  showAllPlayerProfileMatches = false;
+}
+
+function getFilteredPlayerProfileStats(playerId) {
+  const totals = {
+    kills: 0,
+    deaths: 0,
+    assists: 0,
+    gpm: 0,
+    xpm: 0,
+    netWorth10: 0,
+    damage: 0,
+    damageShare: 0,
+    buildingDamage: 0
+  };
+  const counts = Object.fromEntries(Object.keys(totals).map((key) => [key, 0]));
+  const stats = { games: 0, wins: 0, losses: 0 };
+
+  db.matches.forEach((match) => {
+    if (getMatchQuality(match) === "draft") return;
+    const side = match.radiant?.includes(playerId) ? "radiant" : match.dire?.includes(playerId) ? "dire" : "";
+    if (!side) return;
+
+    const detail = match.playerDetails?.[playerId] || {};
+    const position = detail.position || match.positions?.[playerId] || "";
+    if (selectedPlayerProfilePosition && position !== selectedPlayerProfilePosition) return;
+
+    const heroIdentity = getHeroIdentity(detail.hero);
+    if (selectedPlayerProfileHeroKey && heroIdentity.key !== selectedPlayerProfileHeroKey) return;
+
+    stats.games += 1;
+    if (match.winner === side) {
+      stats.wins += 1;
+    } else {
+      stats.losses += 1;
+    }
+
+    Object.keys(totals).forEach((key) => {
+      const value = Number(detail[key]);
+      if (!Number.isFinite(value) || value < 0) return;
+      totals[key] += value;
+      counts[key] += 1;
+    });
+  });
+
+  const dataStats = Object.fromEntries(
+    Object.keys(totals).map((key) => {
+      if (!counts[key]) return [key, null];
+      const average = totals[key] / counts[key];
+      const isPercent = key === "damageShare";
+      return [key, isPercent ? Number(average.toFixed(3)) : Math.round(average)];
+    })
+  );
+
+  return { ...stats, dataStats };
+}
+
+function getPlayerProfileMatches(playerId) {
+  return getMatchesByScheduleDesc(db.matches.filter((match) => {
+    if (getMatchQuality(match) === "draft") return false;
+    return match.radiant?.includes(playerId) || match.dire?.includes(playerId);
+  }));
+}
+
+function renderPlayerProfile() {
+  const list = $("#playerProfileList");
+  const detail = $("#playerProfileDetail");
+  if (!list || !detail) return;
+
+  const players = getPlayerProfilePlayers();
+  ensureSelectedPlayerProfileId(players);
+
+  if (!players.length) {
+    list.innerHTML = `<p class="muted">暂无选手</p>`;
+    detail.innerHTML = `<p class="muted">暂无选手</p>`;
+    return;
+  }
+
+  list.innerHTML = players.map((player) => {
+    const isActive = player.id === selectedPlayerProfileId;
+    return `
+      <button class="player-profile-tab ${isActive ? "is-active" : ""}" data-player-profile-id="${escapeHtml(player.id)}" type="button">
+        <strong>${escapeHtml(player.name)}</strong>
+      </button>
+    `;
+  }).join("");
+
+  const player = players.find((item) => item.id === selectedPlayerProfileId) || players[0];
+  const stats = player.stats || createEmptyPlayerStats();
+  const filteredStats = getFilteredPlayerProfileStats(player.id);
+  const dataStats = filteredStats.dataStats;
+  const playerMatches = getPlayerProfileMatches(player.id);
+  const visibleMatches = showAllPlayerProfileMatches ? playerMatches : playerMatches.slice(0, 4);
+  const activeHero = Array.from(heroUsageByPlayerId.get(player.id)?.values() || [])
+    .find((hero) => hero.key === selectedPlayerProfileHeroKey);
+  const dataScope = selectedPlayerProfilePosition
+    ? getPlayerProfilePositionLabel(selectedPlayerProfilePosition)
+    : selectedPlayerProfileHeroKey ? (activeHero?.name || "所选英雄") : "总体";
+  const metrics = [
+    { label: "总场次", value: filteredStats.games },
+    { label: "胜", value: filteredStats.wins },
+    { label: "负", value: filteredStats.losses },
+    { key: "kills", label: "击杀" },
+    { key: "deaths", label: "死亡" },
+    { key: "assists", label: "助攻" },
+    { key: "gpm", label: "GPM" },
+    { key: "xpm", label: "XPM" },
+    { key: "netWorth10", label: "10分钟经济" },
+    { key: "damage", label: "伤害量" },
+    { key: "damageShare", label: "伤害占比", type: "percent" },
+    { key: "buildingDamage", label: "建筑伤害" }
+  ];
+
+  detail.innerHTML = `
+    <div class="player-profile-title">
+      <div>
+        <h3>${escapeHtml(player.name)}</h3>
+        <p>${stats.games ? `${stats.wins}胜 ${stats.losses}负 · ${stats.games}场` : "暂无比赛记录"}</p>
+      </div>
+      <span>评分 ${formatRating(player.rating)}</span>
+    </div>
+
+    <section class="player-profile-section">
+      ${renderPlayerProfilePositions(stats.positionStats)}
+    </section>
+
+    <section class="player-profile-section">
+      ${renderPlayerProfileHeroes(player.id)}
+    </section>
+
+    <section class="player-profile-section">
+      <div class="player-profile-section-header">
+        <h4>场均数据</h4>
+        <small>${escapeHtml(dataScope)}</small>
+      </div>
+      <div class="player-profile-stats">
+        ${metrics.map((metric) => `
+          <div class="player-profile-stat">
+            <span>${metric.label}</span>
+            <strong>${metric.key ? formatAverage(dataStats[metric.key], metric.type) : metric.value}</strong>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+
+    <section class="player-profile-section">
+      <div class="player-profile-section-header">
+        <h4>比赛</h4>
+        <button class="secondary-button compact-button ${playerMatches.length <= 4 ? "is-hidden" : ""}" id="togglePlayerProfileMatches" type="button">
+          ${showAllPlayerProfileMatches ? "收起比赛" : "显示全部"}
+        </button>
+      </div>
+      <div id="playerProfileMatches" class="match-list"></div>
+    </section>
+  `;
+
+  renderMatchCards($("#playerProfileMatches"), visibleMatches);
+}
+
+function renderPlayerProfilePositions(positionStats = createEmptyPositionStats()) {
+  return `
+    <div class="player-profile-positions">
+      ${POSITIONS.map((position) => {
+        const record = positionStats.records?.[position] || { wins: 0, losses: 0 };
+        return `
+          <button class="player-profile-position ${selectedPlayerProfilePosition === position ? "is-active" : ""}" data-player-profile-position="${position}" type="button">
+            <strong>${getPlayerProfilePositionLabel(position)}</strong>
+            <small>${record.wins}-${record.losses}</small>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function getPlayerProfilePositionLabel(position) {
+  return {
+    1: "一号位",
+    2: "二号位",
+    3: "三号位",
+    4: "四号位",
+    5: "五号位"
+  }[position] || `${position}号位`;
+}
+
+function renderPlayerProfileHeroes(playerId) {
+  const heroes = Array.from(heroUsageByPlayerId.get(playerId)?.values() || [])
+    .sort((a, b) => b.count - a.count || b.wins - a.wins || a.name.localeCompare(b.name, "zh-Hans"));
+
+  if (!heroes.length) return `<p class="muted">暂无英雄记录</p>`;
+
+  return `
+    <div class="player-profile-heroes">
+      ${heroes.map((hero) => `
+        <button class="player-profile-hero ${selectedPlayerProfileHeroKey === hero.key ? "is-active" : ""}" data-player-profile-hero="${escapeHtml(hero.key)}" title="${escapeHtml(`${hero.name} ${hero.count}场`)}" type="button">
+          ${renderHeroUsageAvatar(hero.name)}
+          <b>${hero.count}</b>
+        </button>
+      `).join("")}
+    </div>
   `;
 }
 
@@ -1657,14 +1886,6 @@ function getRatingTrendPlayerColor(playerId) {
     hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
   }
   return RATING_TREND_COLORS[Math.abs(hash) % RATING_TREND_COLORS.length];
-}
-
-function getInitialRating(playerId, snapshots) {
-  const playerSnapshots = snapshots
-    .filter((snapshot) => snapshot.playerId === playerId && Number.isFinite(Number(snapshot.rating)))
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  const first = playerSnapshots.find((snapshot) => snapshot.source === "import_initial") || playerSnapshots[0];
-  return first ? Number(first.rating) : 0;
 }
 
 function getLatestRating(playerId, snapshots) {
@@ -2784,6 +3005,7 @@ function renderCurrentView() {
   const renderers = {
     dashboard: renderDashboard,
     players: renderPlayers,
+    playerProfile: renderPlayerProfile,
     data: renderDataView,
     heroes: renderHeroes,
     records: renderRecords,
@@ -3614,7 +3836,7 @@ function bindEvents() {
   }, true);
 
   $$(".nav-tab").forEach((button) => {
-    button.addEventListener("click", () => switchView(button.dataset.view));
+    button.addEventListener("click", () => switchView(button.dataset.view || button.dataset.navDefault));
   });
 
   $("#recentMatches").addEventListener("click", handleMatchCardOpen);
@@ -3640,6 +3862,47 @@ function bindEvents() {
     }
     renderPlayers();
   });
+
+  $("#playerProfile")?.addEventListener("click", (event) => {
+    const playerButton = event.target.closest("[data-player-profile-id]");
+    if (playerButton) {
+      selectedPlayerProfileId = playerButton.dataset.playerProfileId;
+      selectedPlayerProfilePosition = "";
+      selectedPlayerProfileHeroKey = "";
+      showAllPlayerProfileMatches = false;
+      renderPlayerProfile();
+      return;
+    }
+
+    if (event.target.closest("#togglePlayerProfileMatches")) {
+      showAllPlayerProfileMatches = !showAllPlayerProfileMatches;
+      renderPlayerProfile();
+      return;
+    }
+
+    const matchCard = event.target.closest("[data-open-match]");
+    if (matchCard) {
+      handleMatchCardOpen(event);
+      return;
+    }
+
+    const positionButton = event.target.closest("[data-player-profile-position]");
+    if (positionButton) {
+      const position = positionButton.dataset.playerProfilePosition;
+      selectedPlayerProfilePosition = selectedPlayerProfilePosition === position ? "" : position;
+      selectedPlayerProfileHeroKey = "";
+      renderPlayerProfile();
+      return;
+    }
+
+    const heroButton = event.target.closest("[data-player-profile-hero]");
+    if (!heroButton) return;
+    const heroKey = heroButton.dataset.playerProfileHero;
+    selectedPlayerProfileHeroKey = selectedPlayerProfileHeroKey === heroKey ? "" : heroKey;
+    selectedPlayerProfilePosition = "";
+    renderPlayerProfile();
+  });
+  $("#playerProfile")?.addEventListener("keydown", handleMatchCardKeydown);
 
   $("#relations")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-pair-rank][data-pair-mode]");

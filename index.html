@@ -49,30 +49,46 @@
             <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 20V4M4 20h16M8 17v-5M12 17V8M16 17v-7M20 17v-3" /></svg>
             <span>总览</span>
           </button>
-          <button class="nav-tab" data-view="players" type="button">
+          <button class="nav-tab" data-nav-default="playerProfile" type="button">
+            <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+            <span>选手</span>
+          </button>
+          <div class="nav-sub-group" data-nav-group="playerProfile">
+            <button class="nav-tab nav-sub-tab" data-view="playerProfile" type="button">
+              <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+              <span>选手</span>
+            </button>
+            <button class="nav-tab nav-sub-tab" data-view="relations" type="button">
+              <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4 20a5 5 0 0 1 10 0" /><path d="M17 12a2.5 2.5 0 1 0 0-5" /><path d="M15.5 15.5A4.5 4.5 0 0 1 21 20" /></svg>
+              <span>队友对手</span>
+            </button>
+            <button class="nav-tab nav-sub-tab" data-view="ratingTrends" type="button">
+              <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 19V5" /><path d="M4 19h16" /><path d="m7 15 4-5 4 3 5-7" /><path d="M7 15h2M11 10h2M15 13h2M20 6h-2" /></svg>
+              <span>评分走势</span>
+            </button>
+            <button class="nav-tab nav-sub-tab" data-view="records" type="button">
+              <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M8 4h8M9 3h6v4H9z" /><path d="M6 6h12v15H6z" /><path d="M9 12h6M9 16h6" /></svg>
+              <span>纪录</span>
+            </button>
+          </div>
+          <button class="nav-tab" data-nav-default="players" type="button">
             <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M8 4h8v3h3v3a5 5 0 0 1-5 5h-4a5 5 0 0 1-5-5V7h3V4Z" /><path d="M10 15v4M14 15v4M8 20h8" /></svg>
-            <span>战绩</span>
+            <span>排名</span>
           </button>
-          <button class="nav-tab" data-view="data" type="button">
-            <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9v9h9Z" /><path d="M12 3a9 9 0 0 1 9 9" /></svg>
-            <span>数据</span>
-          </button>
-          <button class="nav-tab" data-view="heroes" type="button">
-            <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2 15 6 13 15h-2L9 6l3-4Z" /><path d="M8 15h8" /><path d="M10 18h4" /><path d="M12 15v6" /></svg>
-            <span>英雄</span>
-          </button>
-          <button class="nav-tab" data-view="records" type="button">
-            <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M8 4h8M9 3h6v4H9z" /><path d="M6 6h12v15H6z" /><path d="M9 12h6M9 16h6" /></svg>
-            <span>纪录</span>
-          </button>
-          <button class="nav-tab" data-view="relations" type="button">
-            <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4 20a5 5 0 0 1 10 0" /><path d="M17 12a2.5 2.5 0 1 0 0-5" /><path d="M15.5 15.5A4.5 4.5 0 0 1 21 20" /></svg>
-            <span>队友对手</span>
-          </button>
-          <button class="nav-tab" data-view="ratingTrends" type="button">
-            <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 19V5" /><path d="M4 19h16" /><path d="m7 15 4-5 4 3 5-7" /><path d="M7 15h2M11 10h2M15 13h2M20 6h-2" /></svg>
-            <span>评分走势</span>
-          </button>
+          <div class="nav-sub-group" data-nav-group="players">
+            <button class="nav-tab nav-sub-tab" data-view="players" type="button">
+              <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M8 4h8v3h3v3a5 5 0 0 1-5 5h-4a5 5 0 0 1-5-5V7h3V4Z" /><path d="M10 15v4M14 15v4M8 20h8" /></svg>
+              <span>排名</span>
+            </button>
+            <button class="nav-tab nav-sub-tab" data-view="data" type="button">
+              <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9v9h9Z" /><path d="M12 3a9 9 0 0 1 9 9" /></svg>
+              <span>数据</span>
+            </button>
+            <button class="nav-tab nav-sub-tab" data-view="heroes" type="button">
+              <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2 15 6 13 15h-2L9 6l3-4Z" /><path d="M8 15h8" /><path d="M10 18h4" /><path d="M12 15v6" /></svg>
+              <span>英雄</span>
+            </button>
+          </div>
           <button class="nav-tab" data-view="generator" type="button">
             <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m4 4 6 6M7 4H4v3M20 4l-6 6M17 4h3v3M4 20l6-6M4 17v3h3M20 20l-6-6M17 20h3v-3" /></svg>
             <span>对阵生成器</span>
@@ -175,6 +191,22 @@
                 <tbody id="playersBody"></tbody>
               </table>
             </div>
+          </section>
+        </section>
+
+        <section class="view" id="playerProfile">
+          <div class="page-heading">
+            <div>
+              <h2>选手</h2>
+              <p>按评分浏览选手，并查看个人英雄池和场均表现。</p>
+            </div>
+          </div>
+
+          <section class="player-profile-layout">
+            <aside class="panel player-profile-sidebar" aria-label="选手列表">
+              <div id="playerProfileList" class="player-profile-list"></div>
+            </aside>
+            <section class="panel player-profile-detail" id="playerProfileDetail"></section>
           </section>
         </section>
 
