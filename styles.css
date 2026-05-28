@@ -2906,6 +2906,365 @@ select:focus {
   line-height: 1;
 }
 
+.playoff-panel {
+  max-width: 1100px;
+}
+
+.playoff-bracket {
+  display: grid;
+  grid-template-columns: minmax(150px, 180px) minmax(150px, 0.7fr) minmax(150px, 180px);
+  grid-template-rows: auto 150px auto;
+  align-items: center;
+  gap: 26px 56px;
+  min-height: 620px;
+}
+
+.playoff-corner {
+  position: relative;
+  display: grid;
+  min-width: 0;
+}
+
+.playoff-top-left {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.playoff-top-right {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.playoff-bottom-left {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+.playoff-bottom-right {
+  grid-column: 3;
+  grid-row: 3;
+}
+
+.playoff-center-node {
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0;
+  min-height: 74px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--green-dark);
+  font-weight: 900;
+  text-align: center;
+}
+
+.playoff-center-node small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.playoff-top-node {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.playoff-bottom-node {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.playoff-center-node::before,
+.playoff-center-node::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 56px;
+  height: 2px;
+  background: var(--line);
+}
+
+.playoff-center-node::before {
+  right: 100%;
+}
+
+.playoff-center-node::after {
+  left: 100%;
+}
+
+.playoff-champion {
+  position: relative;
+  grid-column: 2;
+  grid-row: 2;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 150px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 18px;
+  text-align: center;
+}
+
+.playoff-champion::before,
+.playoff-champion::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 2px;
+  height: 75px;
+  background: var(--line);
+  transform: translateX(-50%);
+}
+
+.playoff-champion::before {
+  bottom: 100%;
+}
+
+.playoff-champion::after {
+  top: 100%;
+}
+
+.playoff-corner::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 56px;
+  height: 2px;
+  background: var(--line);
+  transform: translateY(-50%);
+}
+
+.playoff-top-left::after,
+.playoff-bottom-left::after {
+  left: 100%;
+}
+
+.playoff-top-right::after,
+.playoff-bottom-right::after {
+  right: 100%;
+}
+
+.playoff-team-card {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  justify-self: stretch;
+  text-align: center;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+}
+
+.playoff-trophy {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 999px;
+  background: #fff8df;
+  font-size: 34px;
+}
+
+.playoff-champion strong {
+  color: var(--ink);
+  font-size: 22px;
+}
+
+.playoff-champion span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.playoff-team-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+}
+
+.playoff-team-title strong {
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.playoff-team-title span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.playoff-player-list {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
+.playoff-player-list span,
+.playoff-player-list em {
+  color: var(--green-dark);
+  font-size: 18px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.playoff-admin {
+  display: grid;
+  gap: 14px;
+}
+
+.playoff-admin p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.playoff-admin-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.9fr) 130px minmax(280px, 1.2fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.playoff-admin-pool,
+.playoff-admin-teams {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.playoff-admin-pool h4 {
+  margin: 0;
+}
+
+.playoff-admin-player-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.playoff-admin-player {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  padding: 7px 8px;
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.playoff-admin-player:hover,
+.playoff-admin-player.is-active {
+  border-color: var(--green);
+  box-shadow: 0 8px 18px rgba(26, 127, 88, 0.12);
+}
+
+.playoff-admin-player.is-assigned {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.playoff-admin-player span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playoff-admin-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: stretch;
+  padding-top: 42px;
+}
+
+.playoff-admin-actions p {
+  text-align: center;
+  font-size: 12px;
+}
+
+.playoff-admin-teams {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.playoff-admin-team {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.playoff-admin-team:hover,
+.playoff-admin-team.is-active {
+  border-color: var(--green);
+  box-shadow: 0 8px 18px rgba(26, 127, 88, 0.12);
+}
+
+.playoff-admin-team > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.playoff-admin-team strong {
+  font-size: 16px;
+}
+
+.playoff-admin-team em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.playoff-admin-team i {
+  justify-self: start;
+  border-radius: 999px;
+  background: #fff1f0;
+  color: var(--red);
+  padding: 2px 8px;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.playoff-admin-roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-height: 30px;
+}
+
+.playoff-admin-roster b,
+.playoff-admin-roster small {
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  padding: 3px 7px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.playoff-save-button {
+  justify-self: end;
+}
+
 .hero-rank-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3799,6 +4158,9 @@ select:focus {
   .position-grid,
   .preset-grid,
   .player-profile-layout,
+  .playoff-bracket,
+  .playoff-admin-grid,
+  .playoff-admin-teams,
   .generator-preference-layout,
   .detail-grid,
   .match-selection-layout {
@@ -3910,6 +4272,18 @@ select:focus {
 
   .player-profile-title h3 {
     font-size: 36px;
+  }
+
+  .playoff-bracket {
+    min-height: 0;
+  }
+
+  .playoff-corner::after,
+  .playoff-center-node::before,
+  .playoff-center-node::after,
+  .playoff-champion::before,
+  .playoff-champion::after {
+    display: none;
   }
 
   .player-profile-stats {

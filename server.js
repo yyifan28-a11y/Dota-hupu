@@ -231,6 +231,10 @@ async function handleApi(request, response, url) {
       radiant: teams.radiant.filter((playerId) => playerId !== id),
       dire: teams.dire.filter((playerId) => playerId !== id)
     });
+    const playoffTeams = getPlayoffTeams();
+    savePlayoffTeams(Object.fromEntries(
+      Object.entries(playoffTeams).map(([team, ids]) => [team, ids.filter((playerId) => playerId !== id)])
+    ));
     sendJson(response, 200, getState());
     return;
   }
@@ -266,6 +270,12 @@ async function handleApi(request, response, url) {
     };
     saveTeams(teams);
     sendJson(response, 200, teams);
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/playoffs/teams") {
+    const body = await readJson(request);
+    sendJson(response, 200, savePlayoffTeams(body.teams || body || {}));
     return;
   }
 
@@ -402,6 +412,7 @@ async function handleApi(request, response, url) {
     }
 
     saveTeams(body.currentTeams || { radiant: [], dire: [] });
+    savePlayoffTeams(body.playoffTeams || { A: [], B: [], C: [], D: [] });
     sendJson(response, 200, getState());
     return;
   }
@@ -463,6 +474,7 @@ async function handleApi(request, response, url) {
   if (method === "POST" && url.pathname === "/api/reset") {
     db.exec("DELETE FROM players; DELETE FROM matches; DELETE FROM rating_snapshots;");
     saveTeams({ radiant: [], dire: [] });
+    savePlayoffTeams({ A: [], B: [], C: [], D: [] });
     sendJson(response, 200, getState());
     return;
   }
@@ -505,7 +517,8 @@ function getState() {
       FROM rating_snapshots
       ORDER BY date ASC, player_id ASC
     `).all(),
-    currentTeams: getTeams()
+    currentTeams: getTeams(),
+    playoffTeams: getPlayoffTeams()
   };
 }
 
@@ -535,6 +548,38 @@ function saveTeams(teams) {
     VALUES ('currentTeams', ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(JSON.stringify(teams));
+}
+
+function getPlayoffTeams() {
+  const row = db.prepare("SELECT value FROM app_state WHERE key = 'playoffTeams'").get();
+  const empty = { A: [], B: [], C: [], D: [] };
+  if (!row) return empty;
+  try {
+    const teams = JSON.parse(row.value);
+    return {
+      A: Array.isArray(teams.A) ? teams.A : [],
+      B: Array.isArray(teams.B) ? teams.B : [],
+      C: Array.isArray(teams.C) ? teams.C : [],
+      D: Array.isArray(teams.D) ? teams.D : []
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function savePlayoffTeams(teams) {
+  const normalized = {
+    A: Array.isArray(teams.A) ? teams.A : [],
+    B: Array.isArray(teams.B) ? teams.B : [],
+    C: Array.isArray(teams.C) ? teams.C : [],
+    D: Array.isArray(teams.D) ? teams.D : []
+  };
+  db.prepare(`
+    INSERT INTO app_state (key, value)
+    VALUES ('playoffTeams', ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(JSON.stringify(normalized));
+  return normalized;
 }
 
 function generateTeams(ids, options) {

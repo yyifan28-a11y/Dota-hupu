@@ -1,7 +1,8 @@
 let db = {
   players: [],
   matches: [],
-  currentTeams: { radiant: [], dire: [] }
+  currentTeams: { radiant: [], dire: [] },
+  playoffTeams: { A: [], B: [], C: [], D: [] }
 };
 
 const POSITIONS = ["1", "2", "3", "4", "5"];
@@ -101,6 +102,9 @@ let selectedPlayerProfileId = "";
 let selectedPlayerProfilePosition = "";
 let selectedPlayerProfileHeroKey = "";
 let showAllPlayerProfileMatches = false;
+let adminPlayoffDraftTeams = null;
+let adminPlayoffSelectedPlayerId = "";
+let adminPlayoffSelectedTeam = "";
 let teamGenerationCooldownTimer = null;
 let playerSearchSelectedId = "";
 let isComposingPlayerSearch = false;
@@ -238,6 +242,7 @@ async function restoreAdminSession() {
 
 async function loadState() {
   db = await api("/api/state");
+  adminPlayoffDraftTeams = null;
   rebuildDerivedStats();
   updateSplashStats();
   renderAll();
@@ -725,6 +730,66 @@ function renderDashboardMatches() {
   if (!toggleButton) return;
   toggleButton.textContent = showAllDashboardMatches ? "收起比赛" : "显示所有比赛";
   toggleButton.classList.toggle("is-hidden", matches.length <= 3);
+}
+
+function getPlayoffTeams() {
+  return db.playoffTeams || { A: [], B: [], C: [], D: [] };
+}
+
+function clonePlayoffTeams(teams = getPlayoffTeams()) {
+  return {
+    A: Array.isArray(teams.A) ? [...teams.A] : [],
+    B: Array.isArray(teams.B) ? [...teams.B] : [],
+    C: Array.isArray(teams.C) ? [...teams.C] : [],
+    D: Array.isArray(teams.D) ? [...teams.D] : []
+  };
+}
+
+function renderPlayoffs() {
+  const target = $("#playoffBracket");
+  if (!target) return;
+  const teams = getPlayoffTeams();
+  target.innerHTML = `
+    <section class="playoff-corner playoff-top-left">
+      ${renderPlayoffTeam("A", teams.A || [])}
+    </section>
+    <section class="playoff-center-node playoff-top-node">
+      <span>2026/05/29 20:00</span>
+      <small>BO3</small>
+    </section>
+    <section class="playoff-corner playoff-top-right">
+      ${renderPlayoffTeam("D", teams.D || [])}
+    </section>
+    <section class="playoff-champion" aria-label="决赛胜者">
+      <div class="playoff-trophy" aria-hidden="true">🏆</div>
+      <strong>总冠军</strong>
+      <span>A/D 胜者 vs B/C 胜者</span>
+    </section>
+    <section class="playoff-corner playoff-bottom-left">
+      ${renderPlayoffTeam("B", teams.B || [])}
+    </section>
+    <section class="playoff-center-node playoff-bottom-node">
+      <span>2026/05/30 20:00</span>
+      <small>BO3</small>
+    </section>
+    <section class="playoff-corner playoff-bottom-right">
+      ${renderPlayoffTeam("C", teams.C || [])}
+    </section>
+  `;
+}
+
+function renderPlayoffTeam(team, ids) {
+  const players = ids.map((id) => getPlayer(id)).filter(Boolean);
+  return `
+    <div class="playoff-team-card">
+      <div class="playoff-team-title">
+        <strong>TEAM ${team}</strong>
+      </div>
+      <div class="playoff-player-list">
+        ${players.length ? players.map((player) => `<span>${escapeHtml(player.name)}</span>`).join("") : `<em>未选择出场人员</em>`}
+      </div>
+    </div>
+  `;
 }
 
 function getMatchesByScheduleDesc(matches = db.matches) {
@@ -2777,9 +2842,63 @@ function getMatchTotalKills(match) {
 
 function renderAdmin() {
   renderAdminPlayers();
+  renderAdminPlayoffTeams();
   renderMatchEntryEditor();
   renderAdminMatches();
   updateAdminUi();
+}
+
+function renderAdminPlayoffTeams() {
+  const target = $("#adminPlayoffTeams");
+  if (!target) return;
+  if (!adminPlayoffDraftTeams) adminPlayoffDraftTeams = clonePlayoffTeams();
+  const teams = adminPlayoffDraftTeams;
+  const players = [...db.players].sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0) || a.name.localeCompare(b.name, "zh-Hans"));
+  const assignedIds = new Set(Object.values(teams).flat());
+  const canAdd = Boolean(adminPlayoffSelectedPlayerId && adminPlayoffSelectedTeam)
+    && !assignedIds.has(adminPlayoffSelectedPlayerId)
+    && (teams[adminPlayoffSelectedTeam]?.length || 0) < 5;
+  const canSave = ["A", "B", "C", "D"].every((team) => (teams[team] || []).length === 5);
+  target.innerHTML = `
+    <section class="playoff-admin-pool">
+      <h4>选手池</h4>
+      <div class="playoff-admin-player-list">
+        ${players.length ? players.map((player) => {
+          const isAssigned = assignedIds.has(player.id);
+          const isActive = adminPlayoffSelectedPlayerId === player.id;
+          return `
+            <button class="playoff-admin-player ${isActive ? "is-active" : ""} ${isAssigned ? "is-assigned" : ""}" data-playoff-player="${escapeHtml(player.id)}" type="button" ${isAssigned ? "disabled" : ""}>
+              <span>${escapeHtml(player.name)}</span>
+            </button>
+          `;
+        }).join("") : `<p class="muted">暂无选手</p>`}
+      </div>
+    </section>
+
+    <div class="playoff-admin-actions">
+      <button class="primary-button" id="addPlayoffPlayer" type="button" ${canAdd ? "" : "disabled"}>加入</button>
+      <p>${adminPlayoffSelectedPlayerId && adminPlayoffSelectedTeam ? "将选手加入所选队伍" : "先选择选手和队伍"}</p>
+    </div>
+
+    <section class="playoff-admin-teams">
+      ${["A", "B", "C", "D"].map((team) => `
+        <button class="playoff-admin-team ${adminPlayoffSelectedTeam === team ? "is-active" : ""}" data-playoff-target-team="${team}" type="button">
+          <span>
+            <strong>${team}队</strong>
+            <em>${(teams[team] || []).length}/5</em>
+          </span>
+          ${(teams[team] || []).length ? `<i data-clear-playoff-team="${team}">清除</i>` : ""}
+          <div class="playoff-admin-roster">
+            ${(teams[team] || []).length
+              ? teams[team].map((id) => `<b>${escapeHtml(getPlayer(id)?.name || "未知选手")}</b>`).join("")
+              : `<small>选择此队伍</small>`}
+          </div>
+        </button>
+      `).join("")}
+    </section>
+
+    <button class="primary-button playoff-save-button ${canSave ? "" : "is-hidden"}" id="savePlayoffTeams" type="button">保存</button>
+  `;
 }
 
 function renderGenerator() {
@@ -3004,6 +3123,7 @@ function renderCurrentView() {
   const activeView = $(".view.is-active")?.id || "dashboard";
   const renderers = {
     dashboard: renderDashboard,
+    playoffs: renderPlayoffs,
     players: renderPlayers,
     playerProfile: renderPlayerProfile,
     data: renderDataView,
@@ -4124,6 +4244,59 @@ function bindEvents() {
     } catch (error) {
       alert(error.message);
       button.disabled = false;
+    }
+  });
+
+  $("#adminPlayoffTeams")?.addEventListener("click", async (event) => {
+    if (!adminPlayoffDraftTeams) adminPlayoffDraftTeams = clonePlayoffTeams();
+
+    const clearButton = event.target.closest("[data-clear-playoff-team]");
+    if (clearButton) {
+      event.preventDefault();
+      const team = clearButton.dataset.clearPlayoffTeam;
+      adminPlayoffDraftTeams[team] = [];
+      if (adminPlayoffSelectedTeam === team) adminPlayoffSelectedTeam = "";
+      renderAdminPlayoffTeams();
+      return;
+    }
+
+    const playerButton = event.target.closest("[data-playoff-player]");
+    if (playerButton) {
+      adminPlayoffSelectedPlayerId = playerButton.dataset.playoffPlayer;
+      renderAdminPlayoffTeams();
+      return;
+    }
+
+    const teamButton = event.target.closest("[data-playoff-target-team]");
+    if (teamButton) {
+      adminPlayoffSelectedTeam = teamButton.dataset.playoffTargetTeam;
+      renderAdminPlayoffTeams();
+      return;
+    }
+
+    if (event.target.closest("#addPlayoffPlayer")) {
+      const team = adminPlayoffSelectedTeam;
+      const playerId = adminPlayoffSelectedPlayerId;
+      const alreadyAssigned = Object.values(adminPlayoffDraftTeams).some((ids) => ids.includes(playerId));
+      if (!team || !playerId || alreadyAssigned || adminPlayoffDraftTeams[team].length >= 5) return;
+      adminPlayoffDraftTeams[team].push(playerId);
+      adminPlayoffSelectedPlayerId = "";
+      renderAdminPlayoffTeams();
+      return;
+    }
+
+    if (!event.target.closest("#savePlayoffTeams")) return;
+    try {
+      db.playoffTeams = await adminApi("/api/playoffs/teams", {
+        method: "POST",
+        body: JSON.stringify({ teams: adminPlayoffDraftTeams })
+      });
+      adminPlayoffDraftTeams = clonePlayoffTeams(db.playoffTeams);
+      renderAdminPlayoffTeams();
+      renderPlayoffs();
+      alert("季后赛队伍已保存。");
+    } catch (error) {
+      alert(error.message);
     }
   });
 
