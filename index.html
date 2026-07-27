@@ -3,44 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dota2 内战工具</title>
+    <title>S3 赛季数据中心</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
-  <body>
-    <section class="splash-screen" id="splashScreen" aria-label="刀塔内战记录器首页">
-      <video class="splash-video" muted loop playsinline preload="none" poster="./assets/splash-bg.webp" data-src="./assets/splash.mp4" aria-hidden="true"></video>
-      <div class="splash-fallback" aria-hidden="true"></div>
-      <div class="splash-content">
-        <div class="splash-title-lock">
-          <h1>刀塔内战记录器</h1>
-          <span class="splash-mark" aria-label="Dota 2">
-            <img class="splash-logo-icon" src="./assets/splash-logo.webp" alt="" />
-          </span>
-        </div>
-        <div class="splash-meta" aria-label="赛季记录">
-          <span>S2赛季</span>
-          <span>现已记录<span id="splashPlayerCount">0</span>名选手，<span id="splashMatchCount">0</span>场比赛</span>
-        </div>
-        <div class="splash-actions" aria-label="首页入口">
-          <button class="splash-enter-button" id="enterAppButton" type="button" data-splash-target="dashboard">数据查询<span aria-hidden="true">→</span></button>
-          <button class="splash-enter-button" type="button" data-splash-target="generator">对战生成器<span aria-hidden="true">→</span></button>
-        </div>
-        <div class="splash-video-controls" aria-live="polite">
-          <button class="splash-video-button" id="playSplashVideo" type="button">播放动画</button>
-          <div class="splash-video-progress" id="splashVideoProgress" hidden>
-            <span id="splashVideoProgressText">0%</span>
-            <span class="splash-video-progress-track"><span id="splashVideoProgressBar"></span></span>
-          </div>
-          <button class="splash-return-button" id="returnSplashHome" type="button">返回首页</button>
-        </div>
-      </div>
-    </section>
+  <body class="has-entered" data-season="s3" data-ui="modern">
+    <canvas class="page-field-canvas" id="pageFieldCanvas" aria-hidden="true"></canvas>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
           <span class="brand-mark"><img src="./assets/splash-logo.webp" alt="" /></span>
           <div>
-            <h1>刀塔内战记录器</h1>
+            <h1 id="seasonCenterTitle">S3 赛季数据中心</h1>
           </div>
         </div>
 
@@ -48,10 +21,6 @@
           <button class="nav-tab is-active" data-view="dashboard" type="button">
             <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 20V4M4 20h16M8 17v-5M12 17V8M16 17v-7M20 17v-3" /></svg>
             <span>总览</span>
-          </button>
-          <button class="nav-tab" data-view="playoffs" type="button">
-            <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4h12v4a6 6 0 0 1-12 0V4Z" /><path d="M8 20h8" /><path d="M10 16v4M14 16v4" /><path d="M4 6H2v2a4 4 0 0 0 4 4M20 6h2v2a4 4 0 0 1-4 4" /></svg>
-            <span>季后赛</span>
           </button>
           <button class="nav-tab" data-nav-default="playerProfile" type="button">
             <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
@@ -93,86 +62,106 @@
               <span>英雄</span>
             </button>
           </div>
-          <button class="nav-tab" data-view="generator" type="button">
+          <button class="nav-tab editable-season-only" data-view="generator" type="button">
             <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m4 4 6 6M7 4H4v3M20 4l-6 6M17 4h3v3M4 20l6-6M4 17v3h3M20 20l-6-6M17 20h3v-3" /></svg>
             <span>对阵生成器</span>
           </button>
-          <button class="nav-tab admin-nav-tab" data-view="admin" type="button">
+          <button class="nav-tab admin-nav-tab editable-season-only" data-view="admin" type="button">
             <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3a4 4 0 0 1 4 4v2H8V7a4 4 0 0 1 4-4Z" /><path d="M6 9h12v11H6z" /><path d="M12 14v3" /></svg>
             <span>管理</span>
           </button>
         </nav>
-        <button class="nav-tab sidebar-home-button" id="returnToSplashHome" type="button">
-          <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M3 11 12 3l9 8" /><path d="M5 10v10h14V10" /><path d="M9 20v-6h6v6" /></svg>
-          <span>返回首页</span>
-        </button>
+        <nav class="dashboard-nav-status season-selector" aria-label="选择数据赛季">
+          <a data-season-option="s2" href="?season=s2&view=dashboard">S2</a>
+          <a class="is-active" data-season-option="s3" href="?season=s3&view=dashboard" aria-current="page">S3</a>
+        </nav>
       </aside>
 
       <main class="main">
         <section class="view is-active" id="dashboard">
-          <div class="page-heading">
-            <div>
-              <h2>总览</h2>
-            </div>
+          <div class="dashboard-holo-atmosphere" aria-hidden="true">
+            <i></i><i></i><i></i>
           </div>
+          <section id="featuredHighlight" class="dashboard-highlight-slot" aria-live="polite"></section>
 
-          <div class="stats-grid">
+          <div class="stats-grid dashboard-stats" aria-label="赛季概况">
             <div class="stat-card">
-              <span>比赛场次</span>
+              <span>全部比赛</span>
               <strong id="statMatches">0</strong>
+              <small>场已录入</small>
             </div>
             <div class="stat-card">
-              <span>选手数量</span>
+              <span>活跃选手</span>
               <strong id="statPlayers">0</strong>
+              <small>人已建档</small>
+            </div>
+            <div class="stat-card">
+              <span>赛季已进行</span>
+              <strong id="statSeasonDay">--<span class="stat-day-unit">天</span></strong>
+              <small>从首场数据起计</small>
+            </div>
+            <div class="stat-card">
+              <span>最近比赛</span>
+              <strong id="statLatestDate">--</strong>
+              <small>最新比赛日期</small>
             </div>
           </div>
 
-          <section class="mini-rank-grid">
-            <section class="panel mini-rank-panel">
-              <div class="panel-header">
-                <h3>评分榜</h3>
+          <div class="dashboard-section-heading dashboard-grid-intro" aria-hidden="true">
+            <span>PERFORMANCE LEADERS</span>
+          </div>
+
+          <section class="dashboard-rank-stage" aria-label="选手排行榜">
+            <header class="dashboard-rank-toolbar">
+              <div class="dashboard-rank-modes" id="dashboardRankModes" role="tablist" aria-label="选择排行榜指标">
+                <button class="is-active" type="button" role="tab" aria-controls="dashboardRankBoard" aria-selected="true" data-dashboard-rank-mode="rating">评分</button>
+                <button type="button" role="tab" aria-controls="dashboardRankBoard" aria-selected="false" data-dashboard-rank-mode="games">参赛</button>
+                <button type="button" role="tab" aria-controls="dashboardRankBoard" aria-selected="false" data-dashboard-rank-mode="winrate">胜率</button>
+                <button type="button" role="tab" aria-controls="dashboardRankBoard" aria-selected="false" data-dashboard-rank-mode="netWins">净胜</button>
               </div>
-              <ol id="ratingTopList" class="mini-rank-list"></ol>
-            </section>
-            <section class="panel mini-rank-panel">
-              <div class="panel-header">
-                <h3>参赛榜</h3>
+              <div class="dashboard-rank-readout" aria-live="polite">
+                <span id="dashboardRankMetricLabel">RATING</span>
+                <small>全员排名 · 前五特别席位</small>
               </div>
-              <ol id="gamesTopList" class="mini-rank-list"></ol>
-            </section>
-            <section class="panel mini-rank-panel">
-              <div class="panel-header">
-                <h3>胜率榜</h3>
-              </div>
-              <ol id="winrateTopList" class="mini-rank-list"></ol>
-            </section>
-            <section class="panel mini-rank-panel">
-              <div class="panel-header">
-                <h3>净胜榜</h3>
-              </div>
-              <ol id="netWinsTopList" class="mini-rank-list"></ol>
-            </section>
+            </header>
+
+            <div class="dashboard-rank-board" id="dashboardRankBoard" role="tabpanel">
+              <div class="dashboard-rank-featured" id="dashboardRankFeatured" aria-label="当前榜单前五名"></div>
+              <section class="dashboard-rank-roster-shell" aria-label="其余选手排名">
+                <header>
+                  <span>ALL PLAYERS</span>
+                  <small id="dashboardRankPlayerCount">0 PLAYERS</small>
+                </header>
+                <div class="dashboard-rank-roster" id="dashboardRankRoster"></div>
+              </section>
+            </div>
           </section>
 
-          <section class="panel">
+          <section class="panel dashboard-matches-panel">
             <div class="panel-header">
-              <h3>最近比赛</h3>
-              <button class="secondary-button compact-button" id="toggleAllMatches" type="button">显示所有比赛</button>
+              <div>
+                <span class="panel-kicker">RECENT MATCHES</span>
+                <h3>比赛日历</h3>
+              </div>
+              <span class="match-calendar-total" id="matchCalendarTotal">--</span>
+            </div>
+            <div class="match-calendar" aria-label="比赛日期选择器">
+              <button class="match-calendar-arrow" id="previousMatchDate" type="button" aria-label="上一个比赛日">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
+              </button>
+              <div class="match-calendar-days" id="matchCalendarDays" role="list"></div>
+              <button class="match-calendar-arrow" id="nextMatchDate" type="button" aria-label="下一个比赛日">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg>
+              </button>
+            </div>
+            <div class="match-calendar-meta" aria-live="polite">
+              <div>
+                <strong id="selectedMatchDateLabel">--</strong>
+                <small id="selectedMatchDateWeekday">--</small>
+              </div>
+              <span id="selectedMatchDateCount">--</span>
             </div>
             <div id="recentMatches" class="match-list"></div>
-          </section>
-        </section>
-
-        <section class="view" id="playoffs">
-          <div class="page-heading">
-            <div>
-              <h2>季后赛</h2>
-              <p>四队淘汰赛对阵图。</p>
-            </div>
-          </div>
-
-          <section class="panel playoff-panel">
-            <div id="playoffBracket" class="playoff-bracket"></div>
           </section>
         </section>
 
@@ -221,6 +210,21 @@
 
           <section class="player-profile-layout">
             <aside class="panel player-profile-sidebar" aria-label="选手列表">
+              <div class="player-directory-header">
+                <div>
+                  <span>PLAYER DIRECTORY</span>
+                  <h3>选手列表</h3>
+                </div>
+                <strong id="playerProfileDirectoryTotal">0</strong>
+              </div>
+              <label class="player-directory-search" for="playerProfileSearchInput">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+                <input id="playerProfileSearchInput" type="search" placeholder="搜索选手或 Steam ID" aria-label="搜索选手或 Steam ID" autocomplete="off" />
+                <button id="clearPlayerProfileSearch" type="button" aria-label="清除选手搜索" hidden>
+                  <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" /></svg>
+                </button>
+              </label>
+              <div class="player-directory-status" id="playerProfileSearchStatus" aria-live="polite">--</div>
               <div id="playerProfileList" class="player-profile-list"></div>
             </aside>
             <section class="panel player-profile-detail" id="playerProfileDetail"></section>
@@ -569,7 +573,7 @@
                 <span>数据导入</span>
               </summary>
               <div class="backup-panel-body">
-                <p>请导入 S2内战数据表.xlsx</p>
+                <p>请导入 S3 内战数据表.xlsx</p>
                 <div class="button-row">
                   <label class="secondary-button file-button admin-only">
                     导入 Excel

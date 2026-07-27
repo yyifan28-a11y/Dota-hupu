@@ -1,13 +1,39 @@
 let db = {
+  season: "s3",
+  seasonLabel: "S3",
+  readOnly: false,
   players: [],
   matches: [],
   currentTeams: { radiant: [], dire: [] },
-  playoffTeams: { A: [], B: [], C: [], D: [] }
+  playoffTeams: { A: [], B: [], C: [], D: [] },
+  playoffTeamNames: { A: "A", B: "B", C: "C", D: "D" },
+  playoffResults: { semifinals: [], final: null },
+  champion: { team: "", title: "S2 总冠军", playerIds: [], description: "" }
 };
 
+const CURRENT_SEASON = new URLSearchParams(window.location.search).get("season")?.toLowerCase() === "s2" ? "s2" : "s3";
+const IS_ARCHIVE_SEASON = CURRENT_SEASON === "s2";
+const REQUESTED_VIEW = new URLSearchParams(window.location.search).get("view") || "";
 const POSITIONS = ["1", "2", "3", "4", "5"];
 const HEROES = Array.isArray(window.DOTA_HEROES) ? window.DOTA_HEROES : [];
 const HERO_IMAGE_BASE = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes";
+const DASHBOARD_HIGHLIGHT = Object.freeze({
+  date: "2026-05-17",
+  matchNo: 2,
+  matchId: "8814798529",
+  playerName: "xian",
+  hero: "帕克",
+  image: "./assets/highlights/puck-1.png",
+  fallback: {
+    winner: "dire",
+    kills: 17,
+    deaths: 4,
+    assists: 25,
+    damage: 79885,
+    participation: 0.857,
+    gpm: 737
+  }
+});
 const ADMIN_PASSWORD_KEY = "dota-admin-password";
 const APP_ENTERED_KEY = "dota-app-entered";
 const ACTIVE_VIEW_KEY = "dota-active-view";
@@ -96,9 +122,11 @@ let heroRankStats = [];
 let pairRankStats = { teammate: [], trio: [], opponent: [] };
 let pendingExcelMatches = [];
 let pendingRatingSnapshots = [];
-let showAllDashboardMatches = false;
+let selectedDashboardMatchDate = "";
+let activeDashboardRankMetric = "rating";
 let activeDataViewMode = "basic";
 let selectedPlayerProfileId = "";
+let playerProfileSearchQuery = "";
 let selectedPlayerProfilePosition = "";
 let selectedPlayerProfileHeroKey = "";
 let showAllPlayerProfileMatches = false;
@@ -129,6 +157,38 @@ const dataSortState = {
   basicData: { key: "rating", direction: "desc" },
   advancedData: { key: "gpm", direction: "desc" }
 };
+
+const DASHBOARD_RANK_MODES = Object.freeze({
+  rating: {
+    label: "RATING",
+    value: (player) => formatRating(player.rating),
+    compare: (a, b) => Number(b.rating || 0) - Number(a.rating || 0)
+  },
+  games: {
+    label: "MATCHES",
+    value: (player) => String(Number(player.stats?.games || 0)),
+    compare: (a, b) =>
+      Number(b.stats?.games || 0) - Number(a.stats?.games || 0)
+      || Number(b.stats?.wins || 0) - Number(a.stats?.wins || 0)
+  },
+  winrate: {
+    label: "WIN RATE",
+    value: (player) => `${Number(player.stats?.winrate || 0)}%`,
+    compare: (a, b) =>
+      Number(b.stats?.winrate || 0) - Number(a.stats?.winrate || 0)
+      || Number(b.stats?.games || 0) - Number(a.stats?.games || 0)
+  },
+  netWins: {
+    label: "NET WINS",
+    value: (player) => {
+      const value = Number(player.stats?.netWins || 0);
+      return `${value > 0 ? "+" : ""}${value}`;
+    },
+    compare: (a, b) =>
+      Number(b.stats?.netWins || 0) - Number(a.stats?.netWins || 0)
+      || Number(b.stats?.winrate || 0) - Number(a.stats?.winrate || 0)
+  }
+});
 
 const BASIC_DATA_COLUMNS = [
   { key: "name", label: "昵称", sortLabel: "按昵称排序" },
@@ -166,7 +226,9 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const requestUrl = new URL(path, window.location.href);
+  requestUrl.searchParams.set("season", CURRENT_SEASON);
+  const response = await fetch(requestUrl, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options
   });
@@ -222,6 +284,10 @@ async function verifyAdminPassword(password) {
 }
 
 async function restoreAdminSession() {
+  if (IS_ARCHIVE_SEASON) {
+    isAdmin = false;
+    return;
+  }
   const password = sessionStorage.getItem(ADMIN_PASSWORD_KEY);
   if (!password) {
     isAdmin = false;
@@ -242,6 +308,7 @@ async function restoreAdminSession() {
 
 async function loadState() {
   db = await api("/api/state");
+  applySeasonUi();
   adminPlayoffDraftTeams = null;
   rebuildDerivedStats();
   updateSplashStats();
@@ -267,6 +334,40 @@ function updateSplashStats(summary = null) {
   const matchCount = $("#splashMatchCount");
   if (playerCount) playerCount.textContent = summary?.players ?? db.players.length;
   if (matchCount) matchCount.textContent = summary?.matches ?? db.matches.length;
+}
+
+function applySeasonUi() {
+  document.body.dataset.season = CURRENT_SEASON;
+  document.body.dataset.ui = "modern";
+  const label = CURRENT_SEASON.toUpperCase();
+  document.title = `${label} 赛季数据中心`;
+  const centerTitle = $("#seasonCenterTitle");
+  if (centerTitle) centerTitle.textContent = `${label} 赛季数据中心`;
+  const splashLabel = $("#splashSeasonLabel");
+  const sidebarLabel = $("#sidebarSeasonLabel");
+  if (splashLabel) splashLabel.textContent = `${label}赛季${IS_ARCHIVE_SEASON ? " · 历史归档" : ""}`;
+  if (sidebarLabel) sidebarLabel.textContent = `${label} 赛季${IS_ARCHIVE_SEASON ? " · 只读" : ""}`;
+  $$("[data-season-option]").forEach((link) => {
+    const season = link.dataset.seasonOption;
+    const isActive = season === CURRENT_SEASON;
+    const targetUrl = new URL(window.location.href);
+    targetUrl.searchParams.set("season", season);
+    targetUrl.searchParams.set("view", REQUESTED_VIEW || "dashboard");
+    link.href = `${targetUrl.pathname}${targetUrl.search}`;
+    link.classList.toggle("is-active", isActive);
+    if (isActive) {
+      link.setAttribute("aria-current", "page");
+    } else {
+      link.removeAttribute("aria-current");
+    }
+  });
+  const targetSeason = IS_ARCHIVE_SEASON ? "s3" : "s2";
+  const switchText = IS_ARCHIVE_SEASON ? "返回 S3" : "查看 S2 历史";
+  [$("#splashSeasonLink"), $("#sidebarSeasonLink")].forEach((link) => {
+    if (!link) return;
+    link.href = IS_ARCHIVE_SEASON ? "?season=s3" : `?season=${targetSeason}&view=dashboard`;
+    link.firstChild.textContent = switchText;
+  });
 }
 
 function getPlayer(id) {
@@ -659,6 +760,10 @@ function renderEmpty(target) {
 }
 
 function switchView(viewId) {
+  if ((IS_ARCHIVE_SEASON && ["generator", "admin"].includes(viewId)) || (!IS_ARCHIVE_SEASON && ["playoffs", "champion"].includes(viewId))) {
+    viewId = "dashboard";
+  }
+  if (IS_ARCHIVE_SEASON && viewId === "champion") viewId = "playoffs";
   const hasTargetView = Boolean($(`#${viewId}`));
   if (!hasTargetView) viewId = "dashboard";
   const navGroups = {
@@ -674,10 +779,6 @@ function switchView(viewId) {
     button.classList.toggle("is-section-active", isParent);
   });
 
-  $$(".nav-sub-group").forEach((group) => {
-    group.classList.toggle("is-open", group.dataset.navGroup === parentView);
-  });
-
   $$(".view").forEach((view) => {
     view.classList.toggle("is-active", view.id === viewId);
   });
@@ -689,47 +790,157 @@ function switchView(viewId) {
 function renderDashboard() {
   $("#statPlayers").textContent = db.players.length;
   $("#statMatches").textContent = db.matches.length;
+  const latestMatch = getMatchesByScheduleDesc()[0];
+  const seasonDay = getSeasonDay(db.matches);
+  $("#statSeasonDay").innerHTML = `${seasonDay ?? "--"}<span class="stat-day-unit">天</span>`;
+  $("#statLatestDate").textContent = latestMatch ? formatShortMatchDate(latestMatch.date) : "--";
+
+  renderDashboardHighlight();
 
   const playersWithStats = getPlayersWithStats();
-
-  renderMiniRank(
-    $("#ratingTopList"),
-    [...playersWithStats].sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0)),
-    (player) => formatRating(player.rating)
-  );
-  renderMiniRank(
-    $("#winrateTopList"),
-    [...playersWithStats]
-      .filter((player) => player.stats.games > 0)
-      .sort((a, b) => b.stats.winrate - a.stats.winrate || b.stats.games - a.stats.games),
-    (player) => `${player.stats.winrate}%`
-  );
-  renderMiniRank(
-    $("#netWinsTopList"),
-    [...playersWithStats]
-      .filter((player) => player.stats.games > 0)
-      .sort((a, b) => b.stats.netWins - a.stats.netWins || b.stats.winrate - a.stats.winrate),
-    (player) => `${player.stats.netWins > 0 ? "+" : ""}${player.stats.netWins}`
-  );
-  renderMiniRank(
-    $("#gamesTopList"),
-    [...playersWithStats]
-      .filter((player) => player.stats.games > 0)
-      .sort((a, b) => b.stats.games - a.stats.games || b.stats.wins - a.stats.wins),
-    (player) => `${player.stats.games} 场`
-  );
+  renderDashboardRankStage(playersWithStats);
 
   renderDashboardMatches();
 }
 
+function renderDashboardHighlight() {
+  const target = $("#featuredHighlight");
+  if (!target) return;
+
+  const candidateMatch = db.matches.find((item) =>
+    String(item.matchId || "") === DASHBOARD_HIGHLIGHT.matchId
+    || (item.date === DASHBOARD_HIGHLIGHT.date && Number(item.matchNo || 1) === DASHBOARD_HIGHLIGHT.matchNo)
+  );
+  const matchDetails = Object.entries(candidateMatch?.playerDetails || {});
+  const playerDetailEntry = matchDetails.find(([playerId, detail]) =>
+    getPlayer(playerId)?.name === DASHBOARD_HIGHLIGHT.playerName
+    && getHeroIdentity(detail?.hero).key === getHeroIdentity(DASHBOARD_HIGHLIGHT.hero).key
+  ) || matchDetails.find(([, detail]) =>
+    getHeroIdentity(detail?.hero).key === getHeroIdentity(DASHBOARD_HIGHLIGHT.hero).key
+  );
+  const match = playerDetailEntry ? candidateMatch : null;
+  const detail = playerDetailEntry?.[1] || DASHBOARD_HIGHLIGHT.fallback;
+  const playerName = playerDetailEntry
+    ? getPlayer(playerDetailEntry[0])?.name || DASHBOARD_HIGHLIGHT.playerName
+    : DASHBOARD_HIGHLIGHT.playerName;
+  const kills = Number(detail.kills ?? DASHBOARD_HIGHLIGHT.fallback.kills);
+  const deaths = Number(detail.deaths ?? DASHBOARD_HIGHLIGHT.fallback.deaths);
+  const assists = Number(detail.assists ?? DASHBOARD_HIGHLIGHT.fallback.assists);
+  const matchDate = String(match?.date || DASHBOARD_HIGHLIGHT.date || "");
+  const matchNumber = Number(match?.matchNo || DASHBOARD_HIGHLIGHT.matchNo || 1);
+  const displayDate = `${matchDate.slice(5)}-${String(matchNumber).padStart(2, "0")}`;
+  const interactiveAttributes = match
+    ? `data-open-match="${escapeHtml(match.id)}" tabindex="0" role="button" aria-label="查看 ${escapeHtml(displayDate)} ${escapeHtml(playerName)} 的比赛详情"`
+    : "";
+
+  target.innerHTML = `
+    <article class="dashboard-highlight${match ? " is-interactive" : ""}" ${interactiveAttributes}>
+      <img class="dashboard-highlight-image" src="${escapeHtml(DASHBOARD_HIGHLIGHT.image)}" alt="" />
+      <div class="dashboard-highlight-grid" aria-hidden="true"></div>
+      <div class="dashboard-highlight-content">
+        <time class="dashboard-highlight-date" datetime="${escapeHtml(matchDate)}">${escapeHtml(displayDate)}</time>
+        <div class="dashboard-highlight-title">
+          <p>${escapeHtml(playerName)}</p>
+          <h3>${escapeHtml(DASHBOARD_HIGHLIGHT.hero)}</h3>
+        </div>
+        <dl class="dashboard-highlight-stats">
+          <div>
+            <dt>K / D / A</dt>
+            <dd>${kills} / ${deaths} / ${assists}</dd>
+          </div>
+        </dl>
+      </div>
+    </article>
+  `;
+}
+
 function renderDashboardMatches() {
   const matches = getMatchesByScheduleDesc();
-  const visibleMatches = showAllDashboardMatches ? matches : matches.slice(0, 3);
-  renderMatchCards($("#recentMatches"), visibleMatches);
-  const toggleButton = $("#toggleAllMatches");
-  if (!toggleButton) return;
-  toggleButton.textContent = showAllDashboardMatches ? "收起比赛" : "显示所有比赛";
-  toggleButton.classList.toggle("is-hidden", matches.length <= 3);
+  const matchDates = [...new Set(matches.map((match) => String(match.date || "")).filter(Boolean))].sort();
+  const calendarDays = $("#matchCalendarDays");
+  const previousButton = $("#previousMatchDate");
+  const nextButton = $("#nextMatchDate");
+  const total = $("#matchCalendarTotal");
+  const dateLabel = $("#selectedMatchDateLabel");
+  const weekdayLabel = $("#selectedMatchDateWeekday");
+  const countLabel = $("#selectedMatchDateCount");
+
+  if (!matchDates.length) {
+    selectedDashboardMatchDate = "";
+    if (calendarDays) calendarDays.innerHTML = `<span class="match-calendar-empty">暂无比赛日期</span>`;
+    if (previousButton) previousButton.disabled = true;
+    if (nextButton) nextButton.disabled = true;
+    if (total) total.textContent = "0 个比赛日";
+    if (dateLabel) dateLabel.textContent = "暂无比赛";
+    if (weekdayLabel) weekdayLabel.textContent = "等待录入比赛数据";
+    if (countLabel) countLabel.textContent = "0 场";
+    renderMatchCards($("#recentMatches"), []);
+    return;
+  }
+
+  if (!matchDates.includes(selectedDashboardMatchDate)) {
+    selectedDashboardMatchDate = matchDates.at(-1);
+  }
+
+  const selectedIndex = matchDates.indexOf(selectedDashboardMatchDate);
+  const visibleDateCount = 7;
+  const windowStart = Math.max(0, Math.min(selectedIndex - 3, matchDates.length - visibleDateCount));
+  const visibleDates = matchDates.slice(windowStart, windowStart + visibleDateCount);
+  const matchesByDate = new Map(matchDates.map((date) => [
+    date,
+    matches.filter((match) => String(match.date || "") === date)
+  ]));
+
+  if (calendarDays) {
+    calendarDays.innerHTML = visibleDates.map((date) => {
+      const dateInfo = getDashboardCalendarDateInfo(date);
+      const count = matchesByDate.get(date)?.length || 0;
+      const isSelected = date === selectedDashboardMatchDate;
+      return `
+        <span class="match-calendar-day-slot" role="listitem">
+          <button class="match-calendar-day${isSelected ? " is-active" : ""}" data-dashboard-match-date="${escapeHtml(date)}" type="button" aria-pressed="${isSelected}" aria-label="${escapeHtml(dateInfo.fullLabel)}，${count} 场比赛">
+            <span>${escapeHtml(dateInfo.weekdayShort)}</span>
+            <strong>${escapeHtml(dateInfo.day)}</strong>
+            <small>${count} 场</small>
+          </button>
+        </span>
+      `;
+    }).join("");
+  }
+
+  const selectedMatches = matchesByDate.get(selectedDashboardMatchDate) || [];
+  const selectedInfo = getDashboardCalendarDateInfo(selectedDashboardMatchDate);
+  if (previousButton) previousButton.disabled = selectedIndex <= 0;
+  if (nextButton) nextButton.disabled = selectedIndex >= matchDates.length - 1;
+  if (total) total.textContent = `${matchDates.length} 个比赛日`;
+  if (dateLabel) dateLabel.textContent = selectedInfo.fullLabel;
+  if (weekdayLabel) weekdayLabel.textContent = selectedIndex === matchDates.length - 1 ? `${selectedInfo.weekday} · 最近比赛日` : selectedInfo.weekday;
+  if (countLabel) countLabel.textContent = `${selectedMatches.length} 场比赛`;
+  renderMatchCards($("#recentMatches"), selectedMatches);
+}
+
+function getDashboardCalendarDateInfo(value) {
+  const parts = String(value || "").match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!parts) {
+    return { day: "--", weekday: "日期未录入", weekdayShort: "--", fullLabel: String(value || "--") };
+  }
+  const date = new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]), 12);
+  return {
+    day: String(Number(parts[3])).padStart(2, "0"),
+    weekday: new Intl.DateTimeFormat("zh-CN", { weekday: "long" }).format(date),
+    weekdayShort: new Intl.DateTimeFormat("zh-CN", { weekday: "short" }).format(date),
+    fullLabel: `${parts[1]}年${Number(parts[2])}月${Number(parts[3])}日`
+  };
+}
+
+function moveDashboardMatchDate(offset) {
+  const matchDates = [...new Set(getMatchesByScheduleDesc().map((match) => String(match.date || "")).filter(Boolean))].sort();
+  if (!matchDates.length) return;
+  const currentIndex = Math.max(0, matchDates.indexOf(selectedDashboardMatchDate));
+  const nextIndex = Math.max(0, Math.min(matchDates.length - 1, currentIndex + offset));
+  if (nextIndex === currentIndex) return;
+  selectedDashboardMatchDate = matchDates[nextIndex];
+  renderDashboardMatches();
 }
 
 function getPlayoffTeams() {
@@ -749,41 +960,79 @@ function renderPlayoffs() {
   const target = $("#playoffBracket");
   if (!target) return;
   const teams = getPlayoffTeams();
+  const final = db.playoffResults?.final;
+  const finalTeam1 = final?.team1 ? db.playoffTeamNames?.[final.team1] || final.team1 : "";
+  const finalTeam2 = final?.team2 ? db.playoffTeamNames?.[final.team2] || final.team2 : "";
+  const finalWinner = final?.winner ? db.playoffTeamNames?.[final.winner] || final.winner : "";
+  const finalTitle = finalWinner ? `TEAM ${finalWinner}` : "总冠军待定";
+  const finalSummary = finalWinner ? "S2 总冠军" : "赛况待录入";
+  const topFinalist = finalTeam1 ? `TEAM ${finalTeam1}` : "晋级队伍待定";
+  const bottomFinalist = finalTeam2 ? `TEAM ${finalTeam2}` : "晋级队伍待定";
   target.innerHTML = `
     <section class="playoff-corner playoff-top-left">
       ${renderPlayoffTeam("A", teams.A || [])}
     </section>
     <section class="playoff-center-node playoff-top-node">
-      <span>2026/05/29 20:00</span>
-      <small>BO3</small>
+      <span>${escapeHtml(topFinalist)}</span>
+      <small>晋级决赛</small>
     </section>
     <section class="playoff-corner playoff-top-right">
       ${renderPlayoffTeam("D", teams.D || [])}
     </section>
-    <section class="playoff-champion" aria-label="决赛胜者">
+    <section class="playoff-champion" aria-label="总决赛">
       <div class="playoff-trophy" aria-hidden="true">🏆</div>
-      <strong>总冠军</strong>
-      <span>A/D 胜者 vs B/C 胜者</span>
+      <strong>${escapeHtml(finalTitle)}</strong>
+      <span>${escapeHtml(finalSummary)}</span>
     </section>
     <section class="playoff-corner playoff-bottom-left">
       ${renderPlayoffTeam("B", teams.B || [])}
     </section>
     <section class="playoff-center-node playoff-bottom-node">
-      <span>2026/05/30 20:00</span>
-      <small>BO3</small>
+      <span>${escapeHtml(bottomFinalist)}</span>
+      <small>晋级决赛</small>
     </section>
     <section class="playoff-corner playoff-bottom-right">
       ${renderPlayoffTeam("C", teams.C || [])}
     </section>
   `;
+  renderChampion();
+}
+
+function renderChampion() {
+  const target = $("#championShowcase");
+  if (!target) return;
+  const champion = db.champion || {};
+  const teamKey = String(champion.team || "").toUpperCase();
+  const playerIds = Array.isArray(champion.playerIds) && champion.playerIds.length
+    ? champion.playerIds
+    : (getPlayoffTeams()[teamKey] || []);
+  const players = playerIds.map((id) => getPlayer(id)).filter(Boolean);
+  const hasChampion = Boolean(teamKey || players.length);
+  const teamName = hasChampion
+    ? (teamKey ? `TEAM ${db.playoffTeamNames?.[teamKey] || teamKey}` : "冠军战队")
+    : "冠军资料待补充";
+  target.innerHTML = `
+    <div class="champion-crown" aria-hidden="true">🏆</div>
+    <div class="champion-copy">
+      <small>${escapeHtml(champion.title || "S2 总冠军")}</small>
+      <h3>${escapeHtml(teamName)}</h3>
+      <p>${escapeHtml(champion.description || (hasChampion ? "S2 赛季总冠军" : "S2 数据已归档，确认冠军队伍后将在这里完整展示。"))}</p>
+    </div>
+    ${players.length ? `
+      <div class="champion-roster" aria-label="冠军阵容">
+        ${players.map((player) => `<span>${escapeHtml(player.name)}</span>`).join("")}
+      </div>
+    ` : ""}
+  `;
 }
 
 function renderPlayoffTeam(team, ids) {
   const players = ids.map((id) => getPlayer(id)).filter(Boolean);
+  const teamName = db.playoffTeamNames?.[team] || team;
   return `
     <div class="playoff-team-card">
       <div class="playoff-team-title">
-        <strong>TEAM ${team}</strong>
+        <strong>TEAM ${escapeHtml(teamName)}</strong>
       </div>
       <div class="playoff-player-list">
         ${players.length ? players.map((player) => `<span>${escapeHtml(player.name)}</span>`).join("") : `<em>未选择出场人员</em>`}
@@ -802,25 +1051,190 @@ function compareMatchesByScheduleDesc(a, b) {
   return Number(b.matchNo || 0) - Number(a.matchNo || 0);
 }
 
-function renderMiniRank(target, players, valueFormatter) {
-  if (!target) return;
-  const topFive = players.slice(0, 5);
-  if (!topFive.length) {
-    target.innerHTML = `<li class="muted">暂无数据</li>`;
+function getSeasonDay(matches = db.matches, today = new Date()) {
+  const dateValues = matches
+    .map((match) => String(match.date || "").match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))
+    .filter(Boolean)
+    .map((parts) => Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])))
+    .filter(Number.isFinite);
+
+  if (!dateValues.length) return null;
+
+  const firstDay = Math.min(...dateValues);
+  const currentDay = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const elapsedDays = Math.floor((currentDay - firstDay) / 86400000);
+  return Math.max(1, elapsedDays + 1);
+}
+
+function createDashboardRankCard() {
+  const card = document.createElement("article");
+  card.className = "dashboard-rank-card";
+  card.setAttribute("role", "listitem");
+  card.innerHTML = `
+    <span class="dashboard-rank-number"></span>
+    <span class="dashboard-rank-identity">
+      <b></b>
+      <small></small>
+    </span>
+    <span class="dashboard-rank-value-wrap">
+      <strong class="dashboard-rank-value"></strong>
+      <small class="dashboard-rank-value-label"></small>
+    </span>
+    <i class="dashboard-rank-motion-trail" aria-hidden="true"></i>
+  `;
+  return card;
+}
+
+function updateDashboardRankCard(card, player, rank, mode) {
+  const config = DASHBOARD_RANK_MODES[mode];
+  const value = config.value(player);
+  const name = String(player.name || "未知选手");
+  const isTopFive = rank <= 5;
+
+  card.className = [
+    "dashboard-rank-card",
+    isTopFive ? "is-featured" : "is-roster",
+    rank === 1 ? "is-rank-one" : "",
+    isTopFive && rank > 1 ? "is-rank-top" : ""
+  ].filter(Boolean).join(" ");
+  card.dataset.dashboardRankPlayer = String(player.id);
+  card.dataset.rank = String(rank);
+  card.style.setProperty("--rank-order", String(Math.min(rank, 12)));
+  card.setAttribute("aria-label", `第 ${rank} 名，${name}，${config.label} ${value}`);
+
+  card.querySelector(".dashboard-rank-number").textContent = String(rank).padStart(2, "0");
+  card.querySelector(".dashboard-rank-identity b").textContent = name;
+  card.querySelector(".dashboard-rank-identity small").textContent = formatMiniRankRecord(player);
+  card.querySelector(".dashboard-rank-value").textContent = value;
+  card.querySelector(".dashboard-rank-value-label").textContent = config.label;
+}
+
+function animateDashboardRankCards(cards, previousRects, previousRanks) {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+  cards.forEach((card) => {
+    card.getAnimations?.().forEach((animation) => animation.cancel());
+    const playerId = card.dataset.dashboardRankPlayer;
+    const previousRect = previousRects.get(playerId);
+    const nextRect = card.getBoundingClientRect();
+    const previousRank = previousRanks.get(playerId);
+    const nextRank = Number(card.dataset.rank || 0);
+    const movement = previousRank
+      ? (nextRank < previousRank ? "up" : nextRank > previousRank ? "down" : "steady")
+      : "new";
+    const tierShift = previousRank > 5 && nextRank <= 5
+      ? "promoted"
+      : previousRank <= 5 && nextRank > 5
+        ? "demoted"
+        : "steady";
+    card.dataset.movement = movement;
+    card.dataset.tierShift = tierShift;
+
+    if (previousRect) {
+      const deltaX = previousRect.left - nextRect.left;
+      const deltaY = previousRect.top - nextRect.top;
+      const scaleX = previousRect.width / Math.max(nextRect.width, 1);
+      const scaleY = previousRect.height / Math.max(nextRect.height, 1);
+      const distance = Math.hypot(deltaX, deltaY);
+      const duration = Math.min(680, 500 + distance * 0.18);
+      const animation = card.animate([
+        {
+          opacity: 0.62,
+          filter: "brightness(1.35) blur(0.6px)",
+          transform: `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`
+        },
+        {
+          opacity: 1,
+          filter: "brightness(1) blur(0)",
+          transform: "translate(0, 0) scale(1, 1)"
+        }
+      ], {
+        duration,
+        easing: "cubic-bezier(0.2, 0.68, 0.22, 1)",
+        fill: "both"
+      });
+      animation.addEventListener("finish", () => animation.cancel(), { once: true });
+    } else {
+      const animation = card.animate([
+        { opacity: 0, transform: "translateY(12px)" },
+        { opacity: 1, transform: "translateY(0)" }
+      ], {
+        duration: 360,
+        delay: Math.min(nextRank * 24, 240),
+        easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+        fill: "both"
+      });
+      animation.addEventListener("finish", () => animation.cancel(), { once: true });
+    }
+
+    const value = card.querySelector(".dashboard-rank-value");
+    value?.animate([
+      { opacity: 0.22, filter: "blur(3px)", transform: "translateY(8px)" },
+      { opacity: 1, filter: "blur(0)", transform: "translateY(0)" }
+    ], {
+      duration: 320,
+      delay: 110,
+      easing: "cubic-bezier(0.16, 1, 0.3, 1)"
+    });
+
+    window.setTimeout(() => {
+      if (card.dataset.movement === movement) delete card.dataset.movement;
+      if (card.dataset.tierShift === tierShift) delete card.dataset.tierShift;
+    }, 680);
+  });
+}
+
+function renderDashboardRankStage(players, { animate = false } = {}) {
+  const stage = $(".dashboard-rank-stage");
+  const featured = $("#dashboardRankFeatured");
+  const roster = $("#dashboardRankRoster");
+  if (!stage || !featured || !roster) return;
+
+  const config = DASHBOARD_RANK_MODES[activeDashboardRankMetric] || DASHBOARD_RANK_MODES.rating;
+  const existingCards = new Map(
+    $$("[data-dashboard-rank-player]", stage).map((card) => [
+      card.dataset.dashboardRankPlayer,
+      card
+    ])
+  );
+  const previousRects = new Map();
+  const previousRanks = new Map();
+
+  existingCards.forEach((card, playerId) => {
+    previousRects.set(playerId, card.getBoundingClientRect());
+    previousRanks.set(playerId, Number(card.dataset.rank || 0));
+  });
+
+  const orderedPlayers = [...players].sort(config.compare);
+  const renderedCards = [];
+  featured.replaceChildren();
+  roster.replaceChildren();
+
+  orderedPlayers.forEach((player, index) => {
+    const rank = index + 1;
+    const playerId = String(player.id);
+    const card = existingCards.get(playerId) || createDashboardRankCard();
+    updateDashboardRankCard(card, player, rank, activeDashboardRankMetric);
+    (rank <= 5 ? featured : roster).appendChild(card);
+    renderedCards.push(card);
+  });
+
+  $$("#dashboardRankModes [data-dashboard-rank-mode]").forEach((button) => {
+    const isActive = button.dataset.dashboardRankMode === activeDashboardRankMetric;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+  });
+  $("#dashboardRankMetricLabel").textContent = config.label;
+  $("#dashboardRankPlayerCount").textContent = `${orderedPlayers.length} PLAYERS`;
+
+  if (!orderedPlayers.length) {
+    roster.innerHTML = `<p class="dashboard-rank-empty">暂无选手数据</p>`;
     return;
   }
 
-  target.innerHTML = topFive
-    .map((player) => `
-      <li>
-        <span class="mini-rank-player">
-          <b>${escapeHtml(player.name)}</b>
-          <em>${formatMiniRankRecord(player)}</em>
-        </span>
-        <strong>${escapeHtml(valueFormatter(player))}</strong>
-      </li>
-    `)
-    .join("");
+  if (animate && previousRects.size) {
+    animateDashboardRankCards(renderedCards, previousRects, previousRanks);
+  }
 }
 
 function formatMiniRankRecord(player) {
@@ -893,6 +1307,73 @@ function renderRecordHeader(table) {
 function getPlayerProfilePlayers() {
   return getPlayersWithStats()
     .sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0) || a.name.localeCompare(b.name, "zh-Hans"));
+}
+
+function getPlayerProfileSearchValues(player) {
+  return [player.name, player.steam_id, player.steamId]
+    .filter(Boolean)
+    .map((value) => String(value).trim().toLocaleLowerCase());
+}
+
+function renderPlayerProfileDirectory(players = getPlayerProfilePlayers()) {
+  const list = $("#playerProfileList");
+  const total = $("#playerProfileDirectoryTotal");
+  const status = $("#playerProfileSearchStatus");
+  const searchInput = $("#playerProfileSearchInput");
+  const clearButton = $("#clearPlayerProfileSearch");
+  if (!list) return;
+
+  const query = playerProfileSearchQuery.trim().toLocaleLowerCase();
+  const exactMatches = query
+    ? players.filter((player) => getPlayerProfileSearchValues(player).includes(query))
+    : [];
+  const filteredPlayers = !query
+    ? players
+    : exactMatches.length
+      ? exactMatches
+      : players.filter((player) => getPlayerProfileSearchValues(player).some((value) => value.includes(query)));
+
+  if (total) total.textContent = String(players.length);
+  if (status) status.textContent = query ? `找到 ${filteredPlayers.length} / ${players.length} 名选手` : `按评分排序 · ${players.length} 名选手`;
+  if (searchInput && searchInput.value !== playerProfileSearchQuery) searchInput.value = playerProfileSearchQuery;
+  if (clearButton) clearButton.hidden = !query;
+
+  if (!players.length) {
+    list.innerHTML = `<div class="player-directory-empty"><strong>暂无选手</strong><span>录入选手后将在这里显示</span></div>`;
+    return;
+  }
+
+  if (!filteredPlayers.length) {
+    list.innerHTML = `<div class="player-directory-empty"><strong>没有匹配的选手</strong><span>尝试输入其他名称或 Steam ID</span></div>`;
+    return;
+  }
+
+  list.innerHTML = filteredPlayers.map((player) => {
+    const isActive = player.id === selectedPlayerProfileId;
+    const rank = players.findIndex((item) => item.id === player.id) + 1;
+    const stats = player.stats || createEmptyPlayerStats();
+    const record = stats.games ? `${stats.wins}-${stats.losses} · ${stats.games} 场` : "暂无比赛";
+    return `
+      <button class="player-profile-tab ${isActive ? "is-active" : ""}" data-player-profile-id="${escapeHtml(player.id)}" type="button" aria-pressed="${isActive}" aria-label="查看 ${escapeHtml(player.name)} 的选手数据">
+        <span class="player-profile-tab-rank">${String(rank).padStart(2, "0")}</span>
+        <span class="player-profile-tab-identity">
+          <strong>${escapeHtml(player.name)}</strong>
+          <small>${escapeHtml(record)}</small>
+        </span>
+        <span class="player-profile-tab-rating">
+          <small>RATING</small>
+          <b>${escapeHtml(formatRating(player.rating))}</b>
+        </span>
+      </button>
+    `;
+  }).join("");
+}
+
+function scrollPlayerProfileSelectionIntoView() {
+  window.requestAnimationFrame(() => {
+    const activePlayer = $("#playerProfileList .player-profile-tab.is-active");
+    activePlayer?.scrollIntoView({ block: "nearest" });
+  });
 }
 
 function ensureSelectedPlayerProfileId(players) {
@@ -971,21 +1452,12 @@ function renderPlayerProfile() {
 
   const players = getPlayerProfilePlayers();
   ensureSelectedPlayerProfileId(players);
+  renderPlayerProfileDirectory(players);
 
   if (!players.length) {
-    list.innerHTML = `<p class="muted">暂无选手</p>`;
     detail.innerHTML = `<p class="muted">暂无选手</p>`;
     return;
   }
-
-  list.innerHTML = players.map((player) => {
-    const isActive = player.id === selectedPlayerProfileId;
-    return `
-      <button class="player-profile-tab ${isActive ? "is-active" : ""}" data-player-profile-id="${escapeHtml(player.id)}" type="button">
-        <strong>${escapeHtml(player.name)}</strong>
-      </button>
-    `;
-  }).join("");
 
   const player = players.find((item) => item.id === selectedPlayerProfileId) || players[0];
   const stats = player.stats || createEmptyPlayerStats();
@@ -3945,6 +4417,83 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function initializeNavSubmenus() {
+  const nav = $(".nav-tabs");
+  if (!nav) return;
+
+  const parentButtons = Array.from(nav.querySelectorAll(".nav-tab[data-nav-default]"));
+  const groups = Array.from(nav.querySelectorAll(".nav-sub-group[data-nav-group]"));
+  let closeTimer = 0;
+
+  const getParent = (groupName) => parentButtons.find((button) => button.dataset.navDefault === groupName);
+  const getGroup = (groupName) => groups.find((group) => group.dataset.navGroup === groupName);
+  const cancelClose = () => {
+    window.clearTimeout(closeTimer);
+    closeTimer = 0;
+  };
+  const closeAll = () => {
+    cancelClose();
+    groups.forEach((group) => group.classList.remove("is-open"));
+    parentButtons.forEach((button) => button.setAttribute("aria-expanded", "false"));
+  };
+  const openGroup = (groupName) => {
+    cancelClose();
+    groups.forEach((group) => group.classList.toggle("is-open", group.dataset.navGroup === groupName));
+    parentButtons.forEach((button) => {
+      button.setAttribute("aria-expanded", String(button.dataset.navDefault === groupName));
+    });
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer = window.setTimeout(closeAll, 120);
+  };
+
+  parentButtons.forEach((button) => {
+    const groupName = button.dataset.navDefault;
+    const group = getGroup(groupName);
+    if (!group) return;
+
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", "false");
+    button.addEventListener("pointerenter", () => openGroup(groupName));
+    button.addEventListener("pointerleave", scheduleClose);
+    button.addEventListener("focus", () => openGroup(groupName));
+    button.addEventListener("blur", scheduleClose);
+
+    group.setAttribute("role", "menu");
+    group.addEventListener("pointerenter", cancelClose);
+    group.addEventListener("pointerleave", scheduleClose);
+    group.addEventListener("focusin", cancelClose);
+    group.addEventListener("focusout", scheduleClose);
+    group.addEventListener("click", closeAll);
+  });
+
+  document.addEventListener("pointermove", (event) => {
+    if (!groups.some((group) => group.classList.contains("is-open"))) return;
+    const target = event.target instanceof Element ? event.target : null;
+    const isInsideMenu = target?.closest(".nav-tab[data-nav-default], .nav-sub-group[data-nav-group]");
+    if (isInsideMenu && nav.contains(isInsideMenu)) {
+      cancelClose();
+      return;
+    }
+    scheduleClose();
+  });
+  document.addEventListener("pointerdown", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const isInsideMenu = target?.closest(".nav-tab[data-nav-default], .nav-sub-group[data-nav-group]");
+    if (!isInsideMenu || !nav.contains(isInsideMenu)) closeAll();
+  }, true);
+
+  nav.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const openGroupElement = groups.find((group) => group.classList.contains("is-open"));
+    if (!openGroupElement) return;
+    const parent = getParent(openGroupElement.dataset.navGroup);
+    closeAll();
+    parent?.focus();
+  });
+}
+
 function bindEvents() {
   setupAdminLayout();
   setupPasswordControls();
@@ -3955,16 +4504,40 @@ function bindEvents() {
     }
   }, true);
 
+  $$("[data-season-option]").forEach((link) => {
+    link.addEventListener("click", () => {
+      const activeView = $(".view.is-active")?.id || "dashboard";
+      const targetUrl = new URL(link.href, window.location.href);
+      targetUrl.searchParams.set("view", activeView);
+      link.href = `${targetUrl.pathname}${targetUrl.search}`;
+    });
+  });
+
   $$(".nav-tab").forEach((button) => {
     button.addEventListener("click", () => switchView(button.dataset.view || button.dataset.navDefault));
   });
 
+  initializeNavSubmenus();
+
   $("#recentMatches").addEventListener("click", handleMatchCardOpen);
   $("#recentMatches").addEventListener("keydown", handleMatchCardKeydown);
-  $("#toggleAllMatches")?.addEventListener("click", () => {
-    showAllDashboardMatches = !showAllDashboardMatches;
+  $("#featuredHighlight")?.addEventListener("click", handleMatchCardOpen);
+  $("#featuredHighlight")?.addEventListener("keydown", handleMatchCardKeydown);
+  $("#dashboardRankModes")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-dashboard-rank-mode]");
+    const mode = button?.dataset.dashboardRankMode;
+    if (!mode || !DASHBOARD_RANK_MODES[mode] || mode === activeDashboardRankMetric) return;
+    activeDashboardRankMetric = mode;
+    renderDashboardRankStage(getPlayersWithStats(), { animate: true });
+  });
+  $("#matchCalendarDays")?.addEventListener("click", (event) => {
+    const dateButton = event.target.closest("[data-dashboard-match-date]");
+    if (!dateButton) return;
+    selectedDashboardMatchDate = dateButton.dataset.dashboardMatchDate || "";
     renderDashboardMatches();
   });
+  $("#previousMatchDate")?.addEventListener("click", () => moveDashboardMatchDate(-1));
+  $("#nextMatchDate")?.addEventListener("click", () => moveDashboardMatchDate(1));
   $("#closeMatchDialog").addEventListener("click", () => $("#matchDetailDialog").close());
   $("#matchDetailDialog").addEventListener("click", (event) => {
     if (event.target.id === "matchDetailDialog") event.target.close();
@@ -3981,6 +4554,29 @@ function bindEvents() {
       recordSortDirection = "desc";
     }
     renderPlayers();
+  });
+
+  const playerProfileSearchInput = $("#playerProfileSearchInput");
+  playerProfileSearchInput?.addEventListener("input", () => {
+    const hadQuery = Boolean(playerProfileSearchQuery.trim());
+    playerProfileSearchQuery = playerProfileSearchInput.value;
+    renderPlayerProfileDirectory();
+    if (hadQuery && !playerProfileSearchQuery.trim()) scrollPlayerProfileSelectionIntoView();
+  });
+  playerProfileSearchInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !playerProfileSearchQuery) return;
+    event.preventDefault();
+    playerProfileSearchQuery = "";
+    playerProfileSearchInput.value = "";
+    renderPlayerProfileDirectory();
+    scrollPlayerProfileSelectionIntoView();
+  });
+  $("#clearPlayerProfileSearch")?.addEventListener("click", () => {
+    playerProfileSearchQuery = "";
+    if (playerProfileSearchInput) playerProfileSearchInput.value = "";
+    renderPlayerProfileDirectory();
+    scrollPlayerProfileSelectionIntoView();
+    playerProfileSearchInput?.focus();
   });
 
   $("#playerProfile")?.addEventListener("click", (event) => {
@@ -4810,7 +5406,13 @@ function initializeSplashScreen() {
     updateSplashStats();
   });
 
-  if (sessionStorage.getItem(APP_ENTERED_KEY) === "1") {
+  if (REQUESTED_VIEW) {
+    sessionStorage.setItem(APP_ENTERED_KEY, "1");
+    isLeavingSplash = true;
+    document.body.classList.add("has-entered");
+    switchView(REQUESTED_VIEW);
+    ensureStateLoaded().catch(showStateLoadError);
+  } else if (sessionStorage.getItem(APP_ENTERED_KEY) === "1") {
     isLeavingSplash = true;
     document.body.classList.add("has-entered");
     switchView(sessionStorage.getItem(ACTIVE_VIEW_KEY) || "dashboard");
@@ -4818,11 +5420,266 @@ function initializeSplashScreen() {
   }
 }
 
-initializeSplashScreen();
+const INTERACTIVE_CARD_SELECTOR = [
+  ".panel",
+  ".stat-card",
+  ".match-card-button",
+  ".record-card",
+  ".team-panel",
+  ".player-chip",
+  ".admin-match-row",
+  ".player-profile-stat",
+  ".rating-trend-player",
+  ".teammate-query-matches li"
+].join(", ");
+
+function initializeCardInteractions() {
+  const main = $(".main");
+  if (!main || !window.matchMedia("(pointer: fine)").matches) return;
+
+  let animationFrame = 0;
+  let activeCard = null;
+  let pendingCard = null;
+  let pendingPoint = null;
+
+  main.addEventListener("pointermove", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const card = target?.closest(INTERACTIVE_CARD_SELECTOR);
+    if (!card || !main.contains(card)) {
+      activeCard?.classList.remove("is-pointer-hovered");
+      activeCard = null;
+      return;
+    }
+
+    if (activeCard !== card) {
+      activeCard?.classList.remove("is-pointer-hovered");
+      activeCard = card;
+      activeCard.classList.add("is-pointer-hovered");
+    }
+
+    pendingCard = card;
+    pendingPoint = { x: event.clientX, y: event.clientY };
+    if (animationFrame) return;
+
+    animationFrame = window.requestAnimationFrame(() => {
+      if (pendingCard && pendingPoint) {
+        const rect = pendingCard.getBoundingClientRect();
+        pendingCard.style.setProperty("--pointer-x", `${pendingPoint.x - rect.left}px`);
+        pendingCard.style.setProperty("--pointer-y", `${pendingPoint.y - rect.top}px`);
+      }
+      animationFrame = 0;
+    });
+  });
+
+  main.addEventListener("pointerleave", () => {
+    activeCard?.classList.remove("is-pointer-hovered");
+    activeCard = null;
+  });
+}
+
+function initializePageFieldInteractions() {
+  const canvas = $("#pageFieldCanvas");
+  const shell = $(".app-shell");
+  if (!(canvas instanceof HTMLCanvasElement) || !shell || document.body.dataset.ui !== "modern") return;
+
+  const context = canvas.getContext("2d");
+  if (!context) return;
+
+  const finePointer = window.matchMedia("(pointer: fine)");
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const pointer = { x: -1000, y: -1000, targetStrength: 0, strength: 0 };
+  let width = 0;
+  let height = 0;
+  let pixelRatio = 1;
+  let animationFrame = 0;
+
+  const resizeCanvas = () => {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+    canvas.width = Math.round(width * pixelRatio);
+    canvas.height = Math.round(height * pixelRatio);
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  };
+
+  const displacedPoint = (x, y) => {
+    const dx = pointer.x - x;
+    const dy = pointer.y - y;
+    const distance = Math.hypot(dx, dy);
+    const radius = 135;
+    if (distance >= radius || distance < 1 || pointer.strength < 0.002) return [x, y];
+
+    // Keep displacement at zero both at the cursor and the field edge. This
+    // bends lines smoothly without collapsing several segments into a point.
+    const normalizedDistance = distance / radius;
+    const pull = 25 * Math.sin(Math.PI * normalizedDistance) ** 2 * pointer.strength;
+    return [x + (dx / distance) * pull, y + (dy / distance) * pull];
+  };
+
+  const drawGrid = () => {
+    context.clearRect(0, 0, width, height);
+
+    const spacing = width < 720 ? 30 : 36;
+    const step = 8;
+    const offsetX = ((-shell.scrollLeft % spacing) + spacing) % spacing;
+    const offsetY = ((-shell.scrollTop % spacing) + spacing) % spacing;
+
+    context.lineWidth = 1;
+    context.strokeStyle = "rgba(105, 207, 222, 0.068)";
+    context.beginPath();
+
+    for (let x = offsetX - spacing; x <= width + spacing; x += spacing) {
+      for (let y = -step; y <= height + step; y += step) {
+        const [px, py] = displacedPoint(x, y);
+        if (y === -step) context.moveTo(px, py);
+        else context.lineTo(px, py);
+      }
+    }
+
+    for (let y = offsetY - spacing; y <= height + spacing; y += spacing) {
+      for (let x = -step; x <= width + step; x += step) {
+        const [px, py] = displacedPoint(x, y);
+        if (x === -step) context.moveTo(px, py);
+        else context.lineTo(px, py);
+      }
+    }
+    context.stroke();
+
+    if (pointer.strength > 0.002) {
+      const shade = context.createRadialGradient(pointer.x, pointer.y, 0, pointer.x, pointer.y, 150);
+      shade.addColorStop(0, `rgba(0, 2, 3, ${0.19 * pointer.strength})`);
+      shade.addColorStop(0.42, `rgba(0, 3, 4, ${0.105 * pointer.strength})`);
+      shade.addColorStop(1, "rgba(0, 3, 4, 0)");
+      context.fillStyle = shade;
+      context.fillRect(pointer.x - 160, pointer.y - 160, 320, 320);
+    }
+  };
+
+  const render = () => {
+    const easing = reducedMotion.matches ? 1 : 0.2;
+    pointer.strength += (pointer.targetStrength - pointer.strength) * easing;
+    if (Math.abs(pointer.targetStrength - pointer.strength) < 0.002) {
+      pointer.strength = pointer.targetStrength;
+    }
+
+    drawGrid();
+    if (pointer.strength !== pointer.targetStrength) {
+      animationFrame = window.requestAnimationFrame(render);
+    } else {
+      animationFrame = 0;
+    }
+  };
+
+  const requestRender = () => {
+    if (!animationFrame) animationFrame = window.requestAnimationFrame(render);
+  };
+
+  const updatePointer = (event) => {
+    if (!finePointer.matches) return;
+    pointer.x = event.clientX;
+    pointer.y = event.clientY;
+    const target = event.target instanceof Element ? event.target : null;
+    pointer.targetStrength = target?.closest(INTERACTIVE_CARD_SELECTOR) ? 0 : 1;
+    requestRender();
+  };
+
+  resizeCanvas();
+  document.body.classList.add("has-field-canvas");
+  drawGrid();
+  window.addEventListener("resize", () => {
+    resizeCanvas();
+    requestRender();
+  });
+  window.addEventListener("pointermove", updatePointer, { passive: true });
+  window.addEventListener("pointerout", (event) => {
+    if (!event.relatedTarget) {
+      pointer.targetStrength = 0;
+      requestRender();
+    }
+  });
+  shell.addEventListener("scroll", requestRender, { passive: true });
+}
+
+function initializeDashboardHologram() {
+  const clock = $("#dashboardClock");
+  if (!(clock instanceof HTMLTimeElement)) return;
+
+  const updateClock = () => {
+    const now = new Date();
+    clock.dateTime = now.toISOString();
+    clock.textContent = new Intl.DateTimeFormat("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    }).format(now);
+  };
+
+  updateClock();
+  window.setInterval(updateClock, 1000);
+}
+
+function initializeDashboardScrollSequence() {
+  const shell = $(".app-shell");
+  const dashboard = $("#dashboard");
+  const featuredHighlight = $("#featuredHighlight");
+  if (!shell || !dashboard || !featuredHighlight || document.body.dataset.ui !== "modern") return;
+
+  const body = document.body;
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  let animationFrame = 0;
+
+  const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
+
+  const render = () => {
+    animationFrame = 0;
+    const isDashboardActive = dashboard.classList.contains("is-active");
+    body.classList.toggle("dashboard-view-active", isDashboardActive);
+
+    if (!isDashboardActive) {
+      body.classList.remove("dashboard-grid-visible", "dashboard-ranks-visible");
+      body.style.removeProperty("--dashboard-grid-opacity");
+      return;
+    }
+
+    const viewportHeight = window.innerHeight;
+    const heroBottom = featuredHighlight.getBoundingClientRect().bottom;
+    const navigationBottom = $(".sidebar")?.getBoundingClientRect().bottom || 0;
+    const gridFadeStart = viewportHeight * 0.92;
+    const gridFadeDistance = Math.max(260, viewportHeight * 0.54);
+    const gridProgress = clamp((gridFadeStart - heroBottom) / gridFadeDistance, 0, 1);
+    const gridOpacity = reducedMotion.matches ? (gridProgress > 0 ? 0.96 : 0) : gridProgress * 0.96;
+    const ranksRevealLine = Math.max(navigationBottom + 4, 64);
+
+    body.style.setProperty("--dashboard-grid-opacity", gridOpacity.toFixed(3));
+    body.classList.toggle("dashboard-grid-visible", gridProgress > 0.12);
+    body.classList.toggle("dashboard-ranks-visible", heroBottom <= ranksRevealLine);
+  };
+
+  const requestRender = () => {
+    if (!animationFrame) animationFrame = window.requestAnimationFrame(render);
+  };
+
+  shell.addEventListener("scroll", requestRender, { passive: true });
+  window.addEventListener("resize", requestRender);
+  reducedMotion.addEventListener?.("change", requestRender);
+  new MutationObserver(requestRender).observe(dashboard, {
+    attributes: true,
+    attributeFilter: ["class"]
+  });
+  new ResizeObserver(requestRender).observe(featuredHighlight);
+  requestRender();
+}
+
+applySeasonUi();
 bindEvents();
-Promise.allSettled([restoreAdminSession(), loadSplashSummary()]).then((results) => {
+initializeCardInteractions();
+initializePageFieldInteractions();
+// The legacy splash/video and clock code is intentionally retained but no longer initialized.
+initializeDashboardScrollSequence();
+Promise.allSettled([restoreAdminSession(), ensureStateLoaded()]).then((results) => {
   updateAdminUi();
-  if (results[1]?.status === "rejected") {
-    updateSplashStats({ players: 0, matches: 0 });
-  }
+  if (results[1]?.status === "rejected") console.error(results[1].reason);
 });

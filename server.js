@@ -4,6 +4,7 @@ import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
 import * as XLSX from "xlsx";
 
@@ -11,9 +12,20 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const ENV = globalThis.process?.env || {};
 const PORT = Number(ENV.PORT || 3000);
 const ADMIN_PASSWORD = ENV.ADMIN_PASSWORD || "admin123";
-const DB_PATH = getDatabasePath();
-mkdirSync(dirname(DB_PATH), { recursive: true });
-const db = new DatabaseSync(DB_PATH);
+const DB_PATHS = getDatabasePaths();
+Object.values(DB_PATHS).forEach((path) => mkdirSync(dirname(path), { recursive: true }));
+const databases = {
+  s2: new DatabaseSync(DB_PATHS.s2),
+  s3: new DatabaseSync(DB_PATHS.s3)
+};
+const databaseContext = new AsyncLocalStorage();
+const db = new Proxy({}, {
+  get(_target, property) {
+    const database = databaseContext.getStore()?.database || databases.s3;
+    const value = database[property];
+    return typeof value === "function" ? value.bind(database) : value;
+  }
+});
 
 const defaultPlayers = [
   ["Ame", "", 7.2, "后期大核"],
@@ -28,14 +40,19 @@ const defaultPlayers = [
   ["Dy", "", 6.7, ""]
 ];
 
-initDatabase();
+databaseContext.run({ season: "s2", database: databases.s2 }, () => initDatabase({ seedDefaults: false }));
+databaseContext.run({ season: "s3", database: databases.s3 }, () => initDatabase({ seedDefaults: false }));
 
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
 
     if (url.pathname.startsWith("/api/")) {
-      await handleApi(request, response, url);
+      const season = getRequestSeason(url);
+      await databaseContext.run(
+        { season, database: databases[season] },
+        () => handleApi(request, response, url)
+      );
       return;
     }
 
@@ -47,15 +64,32 @@ const server = createServer(async (request, response) => {
 
 server.listen(PORT, () => {
   console.log(`Dota2 inhouse tool running at http://localhost:${PORT}`);
-  console.log(`SQLite database: ${DB_PATH}`);
+  console.log(`S2 SQLite database: ${DB_PATHS.s2}`);
+  console.log(`S3 SQLite database: ${DB_PATHS.s3}`);
 });
 
-function getDatabasePath() {
-  const configuredPath = ENV.DATABASE_PATH || ENV.SQLITE_PATH || "dota.db";
+function resolveDatabasePath(configuredPath) {
   return isAbsolute(configuredPath) ? configuredPath : join(__dirname, configuredPath);
 }
 
-function initDatabase() {
+function getDatabasePaths() {
+  // Existing deployments commonly point DATABASE_PATH at the S2 database.
+  // Keep that contract, and place S3 beside it unless explicitly configured.
+  const legacyS2Path = ENV.DATABASE_PATH || ENV.SQLITE_PATH || "dota.db";
+  const s2 = resolveDatabasePath(ENV.S2_DATABASE_PATH || legacyS2Path);
+  const s3 = resolveDatabasePath(ENV.S3_DATABASE_PATH || join(dirname(s2), "dota-s3.db"));
+  return { s2, s3 };
+}
+
+function getRequestSeason(url) {
+  return String(url.searchParams.get("season") || "s3").toLowerCase() === "s2" ? "s2" : "s3";
+}
+
+function getActiveSeason() {
+  return databaseContext.getStore()?.season || "s3";
+}
+
+function initDatabase({ seedDefaults = false } = {}) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS players (
       id TEXT PRIMARY KEY,
@@ -134,7 +168,7 @@ function initDatabase() {
   `);
 
   const playerCount = db.prepare("SELECT COUNT(*) AS count FROM players").get().count;
-  if (playerCount === 0) {
+  if (seedDefaults && playerCount === 0) {
     const insert = db.prepare(`
       INSERT INTO players (id, name, steam_id, rating, rating_updated_at, note, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -164,6 +198,7 @@ function getColumns(table) {
 
 async function handleApi(request, response, url) {
   const method = request.method;
+  const season = getActiveSeason();
 
   if (method === "GET" && url.pathname === "/api/state") {
     sendJson(response, 200, getState());
@@ -172,6 +207,11 @@ async function handleApi(request, response, url) {
 
   if (method === "GET" && url.pathname === "/api/summary") {
     sendJson(response, 200, getSummary());
+    return;
+  }
+
+  if (season === "s2" && method !== "GET" && url.pathname !== "/api/admin/check") {
+    sendJson(response, 403, { error: "S2 已归档，只能查看历史数据。" });
     return;
   }
 
@@ -495,7 +535,11 @@ function isPublicMutation(method, pathname) {
 }
 
 function getState() {
+  const season = getActiveSeason();
   return {
+    season,
+    seasonLabel: season.toUpperCase(),
+    readOnly: season === "s2",
     players: db.prepare(`
       SELECT id, name, steam_id AS steamId, rating, rating_updated_at AS ratingUpdatedAt, note
       FROM players
@@ -518,14 +562,18 @@ function getState() {
       ORDER BY date ASC, player_id ASC
     `).all(),
     currentTeams: getTeams(),
-    playoffTeams: getPlayoffTeams()
+    playoffTeams: getPlayoffTeams(),
+    playoffTeamNames: getPlayoffTeamNames(),
+    playoffResults: getPlayoffResults(),
+    champion: getChampion()
   };
 }
 
 function getSummary() {
   const players = db.prepare("SELECT COUNT(*) AS count FROM players").get().count;
   const matches = db.prepare("SELECT COUNT(*) AS count FROM matches").get().count;
-  return { players, matches };
+  const season = getActiveSeason();
+  return { players, matches, season, seasonLabel: season.toUpperCase(), readOnly: season === "s2" };
 }
 
 function getTeams() {
@@ -580,6 +628,52 @@ function savePlayoffTeams(teams) {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(JSON.stringify(normalized));
   return normalized;
+}
+
+function getPlayoffTeamNames() {
+  const row = db.prepare("SELECT value FROM app_state WHERE key = 'playoffTeamNames'").get();
+  const defaults = { A: "A", B: "B", C: "C", D: "D" };
+  if (!row) return defaults;
+  try {
+    const names = JSON.parse(row.value);
+    return Object.fromEntries(
+      Object.keys(defaults).map((team) => [team, String(names[team] || defaults[team])])
+    );
+  } catch {
+    return defaults;
+  }
+}
+
+function getPlayoffResults() {
+  const row = db.prepare("SELECT value FROM app_state WHERE key = 'playoffResults'").get();
+  const empty = { semifinals: [], final: null };
+  if (!row) return empty;
+  try {
+    const results = JSON.parse(row.value);
+    return {
+      semifinals: Array.isArray(results.semifinals) ? results.semifinals : [],
+      final: results.final && typeof results.final === "object" ? results.final : null
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function getChampion() {
+  const row = db.prepare("SELECT value FROM app_state WHERE key = 'champion'").get();
+  const empty = { team: "", title: "S2 总冠军", playerIds: [], description: "" };
+  if (!row) return empty;
+  try {
+    const champion = JSON.parse(row.value);
+    return {
+      team: String(champion.team || ""),
+      title: String(champion.title || empty.title),
+      playerIds: Array.isArray(champion.playerIds) ? champion.playerIds : [],
+      description: String(champion.description || "")
+    };
+  } catch {
+    return empty;
+  }
 }
 
 function generateTeams(ids, options) {
@@ -1119,9 +1213,9 @@ function parseExcelMatchSheet(sheetName, records, playerByName, allRecords = rec
     playerDetails[player.id] = {
       hero: String(record["英雄"] || "").trim(),
       position: normalizePosition(record["位置"]),
-      kills: numberOrBlank(record["K"]),
-      deaths: numberOrBlank(record["D"]),
-      assists: numberOrBlank(record["A"]),
+      kills: numberOrBlank(record["K"] ?? record["击杀"]),
+      deaths: numberOrBlank(record["D"] ?? record["死亡"]),
+      assists: numberOrBlank(record["A"] ?? record["助攻"]),
       participation: normalizeRatio(record["参战率"]),
       damageShare: normalizeRatio(record["输出占比"]),
       gpm: numberOrBlank(record["GPM"]),
@@ -1280,7 +1374,7 @@ function normalizeDuration(value) {
     return formatDurationSeconds(totalSeconds);
   }
 
-  const text = String(value).trim();
+  const text = String(value).trim().replace(/：/g, ":");
   const colonMatch = text.match(/^(\d+):([0-5]?\d)(?::([0-5]?\d))?$/);
   if (colonMatch) {
     const first = Number(colonMatch[1]);
