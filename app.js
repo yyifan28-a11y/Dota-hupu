@@ -14,6 +14,7 @@ let db = {
 const CURRENT_SEASON = new URLSearchParams(window.location.search).get("season")?.toLowerCase() === "s2" ? "s2" : "s3";
 const IS_ARCHIVE_SEASON = CURRENT_SEASON === "s2";
 const REQUESTED_VIEW = new URLSearchParams(window.location.search).get("view") || "";
+const REQUESTED_PLAYER_ID = new URLSearchParams(window.location.search).get("player") || "";
 const POSITIONS = ["1", "2", "3", "4", "5"];
 const HEROES = Array.isArray(window.DOTA_HEROES) ? window.DOTA_HEROES : [];
 const HERO_IMAGE_BASE = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes";
@@ -125,8 +126,10 @@ let pendingRatingSnapshots = [];
 let selectedDashboardMatchDate = "";
 let activeDashboardRankMetric = "rating";
 let activeDataViewMode = "basic";
-let selectedPlayerProfileId = "";
+let selectedPlayerProfileId = REQUESTED_PLAYER_ID;
 let playerProfileSearchQuery = "";
+let playerProfileSearchFocused = false;
+let playerOrbitModulePromise = null;
 let selectedPlayerProfilePosition = "";
 let selectedPlayerProfileHeroKey = "";
 let showAllPlayerProfileMatches = false;
@@ -759,6 +762,20 @@ function renderEmpty(target) {
   target.innerHTML = $("#emptyStateTemplate").innerHTML;
 }
 
+function updateAppLocation(viewId, playerId = "", { replace = false } = {}) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("view", viewId || "dashboard");
+  if (viewId === "playerProfile" && playerId) {
+    url.searchParams.set("player", playerId);
+  } else {
+    url.searchParams.delete("player");
+  }
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (nextUrl === currentUrl) return;
+  window.history[replace ? "replaceState" : "pushState"]({}, "", nextUrl);
+}
+
 function switchView(viewId) {
   if ((IS_ARCHIVE_SEASON && ["generator", "admin"].includes(viewId)) || (!IS_ARCHIVE_SEASON && ["playoffs", "champion"].includes(viewId))) {
     viewId = "dashboard";
@@ -782,6 +799,8 @@ function switchView(viewId) {
   $$(".view").forEach((view) => {
     view.classList.toggle("is-active", view.id === viewId);
   });
+
+  if (viewId !== "playerProfile") stopPlayerOrbit();
 
   renderCurrentView();
   sessionStorage.setItem(ACTIVE_VIEW_KEY, viewId);
@@ -1315,58 +1334,153 @@ function getPlayerProfileSearchValues(player) {
     .map((value) => String(value).trim().toLocaleLowerCase());
 }
 
+function getPlayerProfileSearchSuggestions(players, query) {
+  const normalizedQuery = String(query || "").trim().toLocaleLowerCase();
+  if (!normalizedQuery) return [];
+  return players
+    .map((player) => {
+      const values = getPlayerProfileSearchValues(player);
+      const exact = values.some((value) => value === normalizedQuery);
+      const prefix = values.some((value) => value.startsWith(normalizedQuery));
+      const contains = values.some((value) => value.includes(normalizedQuery));
+      return contains ? { player, rank: exact ? 0 : prefix ? 1 : 2 } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.rank - b.rank || a.player.name.localeCompare(b.player.name, "zh-Hans"))
+    .slice(0, 8)
+    .map((entry) => entry.player);
+}
+
+function openPlayerProfileById(playerId, options = {}) {
+  if (!playerId || !getPlayerProfilePlayers().some((player) => player.id === playerId)) return;
+  playerProfileSearchFocused = false;
+  selectedPlayerProfileId = playerId;
+  selectedPlayerProfilePosition = "";
+  selectedPlayerProfileHeroKey = "";
+  showAllPlayerProfileMatches = false;
+  updateAppLocation("playerProfile", selectedPlayerProfileId);
+  renderPlayerProfile();
+  if (options.sharedElement) {
+    const view = $("#playerProfile");
+    if (view) {
+      view.classList.add("is-transition-target");
+      return view;
+    }
+  } else {
+    scrollPlayerProfileToTop();
+  }
+  return null;
+}
+
+function stopPlayerOrbit() {
+  playerOrbitModulePromise?.then((module) => module.destroyPlayerOrbit()).catch(() => {});
+}
+
+function syncPlayerOrbit(players) {
+  const stage = $("#playerOrbitStage");
+  const view = $("#playerProfile");
+  const shouldRun = Boolean(
+    stage
+    && view?.classList.contains("is-active")
+    && view.classList.contains("is-directory-mode")
+  );
+
+  if (!shouldRun) {
+    stopPlayerOrbit();
+    return;
+  }
+
+  playerOrbitModulePromise ||= import("./player-orbit.js");
+  playerOrbitModulePromise.then((module) => {
+    const stillActive = stage.isConnected
+      && view.classList.contains("is-active")
+      && view.classList.contains("is-directory-mode");
+    if (!stillActive) {
+      module.destroyPlayerOrbit();
+      return;
+    }
+    module.mountPlayerOrbit({
+      stage,
+      players: players.map((player) => {
+        const stats = player.stats || createEmptyPlayerStats();
+        const heroes = Array.from(heroUsageByPlayerId.get(player.id)?.values() || [])
+          .sort((a, b) => b.count - a.count || b.wins - a.wins || a.name.localeCompare(b.name, "zh-Hans"))
+          .slice(0, 3)
+          .map((hero) => {
+            const heroRecord = findHero(hero.name);
+            return {
+              name: hero.name,
+              image: heroRecord ? heroImageUrl(heroRecord) : ""
+            };
+          });
+        return {
+          id: player.id,
+          name: player.name,
+          rating: formatRating(player.rating),
+          wins: stats.wins,
+          losses: stats.losses,
+          heroes
+        };
+      }),
+      onSelect: openPlayerProfileById,
+      createPreview: getPlayerProfileTransitionMarkup
+    });
+  }).catch((error) => {
+    stage.classList.add("is-failed");
+    console.error("Player orbit failed to initialize", error);
+  });
+}
+
 function renderPlayerProfileDirectory(players = getPlayerProfilePlayers()) {
   const list = $("#playerProfileList");
   const total = $("#playerProfileDirectoryTotal");
   const status = $("#playerProfileSearchStatus");
   const searchInput = $("#playerProfileSearchInput");
+  const suggestions = $("#playerProfileSearchSuggestions");
   const clearButton = $("#clearPlayerProfileSearch");
   if (!list) return;
 
-  const query = playerProfileSearchQuery.trim().toLocaleLowerCase();
-  const exactMatches = query
-    ? players.filter((player) => getPlayerProfileSearchValues(player).includes(query))
-    : [];
-  const filteredPlayers = !query
-    ? players
-    : exactMatches.length
-      ? exactMatches
-      : players.filter((player) => getPlayerProfileSearchValues(player).some((value) => value.includes(query)));
+  const query = playerProfileSearchQuery.trim();
+  const matches = getPlayerProfileSearchSuggestions(players, query);
+  const showSuggestions = playerProfileSearchFocused && Boolean(query) && Boolean(matches.length);
 
   if (total) total.textContent = String(players.length);
-  if (status) status.textContent = query ? `找到 ${filteredPlayers.length} / ${players.length} 名选手` : `按评分排序 · ${players.length} 名选手`;
+  if (status) status.textContent = query && !matches.length ? "没有找到匹配的选手" : "";
   if (searchInput && searchInput.value !== playerProfileSearchQuery) searchInput.value = playerProfileSearchQuery;
+  searchInput?.setAttribute("aria-expanded", String(showSuggestions));
   if (clearButton) clearButton.hidden = !query;
-
-  if (!players.length) {
-    list.innerHTML = `<div class="player-directory-empty"><strong>暂无选手</strong><span>录入选手后将在这里显示</span></div>`;
-    return;
-  }
-
-  if (!filteredPlayers.length) {
-    list.innerHTML = `<div class="player-directory-empty"><strong>没有匹配的选手</strong><span>尝试输入其他名称或 Steam ID</span></div>`;
-    return;
-  }
-
-  list.innerHTML = filteredPlayers.map((player) => {
-    const isActive = player.id === selectedPlayerProfileId;
-    const rank = players.findIndex((item) => item.id === player.id) + 1;
-    const stats = player.stats || createEmptyPlayerStats();
-    const record = stats.games ? `${stats.wins}-${stats.losses} · ${stats.games} 场` : "暂无比赛";
-    return `
-      <button class="player-profile-tab ${isActive ? "is-active" : ""}" data-player-profile-id="${escapeHtml(player.id)}" type="button" aria-pressed="${isActive}" aria-label="查看 ${escapeHtml(player.name)} 的选手数据">
-        <span class="player-profile-tab-rank">${String(rank).padStart(2, "0")}</span>
-        <span class="player-profile-tab-identity">
-          <strong>${escapeHtml(player.name)}</strong>
-          <small>${escapeHtml(record)}</small>
-        </span>
-        <span class="player-profile-tab-rating">
-          <small>RATING</small>
-          <b>${escapeHtml(formatRating(player.rating))}</b>
-        </span>
+  if (suggestions) {
+    suggestions.hidden = !showSuggestions;
+    suggestions.innerHTML = matches.map((player) => `
+      <button class="player-directory-suggestion" type="button" role="option" data-player-profile-id="${escapeHtml(player.id)}">
+        ${escapeHtml(player.name)}
       </button>
-    `;
-  }).join("");
+    `).join("");
+  }
+  if (!players.length) {
+    list.innerHTML = `<p class="player-directory-id-empty">暂无选手</p>`;
+    return;
+  }
+
+  const rowPattern = [5, 4, 6, 5, 4, 6];
+  const rows = [];
+  let playerOffset = 0;
+  let rowIndex = 0;
+  while (playerOffset < players.length) {
+    const rowPlayers = players.slice(playerOffset, playerOffset + rowPattern[rowIndex % rowPattern.length]);
+    rows.push(`
+      <div class="player-directory-id-row player-directory-id-row-${rowIndex}">
+        ${rowPlayers.map((player) => `
+          <button class="player-directory-id" data-player-profile-id="${escapeHtml(player.id)}" type="button">
+            ${escapeHtml(player.name)}
+          </button>
+        `).join("")}
+      </div>
+    `);
+    playerOffset += rowPlayers.length;
+    rowIndex += 1;
+  }
+  list.innerHTML = rows.join("");
 }
 
 function scrollPlayerProfileSelectionIntoView() {
@@ -1376,9 +1490,17 @@ function scrollPlayerProfileSelectionIntoView() {
   });
 }
 
+function scrollPlayerProfileToTop() {
+  window.requestAnimationFrame(() => {
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    $("#playerProfile")?.scrollIntoView({ block: "start", behavior });
+  });
+}
+
 function ensureSelectedPlayerProfileId(players) {
+  if (!players.length) return;
   if (players.some((player) => player.id === selectedPlayerProfileId)) return;
-  selectedPlayerProfileId = players[0]?.id || "";
+  selectedPlayerProfileId = "";
   selectedPlayerProfilePosition = "";
   selectedPlayerProfileHeroKey = "";
   showAllPlayerProfileMatches = false;
@@ -1438,6 +1560,29 @@ function getFilteredPlayerProfileStats(playerId) {
   return { ...stats, dataStats };
 }
 
+function getPlayerProfileHeroUsage(playerId, position = "") {
+  const heroes = new Map();
+  db.matches.forEach((match) => {
+    if (getMatchQuality(match) === "draft") return;
+    const side = match.radiant?.includes(playerId) ? "radiant" : match.dire?.includes(playerId) ? "dire" : "";
+    if (!side) return;
+
+    const detail = match.playerDetails?.[playerId] || {};
+    const matchPosition = detail.position || match.positions?.[playerId] || "";
+    if (position && matchPosition !== position) return;
+
+    const identity = getHeroIdentity(detail.hero);
+    if (!identity.key) return;
+    const hero = heroes.get(identity.key) || { ...identity, count: 0, wins: 0 };
+    hero.count += 1;
+    if (match.winner === side) hero.wins += 1;
+    heroes.set(identity.key, hero);
+  });
+
+  return Array.from(heroes.values())
+    .sort((a, b) => b.count - a.count || b.wins - a.wins || a.name.localeCompare(b.name, "zh-Hans"));
+}
+
 function getPlayerProfileMatches(playerId) {
   return getMatchesByScheduleDesc(db.matches.filter((match) => {
     if (getMatchQuality(match) === "draft") return false;
@@ -1445,81 +1590,224 @@ function getPlayerProfileMatches(playerId) {
   }));
 }
 
+function getPlayerProfileRank(playerId, players = getPlayerProfilePlayers()) {
+  const index = players.findIndex((player) => player.id === playerId);
+  return index >= 0 ? index + 1 : 0;
+}
+
+function getPlayerRecentForm(playerId, limit = 8) {
+  return getPlayerProfileMatches(playerId).slice(0, limit).map((match) => {
+    const side = match.radiant?.includes(playerId) ? "radiant" : "dire";
+    return { match, isWin: match.winner === side };
+  });
+}
+
+function renderPlayerRatingSparkline(playerId) {
+  const snapshots = Array.isArray(db.ratingSnapshots) ? db.ratingSnapshots : [];
+  const dates = getRatingTrendDates(snapshots);
+  if (!dates.length || !snapshots.some((snapshot) => snapshot.playerId === playerId)) {
+    return `<div class="player-profile-trend-empty">暂无评分走势</div>`;
+  }
+  const points = buildRatingTrendSeries(playerId, dates, snapshots).points.filter((point) => point.rating !== null);
+  if (!points.length) return `<div class="player-profile-trend-empty">暂无评分走势</div>`;
+  const width = 420;
+  const height = 92;
+  const padding = 8;
+  const values = points.map((point) => point.rating);
+  const min = Math.min(...values) - 0.25;
+  const max = Math.max(...values) + 0.25;
+  const xFor = (index) => padding + (points.length === 1 ? (width - padding * 2) / 2 : index / (points.length - 1) * (width - padding * 2));
+  const yFor = (value) => padding + (1 - (value - min) / (max - min || 1)) * (height - padding * 2);
+  const path = points.map((point, index) => `${index ? "L" : "M"}${xFor(index).toFixed(1)} ${yFor(point.rating).toFixed(1)}`).join(" ");
+  const area = `${path} L${xFor(points.length - 1).toFixed(1)} ${height - padding} L${xFor(0).toFixed(1)} ${height - padding} Z`;
+  const latest = points.at(-1);
+  return `
+    <svg class="player-profile-trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="个人评分走势">
+      <path class="player-profile-trend-area" d="${area}" />
+      <path class="player-profile-trend-line" d="${path}" />
+      <circle cx="${xFor(points.length - 1).toFixed(1)}" cy="${yFor(latest.rating).toFixed(1)}" r="3.5" />
+    </svg>
+    <div class="player-profile-trend-range"><span>${formatShortRatingDate(points[0].date)}</span><strong>${formatRating(latest.rating)}</strong><span>${formatShortRatingDate(latest.date)}</span></div>
+  `;
+}
+
+function renderPlayerProfileHeroPool(heroes = []) {
+  if (!heroes.length) {
+    return `<div class="player-profile-analysis-empty"><span>NO HERO DATA</span><p>该位置暂无英雄使用记录</p></div>`;
+  }
+  return `
+    <div class="player-profile-hero-pool">
+      ${heroes.map((hero) => {
+        const losses = Math.max(0, hero.count - hero.wins);
+        const winrate = hero.count ? Math.round(hero.wins / hero.count * 100) : 0;
+        return `
+          <button class="player-profile-hero-pool-item ${selectedPlayerProfileHeroKey === hero.key ? "is-active" : ""}" data-player-profile-hero="${escapeHtml(hero.key)}" type="button">
+            ${renderHeroUsageAvatar(hero.name)}
+            <span><strong>${escapeHtml(hero.name)}</strong><small>${hero.wins}-${losses} · ${winrate}%</small></span>
+            <b>${hero.count}<small>场</small></b>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderPlayerProfileIntro(player, stats, recentForm, rank) {
+  return `
+    <nav class="player-profile-location" aria-label="选手档案位置">
+      <button type="button" data-player-profile-back>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
+        <span>返回选手目录</span>
+      </button>
+      <small>PLAYER ARCHIVE / ${escapeHtml(player.name)}</small>
+    </nav>
+
+    <header class="player-profile-hero-header">
+      <div class="player-profile-hero-copy">
+        <span>SEASON PLAYER PROFILE</span>
+        <h3>${escapeHtml(player.name)}</h3>
+        <p>${player.note ? escapeHtml(player.note) : `S3 赛季选手档案 · 当前排名 #${rank || "-"}`}</p>
+      </div>
+      <div class="player-profile-rating-lockup"><small>RATING</small><strong>${formatRating(player.rating)}</strong><span>全员排名 #${rank || "-"}</span></div>
+      <dl class="player-profile-overview-strip">
+        <div><dt>比赛</dt><dd>${stats.games}</dd></div>
+        <div><dt>胜负</dt><dd>${stats.wins}-${stats.losses}</dd></div>
+        <div><dt>胜率</dt><dd>${stats.winrate}%</dd></div>
+        <div><dt>净胜</dt><dd>${stats.netWins > 0 ? "+" : ""}${stats.netWins}</dd></div>
+        <div><dt>主位置</dt><dd>${stats.positionStats.main === "-" ? "-" : getPlayerProfilePositionLabel(stats.positionStats.main)}</dd></div>
+      </dl>
+    </header>
+
+    <section class="player-profile-summary-grid">
+      <article class="player-profile-module player-profile-form-module">
+        <div class="player-profile-module-heading"><div><span>RECENT FORM</span><h4>近期状态</h4></div><small>最近 ${recentForm.length} 场</small></div>
+        <div class="player-profile-form-sequence">
+          ${recentForm.length ? recentForm.map(({ match, isWin }) => `<button type="button" class="${isWin ? "is-win" : "is-loss"}" data-open-match="${escapeHtml(match.id)}" aria-label="查看 ${escapeHtml(formatShortMatchDate(match.date))} 第 ${Number(match.matchNo || 1)} 场">${isWin ? "胜" : "负"}</button>`).join("") : `<span class="muted">暂无比赛</span>`}
+        </div>
+      </article>
+      <article class="player-profile-module player-profile-trend-module">
+        <div class="player-profile-module-heading"><div><span>RATING TREND</span><h4>评分走势</h4></div></div>
+        ${renderPlayerRatingSparkline(player.id)}
+      </article>
+    </section>
+  `;
+}
+
+function getPlayerProfileTransitionMarkup(playerId) {
+  const players = getPlayerProfilePlayers();
+  const player = players.find((item) => item.id === playerId);
+  if (!player) return "";
+  return renderPlayerProfileIntro(
+    player,
+    player.stats || createEmptyPlayerStats(),
+    getPlayerRecentForm(player.id),
+    getPlayerProfileRank(player.id, players)
+  );
+}
+
 function renderPlayerProfile() {
   const list = $("#playerProfileList");
   const detail = $("#playerProfileDetail");
+  const view = $("#playerProfile");
   if (!list || !detail) return;
 
   const players = getPlayerProfilePlayers();
   ensureSelectedPlayerProfileId(players);
   renderPlayerProfileDirectory(players);
 
+  const player = players.find((item) => item.id === selectedPlayerProfileId);
+  if (players.length && !player && new URLSearchParams(window.location.search).has("player")) {
+    updateAppLocation("playerProfile", "", { replace: true });
+  }
+  view?.classList.toggle("has-player-selection", Boolean(player));
+  view?.classList.toggle("is-directory-mode", !player);
+  syncPlayerOrbit(player ? [] : players);
+
   if (!players.length) {
     detail.innerHTML = `<p class="muted">暂无选手</p>`;
     return;
   }
 
-  const player = players.find((item) => item.id === selectedPlayerProfileId) || players[0];
+  if (!player) {
+    detail.innerHTML = `
+      <div class="player-profile-empty-state">
+        <span>PLAYER ARCHIVE</span>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+        <h3>选择一名选手</h3>
+        <p>从选手目录中选择一名选手，查看他的个人档案。</p>
+      </div>
+    `;
+    return;
+  }
+
   const stats = player.stats || createEmptyPlayerStats();
   const filteredStats = getFilteredPlayerProfileStats(player.id);
   const dataStats = filteredStats.dataStats;
   const playerMatches = getPlayerProfileMatches(player.id);
+  const recentForm = getPlayerRecentForm(player.id);
+  const rank = getPlayerProfileRank(player.id, players);
   const visibleMatches = showAllPlayerProfileMatches ? playerMatches : playerMatches.slice(0, 4);
-  const activeHero = Array.from(heroUsageByPlayerId.get(player.id)?.values() || [])
-    .find((hero) => hero.key === selectedPlayerProfileHeroKey);
-  const dataScope = selectedPlayerProfilePosition
+  const scopedHeroes = getPlayerProfileHeroUsage(player.id, selectedPlayerProfilePosition);
+  const activeHero = scopedHeroes.find((hero) => hero.key === selectedPlayerProfileHeroKey);
+  const positionScope = selectedPlayerProfilePosition
     ? getPlayerProfilePositionLabel(selectedPlayerProfilePosition)
-    : selectedPlayerProfileHeroKey ? (activeHero?.name || "所选英雄") : "总体";
+    : "全部位置";
+  const heroScope = selectedPlayerProfileHeroKey ? (activeHero?.name || "所选英雄") : "所有英雄";
+  const dataScope = `${positionScope} · ${heroScope}`;
   const metrics = [
-    { label: "总场次", value: filteredStats.games },
-    { label: "胜", value: filteredStats.wins },
-    { label: "负", value: filteredStats.losses },
     { key: "kills", label: "击杀" },
     { key: "deaths", label: "死亡" },
     { key: "assists", label: "助攻" },
     { key: "gpm", label: "GPM" },
     { key: "xpm", label: "XPM" },
-    { key: "netWorth10", label: "10分钟经济" },
     { key: "damage", label: "伤害量" },
-    { key: "damageShare", label: "伤害占比", type: "percent" },
-    { key: "buildingDamage", label: "建筑伤害" }
   ];
 
   detail.innerHTML = `
-    <div class="player-profile-title">
-      <div>
-        <h3>${escapeHtml(player.name)}</h3>
-        <p>${stats.games ? `${stats.wins}胜 ${stats.losses}负 · ${stats.games}场` : "暂无比赛记录"}</p>
+    ${renderPlayerProfileIntro(player, stats, recentForm, rank)}
+    <section class="player-profile-module player-profile-analysis-module">
+      <div class="player-profile-analysis-heading">
+        <div><span>ROLE · HERO · PERFORMANCE</span><h4>位置与英雄表现</h4><p>选择位置查看对应英雄池；点击英雄可进一步筛选场均数据。</p></div>
+        <div class="player-profile-analysis-scope" aria-live="polite">
+          <small>当前范围</small>
+          <strong>${escapeHtml(dataScope)}</strong>
+          <span>${filteredStats.games} 场 · ${filteredStats.wins}-${filteredStats.losses} · ${filteredStats.games ? Math.round(filteredStats.wins / filteredStats.games * 100) : 0}%</span>
+        </div>
       </div>
-      <span>评分 ${formatRating(player.rating)}</span>
-    </div>
 
-    <section class="player-profile-section">
-      ${renderPlayerProfilePositions(stats.positionStats)}
-    </section>
-
-    <section class="player-profile-section">
-      ${renderPlayerProfileHeroes(player.id)}
-    </section>
-
-    <section class="player-profile-section">
-      <div class="player-profile-section-header">
-        <h4>场均数据</h4>
-        <small>${escapeHtml(dataScope)}</small>
+      <div class="player-profile-analysis-positions">
+        ${renderPlayerProfilePositions(stats.positionStats, stats)}
       </div>
-      <div class="player-profile-stats">
-        ${metrics.map((metric) => `
-          <div class="player-profile-stat">
-            <span>${metric.label}</span>
-            <strong>${metric.key ? formatAverage(dataStats[metric.key], metric.type) : metric.value}</strong>
+
+      <div class="player-profile-analysis-content">
+        <section class="player-profile-analysis-heroes">
+          <div class="player-profile-analysis-subheading">
+            <div><span>HERO POOL</span><h5>${escapeHtml(positionScope)}英雄池</h5></div>
+            <small>${scopedHeroes.length} 位英雄</small>
           </div>
-        `).join("")}
+          ${renderPlayerProfileHeroPool(scopedHeroes)}
+        </section>
+
+        <section class="player-profile-analysis-performance">
+          <div class="player-profile-analysis-subheading">
+            <div><span>PERFORMANCE</span><h5>核心场均数据</h5></div>
+            ${selectedPlayerProfileHeroKey ? `<button type="button" data-player-profile-clear-hero>清除英雄筛选</button>` : `<small>基于当前范围</small>`}
+          </div>
+          <div class="player-profile-stats">
+            ${metrics.map((metric) => `
+              <div class="player-profile-stat">
+                <span>${metric.label}</span>
+                <strong>${metric.key ? formatAverage(dataStats[metric.key], metric.type) : metric.value}</strong>
+              </div>
+            `).join("")}
+          </div>
+        </section>
       </div>
     </section>
 
-    <section class="player-profile-section">
-      <div class="player-profile-section-header">
-        <h4>比赛</h4>
+    <section class="player-profile-module">
+      <div class="player-profile-module-heading">
+        <div><span>MATCH LOG</span><h4>最近比赛</h4></div>
         <button class="secondary-button compact-button ${playerMatches.length <= 4 ? "is-hidden" : ""}" id="togglePlayerProfileMatches" type="button">
           ${showAllPlayerProfileMatches ? "收起比赛" : "显示全部"}
         </button>
@@ -1531,15 +1819,24 @@ function renderPlayerProfile() {
   renderMatchCards($("#playerProfileMatches"), visibleMatches);
 }
 
-function renderPlayerProfilePositions(positionStats = createEmptyPositionStats()) {
+function renderPlayerProfilePositions(positionStats = createEmptyPositionStats(), playerStats = createEmptyPlayerStats()) {
+  const allActive = !selectedPlayerProfilePosition;
   return `
     <div class="player-profile-positions">
+      <button class="player-profile-position player-profile-position-all ${allActive ? "is-active" : ""}" data-player-profile-position="" type="button" aria-pressed="${allActive}">
+        <span>ALL ROLES</span>
+        <strong>全部位置</strong>
+        <small>${playerStats.games} 场 · ${playerStats.wins}-${playerStats.losses}</small>
+      </button>
       ${POSITIONS.map((position) => {
         const record = positionStats.records?.[position] || { wins: 0, losses: 0 };
+        const count = Number(positionStats.counts?.[position] || 0);
+        const active = selectedPlayerProfilePosition === position;
         return `
-          <button class="player-profile-position ${selectedPlayerProfilePosition === position ? "is-active" : ""}" data-player-profile-position="${position}" type="button">
+          <button class="player-profile-position ${active ? "is-active" : ""}" data-player-profile-position="${position}" type="button" aria-pressed="${active}">
+            <span>POSITION ${position}</span>
             <strong>${getPlayerProfilePositionLabel(position)}</strong>
-            <small>${record.wins}-${record.losses}</small>
+            <small>${count} 场 · ${record.wins}-${record.losses}</small>
           </button>
         `;
       }).join("")}
@@ -4514,7 +4811,28 @@ function bindEvents() {
   });
 
   $$(".nav-tab").forEach((button) => {
-    button.addEventListener("click", () => switchView(button.dataset.view || button.dataset.navDefault));
+    button.addEventListener("click", () => {
+      const targetView = button.dataset.view || button.dataset.navDefault;
+      if (!targetView) return;
+      if (targetView === "playerProfile") {
+        selectedPlayerProfileId = "";
+        selectedPlayerProfilePosition = "";
+        selectedPlayerProfileHeroKey = "";
+        showAllPlayerProfileMatches = false;
+      }
+      updateAppLocation(targetView, targetView === "playerProfile" ? selectedPlayerProfileId : "");
+      switchView(targetView);
+    });
+  });
+
+  window.addEventListener("popstate", () => {
+    const params = new URLSearchParams(window.location.search);
+    const targetView = params.get("view") || "dashboard";
+    selectedPlayerProfileId = targetView === "playerProfile" ? (params.get("player") || "") : "";
+    selectedPlayerProfilePosition = "";
+    selectedPlayerProfileHeroKey = "";
+    showAllPlayerProfileMatches = false;
+    switchView(targetView);
   });
 
   initializeNavSubmenus();
@@ -4557,19 +4875,42 @@ function bindEvents() {
   });
 
   const playerProfileSearchInput = $("#playerProfileSearchInput");
+  playerProfileSearchInput?.addEventListener("focus", () => {
+    playerProfileSearchFocused = true;
+    renderPlayerProfileDirectory();
+  });
+  playerProfileSearchInput?.addEventListener("blur", () => {
+    window.setTimeout(() => {
+      const suggestions = $("#playerProfileSearchSuggestions");
+      if (document.activeElement === playerProfileSearchInput || suggestions?.contains(document.activeElement)) return;
+      playerProfileSearchFocused = false;
+      renderPlayerProfileDirectory();
+    }, 0);
+  });
+  document.addEventListener("pointerdown", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!playerProfileSearchFocused
+      || target?.closest(".player-directory-search")
+      || target?.closest("#playerProfileSearchSuggestions")) return;
+    playerProfileSearchFocused = false;
+    playerProfileSearchInput?.blur();
+    renderPlayerProfileDirectory();
+  });
   playerProfileSearchInput?.addEventListener("input", () => {
-    const hadQuery = Boolean(playerProfileSearchQuery.trim());
     playerProfileSearchQuery = playerProfileSearchInput.value;
     renderPlayerProfileDirectory();
-    if (hadQuery && !playerProfileSearchQuery.trim()) scrollPlayerProfileSelectionIntoView();
   });
   playerProfileSearchInput?.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || !playerProfileSearchQuery) return;
-    event.preventDefault();
-    playerProfileSearchQuery = "";
-    playerProfileSearchInput.value = "";
-    renderPlayerProfileDirectory();
-    scrollPlayerProfileSelectionIntoView();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      return;
+    }
+    if (event.key === "Escape" && playerProfileSearchQuery) {
+      event.preventDefault();
+      playerProfileSearchQuery = "";
+      playerProfileSearchInput.value = "";
+      renderPlayerProfileDirectory();
+    }
   });
   $("#clearPlayerProfileSearch")?.addEventListener("click", () => {
     playerProfileSearchQuery = "";
@@ -4580,13 +4921,26 @@ function bindEvents() {
   });
 
   $("#playerProfile")?.addEventListener("click", (event) => {
-    const playerButton = event.target.closest("[data-player-profile-id]");
-    if (playerButton) {
-      selectedPlayerProfileId = playerButton.dataset.playerProfileId;
+    const backButton = event.target.closest("[data-player-profile-back]");
+    if (backButton) {
+      selectedPlayerProfileId = "";
+      playerProfileSearchQuery = "";
+      playerProfileSearchFocused = false;
+      if (playerProfileSearchInput) playerProfileSearchInput.value = "";
+      const allPlayers = $("#playerProfileAll");
+      if (allPlayers) allPlayers.open = false;
       selectedPlayerProfilePosition = "";
       selectedPlayerProfileHeroKey = "";
       showAllPlayerProfileMatches = false;
+      updateAppLocation("playerProfile");
       renderPlayerProfile();
+      scrollPlayerProfileToTop();
+      return;
+    }
+
+    const playerButton = event.target.closest("[data-player-profile-id]");
+    if (playerButton) {
+      openPlayerProfileById(playerButton.dataset.playerProfileId);
       return;
     }
 
@@ -4611,11 +4965,16 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest("[data-player-profile-clear-hero]")) {
+      selectedPlayerProfileHeroKey = "";
+      renderPlayerProfile();
+      return;
+    }
+
     const heroButton = event.target.closest("[data-player-profile-hero]");
     if (!heroButton) return;
     const heroKey = heroButton.dataset.playerProfileHero;
     selectedPlayerProfileHeroKey = selectedPlayerProfileHeroKey === heroKey ? "" : heroKey;
-    selectedPlayerProfilePosition = "";
     renderPlayerProfile();
   });
   $("#playerProfile")?.addEventListener("keydown", handleMatchCardKeydown);
@@ -5639,7 +5998,7 @@ function initializeDashboardScrollSequence() {
     body.classList.toggle("dashboard-view-active", isDashboardActive);
 
     if (!isDashboardActive) {
-      body.classList.remove("dashboard-grid-visible", "dashboard-ranks-visible");
+      body.classList.remove("dashboard-grid-visible", "dashboard-ranks-visible", "dashboard-roster-visible");
       body.style.removeProperty("--dashboard-grid-opacity");
       return;
     }
@@ -5652,10 +6011,14 @@ function initializeDashboardScrollSequence() {
     const gridProgress = clamp((gridFadeStart - heroBottom) / gridFadeDistance, 0, 1);
     const gridOpacity = reducedMotion.matches ? (gridProgress > 0 ? 0.96 : 0) : gridProgress * 0.96;
     const ranksRevealLine = Math.max(navigationBottom + 4, 64);
+    const rosterRevealDistance = Math.min(220, Math.max(150, viewportHeight * 0.22));
+    const ranksVisible = heroBottom <= ranksRevealLine;
+    const rosterVisible = ranksVisible && heroBottom <= ranksRevealLine - rosterRevealDistance;
 
     body.style.setProperty("--dashboard-grid-opacity", gridOpacity.toFixed(3));
     body.classList.toggle("dashboard-grid-visible", gridProgress > 0.12);
-    body.classList.toggle("dashboard-ranks-visible", heroBottom <= ranksRevealLine);
+    body.classList.toggle("dashboard-ranks-visible", ranksVisible);
+    body.classList.toggle("dashboard-roster-visible", rosterVisible);
   };
 
   const requestRender = () => {
@@ -5677,6 +6040,7 @@ applySeasonUi();
 bindEvents();
 initializeCardInteractions();
 initializePageFieldInteractions();
+switchView(REQUESTED_PLAYER_ID ? "playerProfile" : (REQUESTED_VIEW || sessionStorage.getItem(ACTIVE_VIEW_KEY) || "dashboard"));
 // The legacy splash/video and clock code is intentionally retained but no longer initialized.
 initializeDashboardScrollSequence();
 Promise.allSettled([restoreAdminSession(), ensureStateLoaded()]).then((results) => {

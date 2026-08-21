@@ -1543,7 +1543,9 @@ async function serveStatic(request, response, pathname) {
 
   const type = contentType(filePath);
   const stat = statSync(filePath);
-  const cacheControl = requested.startsWith("/assets/") ? "public, max-age=3600" : "no-store";
+  const cacheControl = requested.startsWith("/node_modules/three/")
+    ? "public, max-age=86400, immutable"
+    : requested.startsWith("/assets/") ? "public, max-age=3600" : "no-store";
   const range = request.headers.range;
 
   if (range) {

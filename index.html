@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>S3 赛季数据中心</title>
     <link rel="stylesheet" href="./styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./node_modules/three/build/three.module.min.js"
+        }
+      }
+    </script>
   </head>
   <body class="has-entered" data-season="s3" data-ui="modern">
     <canvas class="page-field-canvas" id="pageFieldCanvas" aria-hidden="true"></canvas>
@@ -24,12 +31,12 @@
           </button>
           <button class="nav-tab" data-nav-default="playerProfile" type="button">
             <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
-            <span>选手</span>
+            <span>选手星球</span>
           </button>
           <div class="nav-sub-group" data-nav-group="playerProfile">
             <button class="nav-tab nav-sub-tab" data-view="playerProfile" type="button">
               <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
-              <span>选手</span>
+              <span>选手档案</span>
             </button>
             <button class="nav-tab nav-sub-tab" data-view="relations" type="button">
               <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4 20a5 5 0 0 1 10 0" /><path d="M17 12a2.5 2.5 0 1 0 0-5" /><path d="M15.5 15.5A4.5 4.5 0 0 1 21 20" /></svg>
@@ -201,31 +208,37 @@
         </section>
 
         <section class="view" id="playerProfile">
-          <div class="page-heading">
-            <div>
-              <h2>选手</h2>
-              <p>按评分浏览选手，并查看个人英雄池和场均表现。</p>
-            </div>
-          </div>
-
           <section class="player-profile-layout">
-            <aside class="panel player-profile-sidebar" aria-label="选手列表">
+            <aside class="panel player-profile-sidebar" aria-label="选手目录">
               <div class="player-directory-header">
                 <div>
                   <span>PLAYER DIRECTORY</span>
-                  <h3>选手列表</h3>
+                  <h3>选手目录</h3>
                 </div>
                 <strong id="playerProfileDirectoryTotal">0</strong>
               </div>
               <label class="player-directory-search" for="playerProfileSearchInput">
                 <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
-                <input id="playerProfileSearchInput" type="search" placeholder="搜索选手或 Steam ID" aria-label="搜索选手或 Steam ID" autocomplete="off" />
+                <input id="playerProfileSearchInput" type="search" placeholder="输入选手名，选择联想结果" aria-label="输入选手名或 Steam ID" autocomplete="off" aria-autocomplete="list" aria-controls="playerProfileSearchSuggestions" aria-expanded="false" />
                 <button id="clearPlayerProfileSearch" type="button" aria-label="清除选手搜索" hidden>
                   <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" /></svg>
                 </button>
               </label>
+              <div class="player-directory-suggestions" id="playerProfileSearchSuggestions" role="listbox" aria-label="选手联想结果" hidden></div>
               <div class="player-directory-status" id="playerProfileSearchStatus" aria-live="polite">--</div>
-              <div id="playerProfileList" class="player-profile-list"></div>
+              <div class="player-orbit-stage" id="playerOrbitStage" aria-label="可旋转的选手星球">
+                <div class="player-orbit-loading">
+                  <span></span>
+                  <small>正在建立选手轨道</small>
+                </div>
+              </div>
+              <details class="player-directory-all" id="playerProfileAll">
+                <summary>
+                  <span>显示全部选手</span>
+                  <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" /></svg>
+                </summary>
+                <div id="playerProfileList" class="player-profile-list"></div>
+              </details>
             </aside>
             <section class="panel player-profile-detail" id="playerProfileDetail"></section>
           </section>

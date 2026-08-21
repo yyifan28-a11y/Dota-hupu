@@ -8,6 +8,7 @@
     "seed:demo": "node scripts/seed-demo.js"
   },
   "dependencies": {
+    "three": "^0.185.1",
     "xlsx": "^0.18.5"
   },
   "engines": {
