@@ -457,7 +457,7 @@
           </section>
         </section>
 
-          <form class="match-form admin-only" id="matchForm">
+          <form class="match-form admin-only is-hidden" id="matchForm">
             <h3 class="form-section-title">基本信息</h3>
             <div class="form-grid">
               <label>
@@ -536,6 +536,22 @@
               <button class="secondary-button" id="adminLogout" type="button">退出管理员模式</button>
             </div>
 
+            <details class="panel collapsible-panel admin-only" id="adminExcelImportPanel">
+              <summary class="collapsible-summary">
+                <span>数据导入</span>
+              </summary>
+              <div class="backup-panel-body">
+                <p>请导入 S3 内战数据表.xlsx</p>
+                <div class="button-row">
+                  <label class="secondary-button file-button admin-only">
+                    导入 Excel
+                    <input id="importExcelData" type="file" accept=".xlsx,.xls" />
+                  </label>
+                </div>
+                <div id="excelImportPreview" class="excel-import-preview"></div>
+              </div>
+            </details>
+
             <details class="panel collapsible-panel admin-only" id="adminPlayersPanel">
               <summary class="collapsible-summary">
                 <span>选手管理</span>
@@ -571,9 +587,27 @@
               </div>
             </details>
 
-            <details class="panel collapsible-panel admin-only" id="adminPlayoffPanel">
+            <details class="panel collapsible-panel admin-only" id="adminMatchHistoryPanel">
+              <summary class="collapsible-summary">
+                <span>历史管理</span>
+              </summary>
+              <div class="admin-history-panel-body">
+                <div class="admin-history-toolbar">
+                  <div>
+                    <strong>比赛记录</strong>
+                    <span>查看、编辑或补录历史比赛。</span>
+                  </div>
+                  <button class="primary-button" id="openManualMatchEntry" type="button">手动录入一场比赛</button>
+                </div>
+                <div id="adminMatchesList" class="admin-match-list"></div>
+                <div id="adminMatchFormMount"></div>
+              </div>
+            </details>
+
+            <details class="panel collapsible-panel admin-only admin-panel-disabled" id="adminPlayoffPanel" aria-disabled="true" inert>
               <summary class="collapsible-summary">
                 <span>季后赛管理</span>
+                <small class="admin-panel-disabled-badge">暂未启用</small>
               </summary>
               <div class="playoff-admin">
                 <p>从现有选手库中选择 A、B、C、D 四支队伍的出场人员。</p>
@@ -581,25 +615,10 @@
               </div>
             </details>
 
-            <details class="panel collapsible-panel admin-only" id="adminExcelImportPanel">
-              <summary class="collapsible-summary">
-                <span>数据导入</span>
-              </summary>
-              <div class="backup-panel-body">
-                <p>请导入 S3 内战数据表.xlsx</p>
-                <div class="button-row">
-                  <label class="secondary-button file-button admin-only">
-                    导入 Excel
-                    <input id="importExcelData" type="file" accept=".xlsx,.xls" />
-                  </label>
-                </div>
-                <div id="excelImportPreview" class="excel-import-preview"></div>
-              </div>
-            </details>
-
-            <details class="panel collapsible-panel admin-only" id="adminRatingHistoryPanel">
+            <details class="panel collapsible-panel admin-only admin-panel-disabled" id="adminRatingHistoryPanel" aria-disabled="true" inert>
               <summary class="collapsible-summary">
                 <span>历史评分导入</span>
+                <small class="admin-panel-disabled-badge">暂未启用</small>
               </summary>
               <div class="backup-panel-body">
                 <p>一次性导入历史评分表。导入前会先匹配现有选手，未匹配选手不会写入数据库。</p>
@@ -611,20 +630,6 @@
                 </div>
                 <div id="ratingHistoryImportPreview" class="excel-import-preview"></div>
               </div>
-            </details>
-
-            <details class="panel collapsible-panel admin-only" id="adminMatchHistoryPanel">
-              <summary class="collapsible-summary">
-                <span>历史管理</span>
-              </summary>
-              <div id="adminMatchesList" class="admin-match-list"></div>
-            </details>
-
-            <details class="panel collapsible-panel admin-only" id="adminMatchEntryPanel">
-              <summary class="collapsible-summary">
-                <span>手动录入</span>
-              </summary>
-              <div id="adminMatchFormMount"></div>
             </details>
 
             <details class="panel collapsible-panel admin-only" id="adminBackupPanel">

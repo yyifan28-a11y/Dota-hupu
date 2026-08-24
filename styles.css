@@ -11471,3 +11471,547 @@ body[data-ui="modern"] .player-profile-analysis-empty p {
     position: static;
   }
 }
+
+/* Player profile cosmic layer: quiet orbital details that preserve data contrast. */
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-hero-header,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-hero-header {
+  isolation: isolate;
+  border-color: rgba(142, 211, 229, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(224, 250, 253, 0.05),
+    inset 0 -48px 96px rgba(7, 21, 49, 0.12),
+    0 22px 54px rgba(0, 0, 0, 0.18);
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-hero-header::before,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-hero-header::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(2, 15, 20, 0.2) 0%, rgba(2, 15, 20, 0.32) 48%, rgba(1, 12, 17, 0.68) 100%),
+    radial-gradient(circle at 18% 18%, rgba(67, 84, 188, 0.18), transparent 34%),
+    radial-gradient(circle at 70% 36%, rgba(39, 154, 201, 0.11), transparent 30%),
+    linear-gradient(90deg, rgba(2, 17, 22, 0.72) 0%, rgba(2, 17, 22, 0.48) 42%, rgba(3, 16, 31, 0.1) 100%),
+    url("./fengmian/player-directory-deep-space-v1.webp") center 43% / cover no-repeat;
+  opacity: 1;
+  filter: saturate(1.22) brightness(1.08);
+  pointer-events: none;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-hero-header::after,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-hero-header::after {
+  content: none;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-hero-header > *,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-hero-header > * {
+  position: relative;
+  z-index: 2;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-hero-copy > span,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-hero-copy > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-hero-copy > span::after,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-hero-copy > span::after {
+  content: none;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-rating-lockup,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-rating-lockup {
+  isolation: isolate;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-rating-lockup::after,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-rating-lockup::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 10px;
+  right: 16px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #a7edf5;
+  box-shadow:
+    -46px 14px 0 rgba(120, 208, 234, 0.42),
+    20px 37px 0 rgba(164, 135, 244, 0.32),
+    -18px 72px 0 rgba(116, 220, 233, 0.28),
+    0 0 12px 3px rgba(112, 218, 234, 0.18);
+  pointer-events: none;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-rating-lockup strong,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-rating-lockup strong {
+  text-shadow:
+    0 0 18px rgba(84, 209, 226, 0.2),
+    0 0 46px rgba(90, 106, 222, 0.12);
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-location small::before,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-location small::before {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin: 0 8px 1px 0;
+  border-radius: 50%;
+  background: #73d8e6;
+  box-shadow: 0 0 8px rgba(94, 210, 226, 0.62);
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-module-heading,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-module-heading {
+  position: relative;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-module-heading::after,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-module-heading::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 76px;
+  height: 1px;
+  background: linear-gradient(90deg, #61d4e4, rgba(97, 212, 228, 0));
+  box-shadow: 72px 0 7px rgba(96, 211, 227, 0.22);
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-analysis-module {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-analysis-module::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  top: -178px;
+  right: -96px;
+  width: 310px;
+  height: 310px;
+  border: 1px solid rgba(104, 207, 225, 0.08);
+  border-radius: 50%;
+  box-shadow: 0 0 0 34px rgba(116, 102, 219, 0.018), 0 0 0 68px rgba(95, 211, 229, 0.016);
+  pointer-events: none;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-analysis-module > * {
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 760px) {
+  body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-hero-header::before,
+  body[data-ui="modern"] .player-profile-morph-page .player-profile-hero-header::before {
+    background-position: 62% 43%;
+  }
+
+  body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-hero-header::after,
+  body[data-ui="modern"] .player-profile-morph-page .player-profile-hero-header::after {
+    top: -138px;
+    right: -154px;
+    width: 300px;
+    height: 300px;
+  }
+}
+
+/* The profile detail is only a layout rail; its child sections are the cards. */
+body[data-ui="modern"] #playerProfile.view.has-player-selection .player-profile-layout .panel.player-profile-detail {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+body[data-ui="modern"] #playerProfile.view.has-player-selection .player-profile-layout .panel.player-profile-detail::before,
+body[data-ui="modern"] #playerProfile.view.has-player-selection .player-profile-layout .panel.player-profile-detail::after {
+  content: none;
+  display: none;
+}
+
+/* Each data section stays legible as its own card above the page grid. */
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-module,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-module {
+  border-color: rgba(174, 225, 232, 0.12);
+  border-radius: 6px;
+  background:
+    linear-gradient(135deg, rgba(213, 247, 251, 0.032), transparent 34%),
+    rgba(3, 20, 25, 0.78);
+  box-shadow:
+    inset 0 1px 0 rgba(224, 250, 253, 0.04),
+    0 18px 42px rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(18px) saturate(1.1);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-module {
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 220ms ease;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-analysis-module::before {
+  content: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-module:hover {
+    z-index: 2;
+    border-color: rgba(105, 215, 230, 0.24);
+    background:
+      linear-gradient(135deg, rgba(213, 247, 251, 0.05), transparent 34%),
+      rgba(5, 26, 32, 0.84);
+    box-shadow:
+      inset 0 1px 0 rgba(218, 248, 251, 0.07),
+      0 18px 38px rgba(0, 0, 0, 0.17),
+      0 0 28px rgba(75, 195, 215, 0.065);
+    transform: translateY(-2px) scale(1.002);
+  }
+
+  body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-module:hover :is(
+    .player-profile-form-sequence button,
+    .player-profile-position,
+    .player-profile-hero-pool-item,
+    .player-profile-stat,
+    .match-card
+  ) {
+    border-color: rgba(102, 211, 226, 0.18);
+  }
+
+  body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-trend-module:hover .player-profile-trend-svg {
+    filter: drop-shadow(0 0 7px rgba(88, 213, 229, 0.13));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-module {
+    transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+  }
+
+  body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-module:hover {
+    transform: none;
+  }
+}
+
+/* Player profile interaction hierarchy: cyan for state, leaderboard gold for hover only. */
+body[data-ui="modern"] #playerProfile.has-player-selection {
+  --player-profile-selection: #f1bd55;
+  --player-profile-selection-rgb: 241, 189, 85;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-hero-header {
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 180ms ease,
+    box-shadow 220ms ease,
+    filter 220ms ease;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-module,
+body[data-ui="modern"] .player-profile-morph-page .player-profile-module {
+  background:
+    linear-gradient(135deg, rgba(213, 247, 251, 0.032), transparent 34%),
+    rgba(3, 20, 25, 0.64);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-hero-header:hover {
+    z-index: 2;
+    border-color: rgba(105, 215, 230, 0.26);
+    box-shadow:
+      inset 0 1px 0 rgba(224, 250, 253, 0.08),
+      inset 0 -48px 96px rgba(7, 21, 49, 0.14),
+      0 22px 48px rgba(0, 0, 0, 0.22),
+      0 0 30px rgba(75, 195, 215, 0.07);
+    filter: brightness(1.035);
+    transform: translateY(-2px) scale(1.002);
+  }
+
+  body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-module:hover {
+    background:
+      linear-gradient(135deg, rgba(213, 247, 251, 0.05), transparent 34%),
+      rgba(5, 26, 32, 0.73);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-hero-header {
+    transition: border-color 180ms ease, box-shadow 180ms ease, filter 180ms ease;
+  }
+
+  body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-hero-header:hover {
+    transform: none;
+  }
+}
+
+/* Recent match entries follow the same translucent, responsive card language. */
+body[data-ui="modern"] #playerProfile.has-player-selection #playerProfileMatches .match-card-button {
+  border: 1px solid rgba(174, 225, 232, 0.09);
+  border-radius: 4px;
+  background:
+    linear-gradient(135deg, rgba(213, 247, 251, 0.018), transparent 42%),
+    rgba(2, 15, 19, 0.25);
+  box-shadow: inset 0 1px 0 rgba(224, 250, 253, 0.025);
+  cursor: pointer;
+  transition:
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 200ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  body[data-ui="modern"] #playerProfile.has-player-selection #playerProfileMatches .match-card-button:hover,
+  body[data-ui="modern"] #playerProfile.has-player-selection #playerProfileMatches .match-card-button:focus-visible {
+    border-color: rgba(105, 215, 230, 0.24);
+    background:
+      linear-gradient(135deg, rgba(213, 247, 251, 0.035), transparent 42%),
+      rgba(7, 32, 38, 0.42);
+    box-shadow:
+      inset 2px 0 0 rgba(84, 210, 226, 0.52),
+      inset 0 1px 0 rgba(224, 250, 253, 0.05),
+      0 12px 26px rgba(0, 0, 0, 0.13);
+    outline: none;
+    transform: translateY(-2px);
+  }
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection #playerProfileMatches .match-card-button:focus-visible {
+  outline: 1px solid rgba(105, 215, 230, 0.46);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-ui="modern"] #playerProfile.has-player-selection #playerProfileMatches .match-card-button {
+    transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+  }
+
+  body[data-ui="modern"] #playerProfile.has-player-selection #playerProfileMatches .match-card-button:hover,
+  body[data-ui="modern"] #playerProfile.has-player-selection #playerProfileMatches .match-card-button:focus-visible {
+    transform: none;
+  }
+}
+
+/* Gold is reserved for the transient match-row hover indicator. */
+@media (hover: hover) and (pointer: fine) {
+  body[data-ui="modern"] #playerProfile.has-player-selection #playerProfileMatches .match-card-button:hover {
+    box-shadow:
+      inset 2px 0 0 rgba(var(--player-profile-selection-rgb), 0.72),
+      inset 0 1px 0 rgba(224, 250, 253, 0.05),
+      0 12px 26px rgba(0, 0, 0, 0.13);
+  }
+}
+
+/* Selected filters use a persistent gold rail; hover adds no rail. */
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-analysis-scope strong {
+  color: #7de0ec;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-analysis-positions .player-profile-position::after {
+  top: 14px;
+  right: auto;
+  bottom: 14px;
+  left: 0;
+  width: 2px;
+  height: auto;
+  transform: scaleY(0.4);
+  transform-origin: center;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-analysis-positions .player-profile-position.is-active::after {
+  background: var(--player-profile-selection);
+  box-shadow: 0 0 12px rgba(var(--player-profile-selection-rgb), 0.24);
+  transform: scaleY(1);
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-analysis-module .player-profile-hero-pool-item.is-active {
+  border-color: rgba(var(--player-profile-selection-rgb), 0.28);
+  box-shadow:
+    inset 2px 0 0 rgba(var(--player-profile-selection-rgb), 0.72),
+    0 0 18px rgba(var(--player-profile-selection-rgb), 0.05);
+}
+
+/* The personal match log uses the dashboard calendar language, scoped to this player. */
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar-module .player-profile-module-heading {
+  margin-bottom: 0;
+  padding-inline: 4px;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar-module .player-profile-match-calendar-id {
+  max-width: min(42vw, 320px);
+  min-height: auto;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  color: #55cada;
+  font-family: "Fira Code", "Cascadia Code", Consolas, monospace;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar {
+  gap: 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(128, 205, 215, 0.065);
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar .match-calendar-days {
+  gap: 0;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar :is(.match-calendar-arrow, .match-calendar-day) {
+  border: 0;
+  border-left: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar .match-calendar-arrow:first-child {
+  border-left: 0;
+  border-right: 1px solid transparent;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar .match-calendar-arrow:not(:disabled):hover,
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar .match-calendar-arrow:not(:disabled):focus-visible,
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar .match-calendar-day:hover,
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar .match-calendar-day:focus-visible {
+  border-color: transparent;
+  background: rgba(64, 177, 194, 0.065);
+  color: #ecfafc;
+  box-shadow: none;
+  outline: none;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar .match-calendar-day.is-active {
+  border-color: transparent;
+  background: linear-gradient(180deg, rgba(58, 181, 199, 0.13), rgba(58, 181, 199, 0.035));
+  box-shadow: inset 0 -2px 0 rgba(83, 215, 232, 0.62);
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar-module .match-calendar-meta {
+  margin-bottom: 0;
+  border-top: 0;
+  border-bottom-color: rgba(128, 205, 215, 0.06);
+  padding-inline: 4px;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar-module #playerProfileMatches {
+  padding-top: 16px;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar-module #playerProfileMatches .match-card-button {
+  animation: match-calendar-card-in 240ms cubic-bezier(0.2, 0.72, 0.2, 1) both;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar-module #playerProfileMatches .match-card-button:nth-child(2) {
+  animation-delay: 35ms;
+}
+
+body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar-module #playerProfileMatches .match-card-button:nth-child(3) {
+  animation-delay: 70ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-match-calendar-module #playerProfileMatches .match-card-button {
+    animation: none;
+  }
+}
+
+/* Admin workflow: history owns manual entry; unavailable modules stay visible but inert. */
+body[data-ui="modern"] #admin .admin-history-panel-body {
+  display: grid;
+  gap: 18px;
+}
+
+body[data-ui="modern"] #admin .admin-history-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid rgba(151, 221, 230, 0.1);
+  padding-bottom: 16px;
+}
+
+body[data-ui="modern"] #admin .admin-history-toolbar > div {
+  display: grid;
+  gap: 3px;
+}
+
+body[data-ui="modern"] #admin .admin-history-toolbar strong {
+  color: #eaf4f5;
+  font-size: 14px;
+}
+
+body[data-ui="modern"] #admin .admin-history-toolbar span {
+  color: #789297;
+  font-size: 11px;
+}
+
+body[data-ui="modern"] #admin #adminMatchFormMount:has(#matchForm:not(.is-hidden)) {
+  border-top: 1px solid rgba(151, 221, 230, 0.1);
+  padding-top: 20px;
+}
+
+body[data-ui="modern"] #admin .admin-panel-disabled {
+  border-color: rgba(145, 159, 162, 0.1);
+  background: rgba(9, 17, 19, 0.5);
+  box-shadow: none;
+  cursor: not-allowed;
+  filter: grayscale(0.7);
+  opacity: 0.48;
+}
+
+body[data-ui="modern"] #admin .admin-panel-disabled .collapsible-summary {
+  color: #849397;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+body[data-ui="modern"] #admin .admin-panel-disabled .collapsible-summary::after {
+  content: "—";
+  color: #69787b;
+  transform: none;
+}
+
+body[data-ui="modern"] #admin .admin-panel-disabled-badge {
+  margin-left: auto;
+  border: 1px solid rgba(151, 164, 167, 0.2);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #91a0a3;
+  font-family: "Fira Code", "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+@media (max-width: 640px) {
+  body[data-ui="modern"] #admin .admin-history-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  body[data-ui="modern"] #admin .admin-history-toolbar .primary-button {
+    width: 100%;
+  }
+}

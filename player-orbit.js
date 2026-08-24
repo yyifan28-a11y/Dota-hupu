@@ -359,13 +359,6 @@ function createProceduralPlanetTexture() {
   return texture;
 }
 
-function createPlanetTexture(renderer) {
-  const texture = new THREE.TextureLoader().load("./fengmian/player-star-surface-v1.webp");
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
-  return texture;
-}
-
 function createStarGlowTexture() {
   const canvas = document.createElement("canvas");
   canvas.width = 128;
@@ -620,18 +613,13 @@ function createOrbitTrack(radius, isCompact, config, isPrimary) {
   return track;
 }
 
-function createLuminousStarMaterial(surfaceTexture) {
+function createLuminousStarMaterial() {
   return new THREE.ShaderMaterial({
-    uniforms: {
-      surfaceMap: { value: surfaceTexture }
-    },
     vertexShader: `
-      varying vec2 vUv;
       varying vec3 vNormalView;
       varying vec3 vViewDirection;
 
       void main() {
-        vUv = uv;
         vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
         vNormalView = normalize(normalMatrix * normal);
         vViewDirection = normalize(-viewPosition.xyz);
@@ -639,8 +627,6 @@ function createLuminousStarMaterial(surfaceTexture) {
       }
     `,
     fragmentShader: `
-      uniform sampler2D surfaceMap;
-      varying vec2 vUv;
       varying vec3 vNormalView;
       varying vec3 vViewDirection;
 
@@ -648,12 +634,7 @@ function createLuminousStarMaterial(surfaceTexture) {
         float facing = clamp(dot(normalize(vNormalView), normalize(vViewDirection)), 0.0, 1.0);
         float softRim = pow(1.0 - facing, 1.7);
         float edgeLine = pow(1.0 - facing, 5.8);
-        vec3 surface = texture2D(surfaceMap, vUv).rgb;
-        float sourceLuminance = dot(surface, vec3(0.2126, 0.7152, 0.0722));
-        vec3 saturatedSurface = max(vec3(0.0), mix(vec3(sourceLuminance), surface, 1.42));
-        vec3 deepSurface = pow(clamp(saturatedSurface, 0.0, 1.0), vec3(1.24));
-        vec3 color = deepSurface * (0.34 + (1.0 - facing) * 0.2);
-        color += vec3(0.003, 0.014, 0.06) * (0.55 + facing * 0.2);
+        vec3 color = vec3(0.003, 0.014, 0.06) * (0.55 + facing * 0.2);
         color += vec3(0.11, 0.47, 0.9) * softRim * 0.94;
         color += vec3(0.62, 0.94, 1.0) * edgeLine * 1.25;
 
@@ -856,7 +837,6 @@ function buildOrbit({ stage, players, onSelect, createPreview }) {
   rimLight.position.set(4.2, -2.4, 2.6);
   scene.add(ambient, keyLight, rimLight);
 
-  const planetTexture = createPlanetTexture(renderer);
   const glowTexture = createStarGlowTexture();
   const starGlow = new THREE.Sprite(new THREE.SpriteMaterial({
     map: glowTexture,
@@ -871,7 +851,7 @@ function buildOrbit({ stage, players, onSelect, createPreview }) {
   system.add(starGlow);
   const planet = new THREE.Mesh(
     new THREE.SphereGeometry(PLANET_RADIUS, isCompact ? 40 : 64, isCompact ? 24 : 36),
-    createLuminousStarMaterial(planetTexture)
+    createLuminousStarMaterial()
   );
   planet.rotation.x = 0.52;
   planet.rotation.z = -0.18;
@@ -914,7 +894,7 @@ function buildOrbit({ stage, players, onSelect, createPreview }) {
   });
 
   const state = {
-    stage, renderer, scene, camera, system, starField, planet, starGlow, planetTexture, glowTexture, rings, labels, isCompact,
+    stage, renderer, scene, camera, system, starField, planet, starGlow, glowTexture, rings, labels, isCompact,
     reducedMotion: reducedMotionQuery.matches,
     reducedMotionQuery,
     onSelect,
@@ -1023,7 +1003,6 @@ export function destroyPlayerOrbit() {
   state.cleanupInteractions?.();
   state.cleanupLifecycle?.();
   disposeObject(state.scene);
-  state.planetTexture?.dispose?.();
   state.glowTexture?.dispose?.();
   state.starField?.userData?.pointTextures?.forEach((texture) => texture.dispose?.());
   state.renderer.dispose();

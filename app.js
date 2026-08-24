@@ -132,7 +132,7 @@ let playerProfileSearchFocused = false;
 let playerOrbitModulePromise = null;
 let selectedPlayerProfilePosition = "";
 let selectedPlayerProfileHeroKey = "";
-let showAllPlayerProfileMatches = false;
+let selectedPlayerProfileMatchDate = "";
 let adminPlayoffDraftTeams = null;
 let adminPlayoffSelectedPlayerId = "";
 let adminPlayoffSelectedTeam = "";
@@ -1357,7 +1357,7 @@ function openPlayerProfileById(playerId, options = {}) {
   selectedPlayerProfileId = playerId;
   selectedPlayerProfilePosition = "";
   selectedPlayerProfileHeroKey = "";
-  showAllPlayerProfileMatches = false;
+  selectedPlayerProfileMatchDate = "";
   updateAppLocation("playerProfile", selectedPlayerProfileId);
   renderPlayerProfile();
   if (options.sharedElement) {
@@ -1503,7 +1503,7 @@ function ensureSelectedPlayerProfileId(players) {
   selectedPlayerProfileId = "";
   selectedPlayerProfilePosition = "";
   selectedPlayerProfileHeroKey = "";
-  showAllPlayerProfileMatches = false;
+  selectedPlayerProfileMatchDate = "";
 }
 
 function getFilteredPlayerProfileStats(playerId) {
@@ -1590,6 +1590,23 @@ function getPlayerProfileMatches(playerId) {
   }));
 }
 
+function getPlayerProfileMatchDates(playerId) {
+  return [...new Set(getPlayerProfileMatches(playerId)
+    .map((match) => String(match.date || ""))
+    .filter(Boolean))]
+    .sort();
+}
+
+function movePlayerProfileMatchDate(offset) {
+  const matchDates = getPlayerProfileMatchDates(selectedPlayerProfileId);
+  if (!matchDates.length) return;
+  const currentIndex = Math.max(0, matchDates.indexOf(selectedPlayerProfileMatchDate));
+  const nextIndex = Math.max(0, Math.min(matchDates.length - 1, currentIndex + offset));
+  if (nextIndex === currentIndex) return;
+  selectedPlayerProfileMatchDate = matchDates[nextIndex];
+  renderPlayerProfile();
+}
+
 function getPlayerProfileRank(playerId, players = getPlayerProfilePlayers()) {
   const index = players.findIndex((player) => player.id === playerId);
   return index >= 0 ? index + 1 : 0;
@@ -1659,14 +1676,13 @@ function renderPlayerProfileIntro(player, stats, recentForm, rank) {
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
         <span>返回选手目录</span>
       </button>
-      <small>PLAYER ARCHIVE / ${escapeHtml(player.name)}</small>
+      <small>PLAYER / ${escapeHtml(player.name)}</small>
     </nav>
 
     <header class="player-profile-hero-header">
       <div class="player-profile-hero-copy">
-        <span>SEASON PLAYER PROFILE</span>
+        <span>PLAYER PROFILE</span>
         <h3>${escapeHtml(player.name)}</h3>
-        <p>${player.note ? escapeHtml(player.note) : `S3 赛季选手档案 · 当前排名 #${rank || "-"}`}</p>
       </div>
       <div class="player-profile-rating-lockup"><small>RATING</small><strong>${formatRating(player.rating)}</strong><span>全员排名 #${rank || "-"}</span></div>
       <dl class="player-profile-overview-strip">
@@ -1746,7 +1762,20 @@ function renderPlayerProfile() {
   const playerMatches = getPlayerProfileMatches(player.id);
   const recentForm = getPlayerRecentForm(player.id);
   const rank = getPlayerProfileRank(player.id, players);
-  const visibleMatches = showAllPlayerProfileMatches ? playerMatches : playerMatches.slice(0, 4);
+  const playerMatchDates = [...new Set(playerMatches.map((match) => String(match.date || "")).filter(Boolean))].sort();
+  if (!playerMatchDates.includes(selectedPlayerProfileMatchDate)) {
+    selectedPlayerProfileMatchDate = playerMatchDates.at(-1) || "";
+  }
+  const selectedMatchDateIndex = playerMatchDates.indexOf(selectedPlayerProfileMatchDate);
+  const visibleDateCount = 7;
+  const dateWindowStart = Math.max(0, Math.min(selectedMatchDateIndex - 3, playerMatchDates.length - visibleDateCount));
+  const visibleMatchDates = playerMatchDates.slice(dateWindowStart, dateWindowStart + visibleDateCount);
+  const playerMatchesByDate = new Map(playerMatchDates.map((date) => [
+    date,
+    playerMatches.filter((match) => String(match.date || "") === date)
+  ]));
+  const selectedDateMatches = playerMatchesByDate.get(selectedPlayerProfileMatchDate) || [];
+  const selectedDateInfo = getDashboardCalendarDateInfo(selectedPlayerProfileMatchDate);
   const scopedHeroes = getPlayerProfileHeroUsage(player.id, selectedPlayerProfilePosition);
   const activeHero = scopedHeroes.find((hero) => hero.key === selectedPlayerProfileHeroKey);
   const positionScope = selectedPlayerProfilePosition
@@ -1754,6 +1783,9 @@ function renderPlayerProfile() {
     : "全部位置";
   const heroScope = selectedPlayerProfileHeroKey ? (activeHero?.name || "所选英雄") : "所有英雄";
   const dataScope = `${positionScope} · ${heroScope}`;
+  const performanceScope = selectedPlayerProfileHeroKey
+    ? (selectedPlayerProfilePosition ? `${heroScope}（${positionScope}）` : heroScope)
+    : positionScope;
   const metrics = [
     { key: "kills", label: "击杀" },
     { key: "deaths", label: "死亡" },
@@ -1767,9 +1799,8 @@ function renderPlayerProfile() {
     ${renderPlayerProfileIntro(player, stats, recentForm, rank)}
     <section class="player-profile-module player-profile-analysis-module">
       <div class="player-profile-analysis-heading">
-        <div><span>ROLE · HERO · PERFORMANCE</span><h4>位置与英雄表现</h4><p>选择位置查看对应英雄池；点击英雄可进一步筛选场均数据。</p></div>
+        <div><span>ROLE · HERO · PERFORMANCE</span><h4>位置与英雄表现</h4></div>
         <div class="player-profile-analysis-scope" aria-live="polite">
-          <small>当前范围</small>
           <strong>${escapeHtml(dataScope)}</strong>
           <span>${filteredStats.games} 场 · ${filteredStats.wins}-${filteredStats.losses} · ${filteredStats.games ? Math.round(filteredStats.wins / filteredStats.games * 100) : 0}%</span>
         </div>
@@ -1783,15 +1814,14 @@ function renderPlayerProfile() {
         <section class="player-profile-analysis-heroes">
           <div class="player-profile-analysis-subheading">
             <div><span>HERO POOL</span><h5>${escapeHtml(positionScope)}英雄池</h5></div>
-            <small>${scopedHeroes.length} 位英雄</small>
           </div>
           ${renderPlayerProfileHeroPool(scopedHeroes)}
         </section>
 
         <section class="player-profile-analysis-performance">
           <div class="player-profile-analysis-subheading">
-            <div><span>PERFORMANCE</span><h5>核心场均数据</h5></div>
-            ${selectedPlayerProfileHeroKey ? `<button type="button" data-player-profile-clear-hero>清除英雄筛选</button>` : `<small>基于当前范围</small>`}
+            <div><span>PERFORMANCE</span><h5>${escapeHtml(performanceScope)}场均数据</h5></div>
+            ${selectedPlayerProfileHeroKey ? `<button type="button" data-player-profile-clear-hero>清除英雄筛选</button>` : ""}
           </div>
           <div class="player-profile-stats">
             ${metrics.map((metric) => `
@@ -1805,18 +1835,47 @@ function renderPlayerProfile() {
       </div>
     </section>
 
-    <section class="player-profile-module">
+    <section class="player-profile-module player-profile-match-calendar-module">
       <div class="player-profile-module-heading">
-        <div><span>MATCH LOG</span><h4>最近比赛</h4></div>
-        <button class="secondary-button compact-button ${playerMatches.length <= 4 ? "is-hidden" : ""}" id="togglePlayerProfileMatches" type="button">
-          ${showAllPlayerProfileMatches ? "收起比赛" : "显示全部"}
+        <div><span>MATCH LOG</span><h4>比赛日历</h4></div>
+        <small class="player-profile-match-calendar-id" title="${escapeHtml(player.name)}">${escapeHtml(player.name)}</small>
+      </div>
+      <div class="match-calendar player-profile-match-calendar" aria-label="${escapeHtml(player.name)}的比赛日期选择器">
+        <button class="match-calendar-arrow" data-player-profile-match-date-step="-1" type="button" aria-label="上一个比赛日" ${selectedMatchDateIndex <= 0 ? "disabled" : ""}>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
         </button>
+        <div class="match-calendar-days" role="list">
+          ${visibleMatchDates.length ? visibleMatchDates.map((date) => {
+            const dateInfo = getDashboardCalendarDateInfo(date);
+            const count = playerMatchesByDate.get(date)?.length || 0;
+            const isSelected = date === selectedPlayerProfileMatchDate;
+            return `
+              <span class="match-calendar-day-slot" role="listitem">
+                <button class="match-calendar-day${isSelected ? " is-active" : ""}" data-player-profile-match-date="${escapeHtml(date)}" type="button" aria-pressed="${isSelected}" aria-label="${escapeHtml(dateInfo.fullLabel)}，${count} 场比赛">
+                  <span>${escapeHtml(dateInfo.weekdayShort)}</span>
+                  <strong>${escapeHtml(dateInfo.day)}</strong>
+                  <small>${count} 场</small>
+                </button>
+              </span>
+            `;
+          }).join("") : `<span class="match-calendar-empty">暂无该选手的比赛日期</span>`}
+        </div>
+        <button class="match-calendar-arrow" data-player-profile-match-date-step="1" type="button" aria-label="下一个比赛日" ${selectedMatchDateIndex < 0 || selectedMatchDateIndex >= playerMatchDates.length - 1 ? "disabled" : ""}>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg>
+        </button>
+      </div>
+      <div class="match-calendar-meta" aria-live="polite">
+        <div>
+          <strong>${escapeHtml(selectedDateInfo.fullLabel)}</strong>
+          <small>${selectedPlayerProfileMatchDate ? `${escapeHtml(selectedDateInfo.weekday)}${selectedMatchDateIndex === playerMatchDates.length - 1 ? " · 最近比赛日" : ""}` : "等待录入该选手的比赛数据"}</small>
+        </div>
+        <span>${selectedDateMatches.length} 场比赛</span>
       </div>
       <div id="playerProfileMatches" class="match-list"></div>
     </section>
   `;
 
-  renderMatchCards($("#playerProfileMatches"), visibleMatches);
+  renderMatchCards($("#playerProfileMatches"), selectedDateMatches);
 }
 
 function renderPlayerProfilePositions(positionStats = createEmptyPositionStats(), playerStats = createEmptyPlayerStats()) {
@@ -4115,13 +4174,11 @@ function resetMatchForm() {
 }
 
 function revealMatchEntryPanel() {
-  const entryPanel = $("#adminMatchEntryPanel");
   const historyPanel = $("#adminMatchHistoryPanel");
-  if (entryPanel) entryPanel.open = true;
-  if (historyPanel) historyPanel.open = false;
+  if (historyPanel) historyPanel.open = true;
 
   requestAnimationFrame(() => {
-    entryPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+    $("#adminMatchFormMount")?.scrollIntoView({ behavior: "smooth", block: "start" });
     $("#matchDate")?.focus({ preventScroll: true });
   });
 }
@@ -4818,7 +4875,7 @@ function bindEvents() {
         selectedPlayerProfileId = "";
         selectedPlayerProfilePosition = "";
         selectedPlayerProfileHeroKey = "";
-        showAllPlayerProfileMatches = false;
+        selectedPlayerProfileMatchDate = "";
       }
       updateAppLocation(targetView, targetView === "playerProfile" ? selectedPlayerProfileId : "");
       switchView(targetView);
@@ -4831,7 +4888,7 @@ function bindEvents() {
     selectedPlayerProfileId = targetView === "playerProfile" ? (params.get("player") || "") : "";
     selectedPlayerProfilePosition = "";
     selectedPlayerProfileHeroKey = "";
-    showAllPlayerProfileMatches = false;
+    selectedPlayerProfileMatchDate = "";
     switchView(targetView);
   });
 
@@ -4931,7 +4988,7 @@ function bindEvents() {
       if (allPlayers) allPlayers.open = false;
       selectedPlayerProfilePosition = "";
       selectedPlayerProfileHeroKey = "";
-      showAllPlayerProfileMatches = false;
+      selectedPlayerProfileMatchDate = "";
       updateAppLocation("playerProfile");
       renderPlayerProfile();
       scrollPlayerProfileToTop();
@@ -4944,9 +5001,16 @@ function bindEvents() {
       return;
     }
 
-    if (event.target.closest("#togglePlayerProfileMatches")) {
-      showAllPlayerProfileMatches = !showAllPlayerProfileMatches;
+    const matchDateButton = event.target.closest("[data-player-profile-match-date]");
+    if (matchDateButton) {
+      selectedPlayerProfileMatchDate = matchDateButton.dataset.playerProfileMatchDate || "";
       renderPlayerProfile();
+      return;
+    }
+
+    const matchDateStepButton = event.target.closest("[data-player-profile-match-date-step]");
+    if (matchDateStepButton) {
+      movePlayerProfileMatchDate(Number(matchDateStepButton.dataset.playerProfileMatchDateStep || 0));
       return;
     }
 
@@ -5316,6 +5380,11 @@ function bindEvents() {
     } catch (error) {
       alert(error.message);
     }
+  });
+
+  $("#openManualMatchEntry")?.addEventListener("click", () => {
+    resetMatchForm();
+    revealMatchEntryPanel();
   });
 
   $("#adminMatchesList").addEventListener("click", async (event) => {
