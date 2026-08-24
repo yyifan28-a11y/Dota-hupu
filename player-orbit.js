@@ -6,6 +6,7 @@ const DESKTOP_STAGE_BASE_HEIGHT = 900;
 const COMPACT_STAGE_BASE_HEIGHT = 760;
 const PLANET_RADIUS = 4.2;
 const DESKTOP_CAMERA_DISTANCE = 25.5;
+const COMPACT_CAMERA_DISTANCE = 25.5;
 const RING_CONFIGS = [
   { radius: 8.2, shapeX: 1.45, shapeY: 0.7, glowWidth: 0.04, coreWidth: 0.009, glowOpacity: 0.2, coreOpacity: 0.72, tiltX: 1.38, tiltY: -0.14, tiltZ: -0.12, speed: 0.032, phase: 0.18 },
   { radius: 10, shapeX: 0.85, shapeY: 1.05, glowWidth: 0.06, coreWidth: 0.016, glowOpacity: 0.32, coreOpacity: 0.94, tiltX: 0.72, tiltY: 0.74, tiltZ: -0.42, speed: -0.022, phase: 0.72 },
@@ -755,7 +756,7 @@ function resize(state) {
   const baseHeight = state.isCompact ? COMPACT_STAGE_BASE_HEIGHT : DESKTOP_STAGE_BASE_HEIGHT;
   const baseHalfFov = THREE.MathUtils.degToRad(BASE_CAMERA_FOV / 2);
   state.camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(baseHalfFov) * height / baseHeight));
-  state.camera.position.z = state.isCompact ? 23.5 : DESKTOP_CAMERA_DISTANCE;
+  state.camera.position.z = state.isCompact ? COMPACT_CAMERA_DISTANCE : DESKTOP_CAMERA_DISTANCE;
   state.starField.position.copy(state.camera.position);
   state.camera.updateProjectionMatrix();
   renderScene(state);
@@ -820,11 +821,11 @@ function buildOrbit({ stage, players, onSelect, createPreview }) {
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(BASE_CAMERA_FOV, 1, 0.1, 60);
-  camera.position.set(0, -0.25, isCompact ? 23.5 : DESKTOP_CAMERA_DISTANCE);
+  camera.position.set(0, -0.25, isCompact ? COMPACT_CAMERA_DISTANCE : DESKTOP_CAMERA_DISTANCE);
   camera.lookAt(0, -0.25, 0);
   const system = new THREE.Group();
   system.rotation.set(-0.18, -0.34, -0.08);
-  system.position.y = isCompact ? 2.4 : 3.65;
+  system.position.y = isCompact ? 0.35 : 3.65;
   const starField = createSimpleStarField(isCompact);
   starField.position.copy(camera.position);
   scene.add(starField);
@@ -886,7 +887,8 @@ function buildOrbit({ stage, players, onSelect, createPreview }) {
     const content = document.createElement("span");
     content.className = "player-orbit-id-content";
     content.textContent = player.name;
-    button.append(anchorDot, content, createPlayerSignal(player));
+    button.append(anchorDot, content);
+    if (!isCompact) button.append(createPlayerSignal(player));
     button.dataset.playerProfileId = player.id;
     button.setAttribute("aria-label", `查看 ${player.name} 的选手档案`);
     labelLayer.append(button);
@@ -920,21 +922,23 @@ function buildOrbit({ stage, players, onSelect, createPreview }) {
   };
 
   labels.forEach((label) => {
-    label.element.addEventListener("mouseenter", () => {
-      state.hovered = true;
-      label.element.classList.add("is-hovered");
-      hydratePlayerHeroes(label.element);
-    });
-    label.element.addEventListener("mouseleave", () => {
-      state.hovered = false;
-      label.element.classList.remove("is-hovered");
-      requestFrame(state);
-    });
+    if (!isCompact) {
+      label.element.addEventListener("mouseenter", () => {
+        state.hovered = true;
+        label.element.classList.add("is-hovered");
+        hydratePlayerHeroes(label.element);
+      });
+      label.element.addEventListener("mouseleave", () => {
+        state.hovered = false;
+        label.element.classList.remove("is-hovered");
+        requestFrame(state);
+      });
+      label.element.addEventListener("focus", () => hydratePlayerHeroes(label.element));
+    }
     label.element.addEventListener("click", (event) => {
       event.stopPropagation();
       openPlayerFromOrbit(state, label);
     });
-    label.element.addEventListener("focus", () => hydratePlayerHeroes(label.element));
   });
 
   state.resizeObserver = new ResizeObserver(() => resize(state));

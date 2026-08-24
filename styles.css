@@ -11019,8 +11019,32 @@ body[data-ui="modern"] .player-orbit-stage.is-failed + .player-directory-all {
 }
 
 @media (max-width: 620px) {
+  body[data-ui="modern"] .app-shell:has(#playerProfile.is-active.is-directory-mode) {
+    display: flex;
+    flex-direction: column;
+    overflow-y: hidden;
+    overscroll-behavior: none;
+    scrollbar-gutter: auto;
+  }
+
+  body[data-ui="modern"] .app-shell:has(#playerProfile.is-active.is-directory-mode) .main {
+    height: auto;
+    min-height: 0;
+    flex: 1 1 0;
+    overflow: hidden;
+  }
+
+  body[data-ui="modern"] #playerProfile.is-active.is-directory-mode,
+  body[data-ui="modern"] #playerProfile.is-active.is-directory-mode .player-profile-layout,
+  body[data-ui="modern"] #playerProfile.view.is-directory-mode .player-profile-layout .panel.player-profile-sidebar {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
   body[data-ui="modern"] #playerProfile.is-directory-mode .player-profile-sidebar {
-    min-height: 760px;
+    min-height: 0;
   }
 
   body[data-ui="modern"] #playerProfile.is-directory-mode .player-directory-search {
@@ -11036,11 +11060,13 @@ body[data-ui="modern"] .player-orbit-stage.is-failed + .player-directory-all {
   }
 
   body[data-ui="modern"] .player-orbit-stage {
-    height: 980px;
-    min-height: 980px;
+    height: 100%;
+    min-height: 0;
   }
 
   body[data-ui="modern"] .player-orbit-id {
+    min-width: 44px;
+    min-height: 44px;
     padding: 4px;
     font-size: 14px;
   }
@@ -11055,13 +11081,12 @@ body[data-ui="modern"] .player-orbit-stage.is-failed + .player-directory-all {
   body[data-ui="modern"] .player-orbit-id:hover .player-orbit-id-content,
   body[data-ui="modern"] .player-orbit-id:focus-visible .player-orbit-id-content,
   body[data-ui="modern"] .player-orbit-id.is-hovered .player-orbit-id-content {
-    scale: 3.2;
+    opacity: var(--orbit-depth-opacity, 1);
+    scale: var(--orbit-depth-scale, 1);
   }
 
   body[data-ui="modern"] .player-orbit-signal {
-    top: calc(50% + 27px);
-    width: 266px;
-    padding: 12px 14px 13px;
+    display: none;
   }
 }
 
@@ -11147,7 +11172,7 @@ body[data-ui="modern"] #playerProfile.view.is-directory-mode .player-profile-sid
 
 @media (max-width: 620px) {
   body[data-ui="modern"] #playerProfile.view.is-directory-mode .player-profile-layout .panel.player-profile-sidebar {
-    min-height: 760px;
+    min-height: 0;
   }
 
   body[data-ui="modern"] #playerProfile.view.is-directory-mode > .page-heading {
