@@ -4777,6 +4777,7 @@ function initializeNavSubmenus() {
 
   const parentButtons = Array.from(nav.querySelectorAll(".nav-tab[data-nav-default]"));
   const groups = Array.from(nav.querySelectorAll(".nav-sub-group[data-nav-group]"));
+  const supportsHoverNavigation = window.matchMedia("(hover: hover) and (pointer: fine)");
   let closeTimer = 0;
 
   const getParent = (groupName) => parentButtons.find((button) => button.dataset.navDefault === groupName);
@@ -4809,10 +4810,21 @@ function initializeNavSubmenus() {
 
     button.setAttribute("aria-haspopup", "menu");
     button.setAttribute("aria-expanded", "false");
-    button.addEventListener("pointerenter", () => openGroup(groupName));
-    button.addEventListener("pointerleave", scheduleClose);
-    button.addEventListener("focus", () => openGroup(groupName));
-    button.addEventListener("blur", scheduleClose);
+    group.id ||= `nav-submenu-${groupName}`;
+    button.setAttribute("aria-controls", group.id);
+
+    if (supportsHoverNavigation.matches) {
+      button.addEventListener("pointerenter", () => openGroup(groupName));
+      button.addEventListener("pointerleave", scheduleClose);
+      button.addEventListener("focus", () => openGroup(groupName));
+      button.addEventListener("blur", scheduleClose);
+    } else {
+      button.addEventListener("click", () => {
+        const wasOpen = group.classList.contains("is-open");
+        if (wasOpen) closeAll();
+        else openGroup(groupName);
+      });
+    }
 
     group.setAttribute("role", "menu");
     group.addEventListener("pointerenter", cancelClose);

@@ -4982,6 +4982,10 @@ body[data-ui="modern"] #dashboard .empty-state {
     padding-bottom: 2px;
   }
 
+  body[data-ui="modern"] .nav-tab {
+    min-height: 44px;
+  }
+
   body[data-ui="modern"] .nav-sub-group {
     position: fixed;
     top: 118px;
