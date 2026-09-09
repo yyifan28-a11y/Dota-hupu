@@ -18,23 +18,46 @@ const REQUESTED_PLAYER_ID = new URLSearchParams(window.location.search).get("pla
 const POSITIONS = ["1", "2", "3", "4", "5"];
 const HEROES = Array.isArray(window.DOTA_HEROES) ? window.DOTA_HEROES : [];
 const HERO_IMAGE_BASE = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes";
-const DASHBOARD_HIGHLIGHT = Object.freeze({
-  date: "2026-05-17",
-  matchNo: 2,
-  matchId: "8814798529",
-  playerName: "xian",
-  hero: "帕克",
-  image: "./assets/highlights/puck-1.png",
-  fallback: {
-    winner: "dire",
-    kills: 17,
-    deaths: 4,
-    assists: 25,
-    damage: 79885,
-    participation: 0.857,
-    gpm: 737
-  }
-});
+const DASHBOARD_HIGHLIGHTS = Object.freeze([
+  Object.freeze({
+    date: "2026-05-17",
+    matchNo: 2,
+    matchId: "8814798529",
+    playerName: "xian",
+    hero: "帕克",
+    image: "./assets/highlights/puck-1.png",
+    objectPosition: "50% 47%",
+    layout: "image-right",
+    fallback: {
+      winner: "dire",
+      kills: 17,
+      deaths: 4,
+      assists: 25,
+      damage: 79885,
+      participation: 0.857,
+      gpm: 737
+    }
+  }),
+  Object.freeze({
+    date: "2026-05-14",
+    matchNo: 3,
+    matchId: "8810694716",
+    playerName: "ldxy",
+    hero: "灰烬之灵",
+    image: "./assets/highlights/ember-spirit-ldxy-2026-05-14-03-v8.webp",
+    objectPosition: "50% 28%",
+    layout: "image-left",
+    fallback: {
+      winner: "radiant",
+      kills: 16,
+      deaths: 3,
+      assists: 16,
+      damage: 46228,
+      participation: 0.762,
+      gpm: 686
+    }
+  })
+]);
 const ADMIN_PASSWORD_KEY = "dota-admin-password";
 const APP_ENTERED_KEY = "dota-app-entered";
 const ACTIVE_VIEW_KEY = "dota-active-view";
@@ -125,6 +148,8 @@ let pendingExcelMatches = [];
 let pendingRatingSnapshots = [];
 let selectedDashboardMatchDate = "";
 let activeDashboardRankMetric = "rating";
+let activeDashboardHighlightIndex = 0;
+const preloadedDashboardHighlightImages = new Set();
 let activeDataViewMode = "basic";
 let selectedPlayerProfileId = REQUESTED_PLAYER_ID;
 let playerProfileSearchQuery = "";
@@ -825,42 +850,50 @@ function renderDashboard() {
 function renderDashboardHighlight() {
   const target = $("#featuredHighlight");
   if (!target) return;
+  const highlight = DASHBOARD_HIGHLIGHTS[activeDashboardHighlightIndex] || DASHBOARD_HIGHLIGHTS[0];
+  if (!highlight) {
+    target.replaceChildren();
+    return;
+  }
 
   const candidateMatch = db.matches.find((item) =>
-    String(item.matchId || "") === DASHBOARD_HIGHLIGHT.matchId
-    || (item.date === DASHBOARD_HIGHLIGHT.date && Number(item.matchNo || 1) === DASHBOARD_HIGHLIGHT.matchNo)
+    String(item.matchId || "") === highlight.matchId
+    || (item.date === highlight.date && Number(item.matchNo || 1) === highlight.matchNo)
   );
   const matchDetails = Object.entries(candidateMatch?.playerDetails || {});
   const playerDetailEntry = matchDetails.find(([playerId, detail]) =>
-    getPlayer(playerId)?.name === DASHBOARD_HIGHLIGHT.playerName
-    && getHeroIdentity(detail?.hero).key === getHeroIdentity(DASHBOARD_HIGHLIGHT.hero).key
+    getPlayer(playerId)?.name === highlight.playerName
+    && getHeroIdentity(detail?.hero).key === getHeroIdentity(highlight.hero).key
   ) || matchDetails.find(([, detail]) =>
-    getHeroIdentity(detail?.hero).key === getHeroIdentity(DASHBOARD_HIGHLIGHT.hero).key
+    getHeroIdentity(detail?.hero).key === getHeroIdentity(highlight.hero).key
   );
   const match = playerDetailEntry ? candidateMatch : null;
-  const detail = playerDetailEntry?.[1] || DASHBOARD_HIGHLIGHT.fallback;
+  const detail = playerDetailEntry?.[1] || highlight.fallback;
   const playerName = playerDetailEntry
-    ? getPlayer(playerDetailEntry[0])?.name || DASHBOARD_HIGHLIGHT.playerName
-    : DASHBOARD_HIGHLIGHT.playerName;
-  const kills = Number(detail.kills ?? DASHBOARD_HIGHLIGHT.fallback.kills);
-  const deaths = Number(detail.deaths ?? DASHBOARD_HIGHLIGHT.fallback.deaths);
-  const assists = Number(detail.assists ?? DASHBOARD_HIGHLIGHT.fallback.assists);
-  const matchDate = String(match?.date || DASHBOARD_HIGHLIGHT.date || "");
-  const matchNumber = Number(match?.matchNo || DASHBOARD_HIGHLIGHT.matchNo || 1);
+    ? getPlayer(playerDetailEntry[0])?.name || highlight.playerName
+    : highlight.playerName;
+  const kills = Number(detail.kills ?? highlight.fallback.kills);
+  const deaths = Number(detail.deaths ?? highlight.fallback.deaths);
+  const assists = Number(detail.assists ?? highlight.fallback.assists);
+  const matchDate = String(match?.date || highlight.date || "");
+  const matchNumber = Number(match?.matchNo || highlight.matchNo || 1);
   const displayDate = `${matchDate.slice(5)}-${String(matchNumber).padStart(2, "0")}`;
   const interactiveAttributes = match
     ? `data-open-match="${escapeHtml(match.id)}" tabindex="0" role="button" aria-label="查看 ${escapeHtml(displayDate)} ${escapeHtml(playerName)} 的比赛详情"`
     : "";
+  const hasMultipleHighlights = DASHBOARD_HIGHLIGHTS.length > 1;
+  const previousIndex = (activeDashboardHighlightIndex - 1 + DASHBOARD_HIGHLIGHTS.length) % DASHBOARD_HIGHLIGHTS.length;
+  const nextIndex = (activeDashboardHighlightIndex + 1) % DASHBOARD_HIGHLIGHTS.length;
 
   target.innerHTML = `
-    <article class="dashboard-highlight${match ? " is-interactive" : ""}" ${interactiveAttributes}>
-      <img class="dashboard-highlight-image" src="${escapeHtml(DASHBOARD_HIGHLIGHT.image)}" alt="" />
+    <article class="dashboard-highlight${match ? " is-interactive" : ""}${highlight.layout === "image-left" ? " is-image-left" : ""}" ${interactiveAttributes}>
+      <img class="dashboard-highlight-image" src="${escapeHtml(highlight.image)}" alt="" style="object-position: ${escapeHtml(highlight.objectPosition || "50% 47%")}" fetchpriority="high" />
       <div class="dashboard-highlight-grid" aria-hidden="true"></div>
       <div class="dashboard-highlight-content">
         <time class="dashboard-highlight-date" datetime="${escapeHtml(matchDate)}">${escapeHtml(displayDate)}</time>
         <div class="dashboard-highlight-title">
           <p>${escapeHtml(playerName)}</p>
-          <h3>${escapeHtml(DASHBOARD_HIGHLIGHT.hero)}</h3>
+          <h3>${escapeHtml(highlight.hero)}</h3>
         </div>
         <dl class="dashboard-highlight-stats">
           <div>
@@ -870,7 +903,47 @@ function renderDashboardHighlight() {
         </dl>
       </div>
     </article>
+    ${hasMultipleHighlights ? `
+      <button class="dashboard-highlight-arrow is-previous" type="button" data-dashboard-highlight-index="${previousIndex}" aria-label="上一张首页图">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
+      </button>
+      <span class="dashboard-highlight-position" aria-label="第 ${activeDashboardHighlightIndex + 1} 张，共 ${DASHBOARD_HIGHLIGHTS.length} 张">
+        ${String(activeDashboardHighlightIndex + 1).padStart(2, "0")} / ${String(DASHBOARD_HIGHLIGHTS.length).padStart(2, "0")}
+      </span>
+      <button class="dashboard-highlight-arrow is-next" type="button" data-dashboard-highlight-index="${nextIndex}" aria-label="下一张首页图">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg>
+      </button>
+    ` : ""}
   `;
+
+  preloadDashboardHighlightImages();
+}
+
+function showDashboardHighlight(index) {
+  const count = DASHBOARD_HIGHLIGHTS.length;
+  if (count < 2) return;
+  const nextIndex = ((Number(index) || 0) % count + count) % count;
+  if (nextIndex === activeDashboardHighlightIndex) return;
+  activeDashboardHighlightIndex = nextIndex;
+  renderDashboardHighlight();
+}
+
+function preloadDashboardHighlightImages() {
+  const loadRemainingImages = () => {
+    DASHBOARD_HIGHLIGHTS.forEach((highlight, index) => {
+      if (index === activeDashboardHighlightIndex || preloadedDashboardHighlightImages.has(highlight.image)) return;
+      const image = new Image();
+      image.decoding = "async";
+      image.src = highlight.image;
+      preloadedDashboardHighlightImages.add(highlight.image);
+    });
+  };
+
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(loadRemainingImages, { timeout: 1800 });
+  } else {
+    window.setTimeout(loadRemainingImages, 350);
+  }
 }
 
 function renderDashboardMatches() {
@@ -4908,7 +4981,16 @@ function bindEvents() {
 
   $("#recentMatches").addEventListener("click", handleMatchCardOpen);
   $("#recentMatches").addEventListener("keydown", handleMatchCardKeydown);
-  $("#featuredHighlight")?.addEventListener("click", handleMatchCardOpen);
+  $("#featuredHighlight")?.addEventListener("click", (event) => {
+    const switchButton = event.target.closest("[data-dashboard-highlight-index]");
+    if (switchButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      showDashboardHighlight(switchButton.dataset.dashboardHighlightIndex);
+      return;
+    }
+    handleMatchCardOpen(event);
+  });
   $("#featuredHighlight")?.addEventListener("keydown", handleMatchCardKeydown);
   $("#dashboardRankModes")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-dashboard-rank-mode]");

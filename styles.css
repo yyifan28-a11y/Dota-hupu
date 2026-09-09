@@ -7643,7 +7643,101 @@ body[data-ui="modern"] .dashboard-section-heading::before {
 }
 
 body[data-ui="modern"] .dashboard-highlight-slot {
+  --dashboard-highlight-control-offset: clamp(8px, 1.25vw, 22px);
   margin: 10px 0 8px;
+}
+
+body[data-ui="modern"] .dashboard-highlight-arrow,
+body[data-ui="modern"] .dashboard-highlight-position {
+  position: absolute;
+  z-index: 6;
+}
+
+body[data-ui="modern"] .dashboard-highlight-arrow {
+  top: 50%;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid rgba(130, 223, 235, 0.2);
+  border-radius: 50%;
+  padding: 0;
+  background: rgba(4, 17, 20, 0.5);
+  color: rgba(213, 246, 250, 0.78);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(10px);
+  transform: translateY(-50%);
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+body[data-ui="modern"] .dashboard-highlight-arrow.is-previous {
+  left: var(--dashboard-highlight-control-offset);
+}
+
+body[data-ui="modern"] .dashboard-highlight-arrow.is-next {
+  right: var(--dashboard-highlight-control-offset);
+}
+
+body[data-ui="modern"] .dashboard-highlight-arrow svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+body[data-ui="modern"] .dashboard-highlight-arrow:hover,
+body[data-ui="modern"] .dashboard-highlight-arrow:focus-visible {
+  border-color: rgba(130, 223, 235, 0.54);
+  background: rgba(16, 55, 61, 0.72);
+  color: #e7fbfd;
+  transform: translateY(-50%) scale(1.06);
+}
+
+body[data-ui="modern"] .dashboard-highlight-arrow:focus-visible {
+  outline: 2px solid rgba(69, 199, 223, 0.34);
+  outline-offset: 3px;
+}
+
+body[data-ui="modern"] .dashboard-highlight-position {
+  top: 18px;
+  left: 50%;
+  border: 1px solid rgba(130, 223, 235, 0.12);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(4, 17, 20, 0.36);
+  color: rgba(151, 206, 214, 0.7);
+  font-family: "Fira Code", "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+body[data-ui="modern"] .dashboard-highlight {
+  animation: dashboard-highlight-enter 320ms ease both;
+}
+
+@keyframes dashboard-highlight-enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-ui="modern"] .dashboard-highlight {
+    animation: none;
+  }
 }
 
 body[data-ui="modern"] .dashboard-highlight {
@@ -7703,6 +7797,49 @@ body[data-ui="modern"] .dashboard-highlight-image {
 
 body[data-ui="modern"] .dashboard-highlight.is-interactive:hover .dashboard-highlight-image {
   filter: saturate(0.96) contrast(1.04) brightness(1.04);
+}
+
+@media (min-width: 641px) {
+  body[data-ui="modern"] .dashboard-highlight.is-image-left::before {
+    background: linear-gradient(
+      90deg,
+      rgba(3, 13, 18, 0) 0%,
+      rgba(3, 13, 18, 0.03) 28%,
+      rgba(3, 13, 18, 0.12) 38%,
+      rgba(3, 13, 18, 0.3) 48%,
+      rgba(3, 13, 18, 0.55) 58%,
+      rgba(3, 13, 18, 0.78) 68%,
+      rgba(3, 13, 18, 0.92) 78%,
+      rgba(3, 13, 18, 0.98) 88%,
+      #030d12 100%
+    );
+  }
+
+  body[data-ui="modern"] .dashboard-highlight.is-image-left::after {
+    background: radial-gradient(ellipse 48% 58% at 28% 49%, rgba(226, 112, 63, 0.12), transparent 72%);
+  }
+
+  body[data-ui="modern"] .dashboard-highlight.is-image-left .dashboard-highlight-image {
+    right: auto;
+    left: -8%;
+    -webkit-mask-image: linear-gradient(90deg, black 0%, black 50%, rgba(0, 0, 0, 0.94) 60%, rgba(0, 0, 0, 0.76) 70%, rgba(0, 0, 0, 0.48) 80%, rgba(0, 0, 0, 0.2) 90%, transparent 100%);
+    mask-image: linear-gradient(90deg, black 0%, black 50%, rgba(0, 0, 0, 0.94) 60%, rgba(0, 0, 0, 0.76) 70%, rgba(0, 0, 0, 0.48) 80%, rgba(0, 0, 0, 0.2) 90%, transparent 100%);
+  }
+
+  body[data-ui="modern"] .dashboard-highlight.is-image-left .dashboard-highlight-content {
+    align-items: flex-end;
+    margin-left: auto;
+    text-align: right;
+  }
+
+  body[data-ui="modern"] .dashboard-highlight.is-image-left .dashboard-highlight-date,
+  body[data-ui="modern"] .dashboard-highlight.is-image-left .dashboard-highlight-stats {
+    text-align: right;
+  }
+
+  body[data-ui="modern"] .dashboard-highlight.is-image-left .dashboard-highlight-stats {
+    justify-content: flex-end;
+  }
 }
 
 body[data-ui="modern"] .dashboard-highlight-grid {
