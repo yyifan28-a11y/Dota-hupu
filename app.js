@@ -802,14 +802,14 @@ function updateAppLocation(viewId, playerId = "", { replace = false } = {}) {
 }
 
 function switchView(viewId) {
-  if ((IS_ARCHIVE_SEASON && ["generator", "admin"].includes(viewId)) || (!IS_ARCHIVE_SEASON && ["playoffs", "champion"].includes(viewId))) {
+  if ((IS_ARCHIVE_SEASON && viewId === "admin") || (!IS_ARCHIVE_SEASON && ["playoffs", "champion"].includes(viewId))) {
     viewId = "dashboard";
   }
   if (IS_ARCHIVE_SEASON && viewId === "champion") viewId = "playoffs";
   const hasTargetView = Boolean($(`#${viewId}`));
   if (!hasTargetView) viewId = "dashboard";
   const navGroups = {
-    players: ["players", "data", "heroes"],
+    players: ["overallData", "players", "data", "heroes"],
     playerProfile: ["playerProfile", "relations", "ratingTrends", "records"]
   };
   const parentView = Object.entries(navGroups).find(([, views]) => views.includes(viewId))?.[0] || "";
@@ -2007,6 +2007,65 @@ function renderPlayerProfileHeroes(playerId) {
 function getRecordSortIcon(key) {
   if (recordSort !== key) return "";
   return recordSortDirection === "desc" ? "▾" : "▴";
+}
+
+function calculateOverallData(matches) {
+  const rows = [...POSITIONS, "all"].map((position) => ({ position, metrics: Array.from({ length: 7 }, () => ({ total: 0, count: 0 })) }));
+  const overall = rows[rows.length - 1];
+  const numeric = (value) => hasNumericDetail(value) ? Number(value) : null;
+  const ratio = (value) => {
+    const number = numeric(value);
+    return number === null ? null : number > 1 ? number / 100 : number;
+  };
+  const divide = (value, total) => value !== null && total > 0 ? value / total : null;
+  matches.forEach((match) => {
+    if (!hasBasicMatchInfo(match)) return;
+    const minutes = getMatchDurationSeconds(match) / 60;
+    [match.radiant, match.dire].forEach((ids) => {
+      const details = ids.map((id) => match.playerDetails?.[id] || {});
+      const total = (key) => {
+        const values = details.map((detail) => numeric(detail[key]));
+        return values.every((value) => value !== null) ? values.reduce((sum, value) => sum + value, 0) : null;
+      };
+      const kills = total("kills");
+      const damage = total("damage");
+      const damageTaken = total("damageTaken");
+      details.forEach((detail, index) => {
+        const position = String(detail.position || match.positions?.[ids[index]] || "");
+        const row = rows.find((item) => item.position === position);
+        const ownKills = numeric(detail.kills);
+        const assists = numeric(detail.assists);
+        const participation = ratio(detail.participation) ?? divide(ownKills !== null && assists !== null ? ownKills + assists : null, kills);
+        const output = ratio(detail.damageShare) ?? divide(numeric(detail.damage), damage);
+        const values = [
+          output, numeric(detail.gpm), numeric(detail.xpm), participation,
+          divide(numeric(detail.lastHits), minutes),
+          divide(numeric(detail.damageTaken), damageTaken), divide(assists, kills)
+        ];
+        values.forEach((value, metricIndex) => {
+          if (value === null || !Number.isFinite(value)) return;
+          for (const target of row && row !== overall ? [row, overall] : [overall]) {
+            target.metrics[metricIndex].total += value;
+            target.metrics[metricIndex].count += 1;
+          }
+        });
+      });
+    });
+  });
+  return rows.map((row) => ({ ...row, metrics: row.metrics.map(({ total, count }) => ({
+    count,
+    average: count ? total / count : null
+  })) }));
+}
+
+function renderOverallData() {
+  $("#overallDataBody").innerHTML = calculateOverallData(db.matches).map((row) => `
+    <tr${row.position === "all" ? ' class="overall-summary-row"' : ""}><td><strong>${row.position === "all" ? "总体" : getPlayerProfilePositionLabel(row.position)}</strong></td>${row.metrics.map((metric, index) => {
+      const percent = [0, 3, 5, 6].includes(index);
+      const value = metric.average === null ? "暂无数据" : percent ? `${(metric.average * 100).toFixed(1)}%` : metric.average.toFixed(index === 4 ? 2 : 0);
+      return `<td>${value}</td>`;
+    }).join("")}</tr>
+  `).join("");
 }
 
 function renderDataView() {
@@ -3473,6 +3532,10 @@ function renderSelectedMatchDetail() {
         <input data-detail-field="xpm" type="number" min="0" step="1" value="${escapeHtml(detail.xpm)}" />
       </label>
       <label>
+        正补数（选填）
+        <input data-detail-field="lastHits" type="number" min="0" step="1" value="${escapeHtml(detail.lastHits ?? "")}" />
+      </label>
+      <label>
         10分钟经济
         <input data-detail-field="netWorth10" type="number" min="0" step="1" value="${escapeHtml(detail.netWorth10)}" />
       </label>
@@ -4028,6 +4091,7 @@ function renderCurrentView() {
     players: renderPlayers,
     playerProfile: renderPlayerProfile,
     data: renderDataView,
+    overallData: renderOverallData,
     heroes: renderHeroes,
     records: renderRecords,
     relations: renderRelations,
@@ -4267,6 +4331,7 @@ function createEmptyDetail() {
     damageShare: "",
     gpm: "",
     xpm: "",
+    lastHits: "",
     netWorth10: "",
     damage: "",
     buildingDamage: "",

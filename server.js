@@ -210,7 +210,8 @@ async function handleApi(request, response, url) {
     return;
   }
 
-  if (season === "s2" && method !== "GET" && url.pathname !== "/api/admin/check") {
+  const isTeamRequest = method === "POST" && ["/api/teams", "/api/teams/manual"].includes(url.pathname);
+  if (season === "s2" && method !== "GET" && url.pathname !== "/api/admin/check" && !isTeamRequest) {
     sendJson(response, 403, { error: "S2 已归档，只能查看历史数据。" });
     return;
   }
@@ -1220,6 +1221,7 @@ function parseExcelMatchSheet(sheetName, records, playerByName, allRecords = rec
       damageShare: normalizeRatio(record["输出占比"]),
       gpm: numberOrBlank(record["GPM"]),
       xpm: numberOrBlank(record["XPM"]),
+      lastHits: numberOrBlank(record["正补"] ?? record["正补数"] ?? record["补刀"] ?? record["补刀数"] ?? record["LH"]),
       netWorth10: numberOrBlank(record["10分钟财产"]),
       damage: numberOrBlank(record["英雄伤害"]),
       buildingDamage: numberOrBlank(record["建筑伤害"]),
@@ -1470,6 +1472,7 @@ function cleanPlayerDetails(details, teams) {
       damageShare: normalizeRatio(detail.damageShare),
       gpm: numberOrBlank(detail.gpm),
       xpm: numberOrBlank(detail.xpm),
+      lastHits: numberOrBlank(detail.lastHits),
       netWorth10: numberOrBlank(detail.netWorth10),
       damage: numberOrBlank(detail.damage),
       buildingDamage: numberOrBlank(detail.buildingDamage),
