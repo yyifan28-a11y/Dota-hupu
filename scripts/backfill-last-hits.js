@@ -6,10 +6,15 @@ import XLSX from "xlsx";
 // Preview by default. --apply backs up each database before filling missing values.
 const apply = process.argv.includes("--apply");
 const root = resolve(import.meta.dirname, "..");
+const recordsDir = resolve(process.env.RECORDS_PATH || join(root, "记录"));
+const databasePaths = [
+  resolve(process.env.S2_DATABASE_PATH || process.env.DATABASE_PATH || join(root, "dota.db")),
+  resolve(process.env.S3_DATABASE_PATH || join(root, "dota-s3.db"))
+];
 const normalizeName = (value) => String(value || "").trim().toLowerCase();
 const sources = new Map();
-for (const file of readdirSync(join(root, "记录")).filter((name) => name.endsWith(".xlsx"))) {
-  const workbook = XLSX.readFile(join(root, "记录", file));
+for (const file of readdirSync(recordsDir).filter((name) => name.endsWith(".xlsx"))) {
+  const workbook = XLSX.readFile(join(recordsDir, file));
   for (const sheet of workbook.SheetNames) {
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { header: 1, defval: "" });
     const headers = rows[0]?.map((value) => String(value).trim()) || [];
@@ -30,8 +35,9 @@ for (const file of readdirSync(join(root, "记录")).filter((name) => name.endsW
 }
 
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-for (const file of ["dota.db", "dota-s3.db"]) {
-  const database = new DatabaseSync(join(root, file), { readOnly: !apply });
+for (const databasePath of databasePaths) {
+  const file = databasePath.split(/[\\/]/).at(-1);
+  const database = new DatabaseSync(databasePath, { readOnly: !apply });
   const players = new Map(database.prepare("SELECT id, name FROM players").all().map((player) => [player.id, player.name]));
   const updates = [];
   const skipped = [];
@@ -75,6 +81,6 @@ for (const file of ["dota.db", "dota-s3.db"]) {
     }
     console.log(`Backup: ${backupDir}`);
   }
-  console.log(JSON.stringify({ file, apply, matches: updates.length, filled, skipped: skipped.length, skippedExamples: skipped.slice(0, 5) }));
+  console.log(JSON.stringify({ file: databasePath, apply, matches: updates.length, filled, skipped: skipped.length, skippedExamples: skipped.slice(0, 5) }));
   database.close();
 }
