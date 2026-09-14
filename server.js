@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,12 +7,17 @@ import { DatabaseSync } from "node:sqlite";
 import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
 import * as XLSX from "xlsx";
+import sharp from "sharp";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const ENV = globalThis.process?.env || {};
 const PORT = Number(ENV.PORT || 3000);
 const ADMIN_PASSWORD = ENV.ADMIN_PASSWORD || "admin123";
 const DB_PATHS = getDatabasePaths();
+const HIGHLIGHT_UPLOAD_DIR = resolveDatabasePath(ENV.HIGHLIGHT_UPLOAD_DIR || join(dirname(DB_PATHS.s3), "uploads", "highlights"));
+const MAX_HIGHLIGHT_UPLOAD_BYTES = 10 * 1024 * 1024;
+let highlightUploadBusy = false;
+mkdirSync(HIGHLIGHT_UPLOAD_DIR, { recursive: true });
 Object.values(DB_PATHS).forEach((path) => mkdirSync(dirname(path), { recursive: true }));
 const databases = {
   s2: new DatabaseSync(DB_PATHS.s2),
@@ -40,6 +45,31 @@ const defaultPlayers = [
   ["Dy", "", 6.7, ""]
 ];
 
+const defaultHomepageHighlights = [
+  {
+    date: "2026-05-17",
+    matchNo: 2,
+    matchId: "8814798529",
+    playerName: "xian",
+    hero: "帕克",
+    image: "./assets/highlights/puck-1.png",
+    objectPosition: "50% 47%",
+    layout: "image-right",
+    fallback: { winner: "dire", kills: 17, deaths: 4, assists: 25, damage: 79885, participation: 0.857, gpm: 737 }
+  },
+  {
+    date: "2026-05-14",
+    matchNo: 3,
+    matchId: "8810694716",
+    playerName: "ldxy",
+    hero: "灰烬之灵",
+    image: "./assets/highlights/ember-spirit-ldxy-2026-05-14-03-v8.webp",
+    objectPosition: "50% 28%",
+    layout: "image-left",
+    fallback: { winner: "radiant", kills: 16, deaths: 3, assists: 16, damage: 46228, participation: 0.762, gpm: 686 }
+  }
+];
+
 databaseContext.run({ season: "s2", database: databases.s2 }, () => initDatabase({ seedDefaults: false }));
 databaseContext.run({ season: "s3", database: databases.s3 }, () => initDatabase({ seedDefaults: false }));
 
@@ -58,7 +88,7 @@ const server = createServer(async (request, response) => {
 
     await serveStatic(request, response, url.pathname);
   } catch (error) {
-    sendJson(response, 500, { error: error.message });
+    sendJson(response, Number(error.statusCode) || 500, { error: error.message });
   }
 });
 
@@ -130,6 +160,27 @@ function initDatabase({ seedDefaults = false } = {}) {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (date, player_id)
     );
+
+    CREATE TABLE IF NOT EXISTS homepage_highlights (
+      id TEXT PRIMARY KEY,
+      match_record_id TEXT DEFAULT '',
+      player_id TEXT DEFAULT '',
+      date TEXT NOT NULL,
+      match_no INTEGER NOT NULL DEFAULT 1,
+      match_id TEXT DEFAULT '',
+      player_name TEXT NOT NULL,
+      hero TEXT NOT NULL,
+      image TEXT NOT NULL,
+      object_position TEXT NOT NULL DEFAULT '50% 47%',
+      framing TEXT NOT NULL DEFAULT '{}',
+      layout TEXT NOT NULL DEFAULT 'image-right' CHECK (layout IN ('image-left', 'image-right')),
+      status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived')),
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      fallback TEXT NOT NULL DEFAULT '{}',
+      published_at TEXT DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   addColumnIfMissing("players", "rating", "REAL DEFAULT 5");
@@ -138,6 +189,9 @@ function initDatabase({ seedDefaults = false } = {}) {
   addColumnIfMissing("matches", "player_details", "TEXT DEFAULT '{}'");
   addColumnIfMissing("matches", "match_no", "INTEGER DEFAULT 1");
   addColumnIfMissing("matches", "match_id", "TEXT DEFAULT ''");
+  addColumnIfMissing("homepage_highlights", "match_record_id", "TEXT DEFAULT ''");
+  addColumnIfMissing("homepage_highlights", "player_id", "TEXT DEFAULT ''");
+  addColumnIfMissing("homepage_highlights", "framing", "TEXT NOT NULL DEFAULT '{}'");
 
   const playerColumns = getColumns("players");
   if (playerColumns.includes("mmr")) {
@@ -183,6 +237,9 @@ function initDatabase({ seedDefaults = false } = {}) {
   if (!state) {
     saveTeams({ radiant: [], dire: [] });
   }
+
+  seedHomepageHighlights();
+  backfillHomepageHighlightLinks();
 }
 
 function addColumnIfMissing(table, column, definition) {
@@ -194,6 +251,54 @@ function addColumnIfMissing(table, column, definition) {
 
 function getColumns(table) {
   return db.prepare(`PRAGMA table_info(${table})`).all().map((item) => item.name);
+}
+
+function seedHomepageHighlights() {
+  if (getActiveSeason() !== "s3") return;
+  const count = Number(db.prepare("SELECT COUNT(*) AS count FROM homepage_highlights").get().count || 0);
+  if (count > 0) return;
+
+  const insert = db.prepare(`
+    INSERT INTO homepage_highlights (
+      id, match_record_id, player_id, date, match_no, match_id, player_name, hero, image, object_position,
+      framing, layout, status, sort_order, fallback, published_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?)
+  `);
+  const now = new Date().toISOString();
+  defaultHomepageHighlights.forEach((highlight, index) => {
+    const match = findHomepageHighlightMatch(highlight);
+    const player = match ? findHomepageHighlightPlayer(match, { playerName: highlight.playerName, hero: highlight.hero }) : null;
+    insert.run(
+      crypto.randomUUID(),
+      match?.id || "",
+      player?.id || "",
+      highlight.date,
+      highlight.matchNo,
+      highlight.matchId,
+      highlight.playerName,
+      highlight.hero,
+      highlight.image,
+      highlight.objectPosition,
+      JSON.stringify(normalizeHomepageHighlightFraming(highlight.framing, highlight.objectPosition)),
+      highlight.layout,
+      index,
+      JSON.stringify(highlight.fallback || {}),
+      now,
+      now,
+      now
+    );
+  });
+}
+
+function backfillHomepageHighlightLinks() {
+  const rows = db.prepare("SELECT * FROM homepage_highlights WHERE match_record_id = '' OR player_id = ''").all();
+  const update = db.prepare("UPDATE homepage_highlights SET match_record_id = ?, player_id = ? WHERE id = ?");
+  rows.forEach((row) => {
+    const highlight = mapHomepageHighlight(row);
+    const match = findHomepageHighlightMatch(highlight);
+    const player = match ? findHomepageHighlightPlayer(match, highlight) : null;
+    if (match && player) update.run(match.id, player.id, row.id);
+  });
 }
 
 async function handleApi(request, response, url) {
@@ -222,6 +327,152 @@ async function handleApi(request, response, url) {
 
   if (method === "POST" && url.pathname === "/api/admin/check") {
     sendJson(response, 200, { ok: true });
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/homepage-highlights/upload") {
+    if (highlightUploadBusy) throw createHttpError(429, "正在处理另一张图片，请稍后重试");
+    if (Number(request.headers["content-length"]) > MAX_HIGHLIGHT_UPLOAD_BYTES) {
+      throw createHttpError(413, "图片不能超过 10 MB");
+    }
+    highlightUploadBusy = true;
+    try {
+      const chunks = [];
+      let size = 0;
+      for await (const chunk of request) {
+        size += chunk.length;
+        if (size > MAX_HIGHLIGHT_UPLOAD_BYTES) throw createHttpError(413, "图片不能超过 10 MB");
+        chunks.push(chunk);
+      }
+      let output;
+      try {
+        const source = sharp(Buffer.concat(chunks), { limitInputPixels: 40000000 });
+        const metadata = await source.metadata();
+        if (!["png", "jpeg", "webp"].includes(metadata.format) || (metadata.pages || 1) > 1) {
+          throw new Error("Unsupported image");
+        }
+        output = await source.rotate().resize({ width: 3840, height: 3840, fit: "inside", withoutEnlargement: true })
+          .webp({ quality: 90, effort: 4 }).toBuffer({ resolveWithObject: true });
+      } catch {
+        throw createHttpError(400, "请选择有效的静态 PNG、JPG 或 WebP 图片（不超过 4000 万像素）");
+      }
+      const filename = `${crypto.randomUUID()}.webp`;
+      await writeFile(join(HIGHLIGHT_UPLOAD_DIR, filename), output.data, { flag: "wx" });
+      sendJson(response, 201, { image: `/uploads/highlights/${filename}`, bytes: output.data.length,
+        width: output.info.width, height: output.info.height });
+    } finally {
+      highlightUploadBusy = false;
+    }
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/homepage-highlights/reorder") {
+    const body = await readJson(request);
+    const publishedIds = getHomepageHighlights({ publishedOnly: true }).map((highlight) => highlight.id);
+    const requestedIds = Array.isArray(body.ids) ? body.ids.map(String) : [];
+    if (requestedIds.length !== publishedIds.length || new Set(requestedIds).size !== requestedIds.length
+      || requestedIds.some((id) => !publishedIds.includes(id))) {
+      sendJson(response, 400, { error: "首页图排序数据不完整" });
+      return;
+    }
+
+    const updateOrder = db.prepare("UPDATE homepage_highlights SET sort_order = ?, updated_at = ? WHERE id = ? AND status = 'published'");
+    const now = new Date().toISOString();
+    db.exec("BEGIN");
+    try {
+      requestedIds.forEach((id, index) => updateOrder.run(index, now, id));
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    sendJson(response, 200, getState());
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/homepage-highlights") {
+    const body = await readJson(request);
+    const highlight = normalizeHomepageHighlight(body);
+    const now = new Date().toISOString();
+    const id = crypto.randomUUID();
+    db.prepare(`
+      INSERT INTO homepage_highlights (
+        id, match_record_id, player_id, date, match_no, match_id, player_name, hero, image, object_position,
+        framing, layout, status, sort_order, fallback, published_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 0, ?, '', ?, ?)
+    `).run(
+      id,
+      highlight.matchRecordId,
+      highlight.playerId,
+      highlight.date,
+      highlight.matchNo,
+      highlight.matchId,
+      highlight.playerName,
+      highlight.hero,
+      highlight.image,
+      highlight.objectPosition,
+      JSON.stringify(highlight.framing),
+      highlight.layout,
+      JSON.stringify(highlight.fallback),
+      now,
+      now
+    );
+    sendJson(response, 201, getState());
+    return;
+  }
+
+  if (method === "PUT" && url.pathname.startsWith("/api/homepage-highlights/")) {
+    const id = decodeURIComponent(url.pathname.replace("/api/homepage-highlights/", ""));
+    const existingRow = db.prepare("SELECT * FROM homepage_highlights WHERE id = ?").get(id);
+    if (!existingRow) {
+      sendJson(response, 404, { error: "首页图记录不存在" });
+      return;
+    }
+
+    const body = await readJson(request);
+    const existing = mapHomepageHighlight(existingRow);
+    const highlight = normalizeHomepageHighlight({ ...existing, ...body });
+    const nextStatus = ["draft", "published", "archived"].includes(body.status) ? body.status : existing.status;
+    const now = new Date().toISOString();
+    const isNewPublish = nextStatus === "published" && existing.status !== "published";
+
+    db.exec("BEGIN");
+    try {
+      if (isNewPublish) {
+        db.prepare("UPDATE homepage_highlights SET sort_order = sort_order + 1 WHERE status = 'published'").run();
+      }
+      db.prepare(`
+        UPDATE homepage_highlights
+        SET match_record_id = ?, player_id = ?, date = ?, match_no = ?, match_id = ?, player_name = ?, hero = ?, image = ?,
+            object_position = ?, framing = ?, layout = ?, status = ?, sort_order = ?, fallback = ?,
+            published_at = ?, updated_at = ?
+        WHERE id = ?
+      `).run(
+        highlight.matchRecordId,
+        highlight.playerId,
+        highlight.date,
+        highlight.matchNo,
+        highlight.matchId,
+        highlight.playerName,
+        highlight.hero,
+        highlight.image,
+        highlight.objectPosition,
+        JSON.stringify(highlight.framing),
+        highlight.layout,
+        nextStatus,
+        isNewPublish ? 0 : existing.sortOrder,
+        JSON.stringify(highlight.fallback),
+        isNewPublish ? now : existing.publishedAt,
+        now,
+        id
+      );
+      enforceHomepageHighlightLimit(now);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    sendJson(response, 200, getState());
     return;
   }
 
@@ -452,6 +703,10 @@ async function handleApi(request, response, url) {
       importRatingSnapshots(body.ratingSnapshots);
     }
 
+    if (Array.isArray(body.homepageHighlights)) {
+      replaceHomepageHighlights(body.homepageHighlights);
+    }
+
     saveTeams(body.currentTeams || { radiant: [], dire: [] });
     savePlayoffTeams(body.playoffTeams || { A: [], B: [], C: [], D: [] });
     sendJson(response, 200, getState());
@@ -535,6 +790,205 @@ function isPublicMutation(method, pathname) {
   return method === "POST" && ["/api/teams", "/api/teams/manual"].includes(pathname);
 }
 
+function getHomepageHighlights({ publishedOnly = false } = {}) {
+  const where = publishedOnly ? "WHERE status = 'published'" : "";
+  const limit = publishedOnly ? "LIMIT 3" : "";
+  return db.prepare(`
+    SELECT id, match_record_id, player_id, date, match_no, match_id, player_name, hero, image, object_position,
+           framing, layout, status, sort_order, fallback, published_at, created_at, updated_at
+    FROM homepage_highlights
+    ${where}
+    ORDER BY
+      CASE status WHEN 'published' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
+      sort_order ASC,
+      updated_at DESC
+    ${limit}
+  `).all().map(mapHomepageHighlight);
+}
+
+function clampHomepageFramingNumber(value, fallback, minimum, maximum) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.min(maximum, Math.max(minimum, Math.round(numeric * 100) / 100)) : fallback;
+}
+
+function normalizeHomepageHighlightFraming(input = {}, objectPosition = "50% 47%") {
+  const positionMatch = String(objectPosition).trim().match(/^(\d{1,3})%\s+(\d{1,3})%$/);
+  const fallback = {
+    x: clampHomepageFramingNumber(positionMatch?.[1], 50, 0, 100),
+    y: clampHomepageFramingNumber(positionMatch?.[2], 47, 0, 100),
+    scale: 1
+  };
+  const source = input && typeof input === "object" ? input : {};
+  const normalizeFrame = (frame, defaults) => ({
+    x: clampHomepageFramingNumber(frame?.x, defaults.x, 0, 100),
+    y: clampHomepageFramingNumber(frame?.y, defaults.y, 0, 100),
+    scale: clampHomepageFramingNumber(frame?.scale, defaults.scale, 1, 1.4),
+    textX: clampHomepageFramingNumber(frame?.textX, defaults.textX ?? 0, -40, 40),
+    textY: clampHomepageFramingNumber(frame?.textY, defaults.textY ?? 0, -40, 40),
+    textScale: clampHomepageFramingNumber(frame?.textScale, defaults.textScale ?? 1, 0.6, 3.2)
+  });
+  const desktop = normalizeFrame(source.desktop, { ...fallback, textX: 0, textY: 0, textScale: 1 });
+  const legacyMobile = source.syncMobile === false ? source.mobile : desktop;
+  return {
+    desktop,
+    desktop4k: normalizeFrame(source.desktop4k, desktop),
+    ultrawide: normalizeFrame(source.ultrawide, desktop),
+    mobile: normalizeFrame(source.mobile, legacyMobile || desktop)
+  };
+}
+
+function mapHomepageHighlight(row) {
+  const objectPosition = row.object_position || "50% 47%";
+  return {
+    id: row.id,
+    matchRecordId: row.match_record_id || "",
+    playerId: row.player_id || "",
+    date: row.date,
+    matchNo: Number(row.match_no || 1),
+    matchId: row.match_id || "",
+    playerName: row.player_name,
+    hero: row.hero,
+    image: row.image,
+    objectPosition,
+    framing: normalizeHomepageHighlightFraming(parseJsonObject(row.framing), objectPosition),
+    layout: row.layout === "image-left" ? "image-left" : "image-right",
+    status: ["draft", "published", "archived"].includes(row.status) ? row.status : "draft",
+    sortOrder: Number(row.sort_order || 0),
+    fallback: parseJsonObject(row.fallback),
+    publishedAt: row.published_at || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  };
+}
+
+function normalizeHomepageHighlight(input = {}) {
+  const matchRecordId = String(input.matchRecordId || "").trim();
+  const playerId = String(input.playerId || "").trim();
+  const linkedMatch = matchRecordId ? findHomepageHighlightMatch({ matchRecordId }) : null;
+  if (matchRecordId && !linkedMatch) throw createHttpError(400, "所选比赛不存在，请重新选择");
+  const linkedPlayer = linkedMatch && playerId ? findHomepageHighlightPlayer(linkedMatch, { playerId }) : null;
+  if (linkedMatch && playerId && !linkedPlayer) throw createHttpError(400, "所选选手不在这场比赛的完整数据中");
+
+  const date = String(linkedMatch?.date || input.date || "").trim();
+  const playerName = String(linkedPlayer?.name || input.playerName || "").trim().slice(0, 80);
+  const hero = String(linkedPlayer?.detail?.hero || input.hero || "").trim().slice(0, 80);
+  const image = String(input.image || "").trim().replaceAll("\\", "/");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw createHttpError(400, "请选择有效的比赛日期");
+  if (!playerName) throw createHttpError(400, "选手昵称不能为空");
+  if (!hero) throw createHttpError(400, "英雄名称不能为空");
+  const uploadedImage = /^\/uploads\/highlights\/[a-f0-9-]{36}\.webp$/.test(image);
+  if (!image.startsWith("./assets/") && !image.startsWith("/assets/") && !uploadedImage) {
+    throw createHttpError(400, "请先选择并上传首页图片");
+  }
+  if (uploadedImage && !existsSync(join(HIGHLIGHT_UPLOAD_DIR, image.split("/").pop()))) {
+    throw createHttpError(400, "上传图片不存在，请重新上传");
+  }
+
+  const objectPosition = /^\d{1,3}%\s+\d{1,3}%$/.test(String(input.objectPosition || "").trim())
+    ? String(input.objectPosition).trim()
+    : "50% 47%";
+  const framing = normalizeHomepageHighlightFraming(input.framing, objectPosition);
+  const fallbackInput = input.fallback && typeof input.fallback === "object" ? input.fallback : {};
+  const fallback = Object.fromEntries(
+    Object.entries(fallbackInput).filter(([, value]) => ["string", "number", "boolean"].includes(typeof value))
+  );
+  return {
+    matchRecordId: linkedMatch?.id || matchRecordId,
+    playerId: linkedPlayer?.id || playerId,
+    date,
+    matchNo: Math.max(1, Math.min(99, Number(linkedMatch?.match_no || input.matchNo || 1))),
+    matchId: String(linkedMatch?.match_id || input.matchId || "").trim().slice(0, 80),
+    playerName,
+    hero,
+    image,
+    objectPosition: `${framing.desktop.x}% ${framing.desktop.y}%`,
+    framing,
+    layout: input.layout === "image-left" ? "image-left" : "image-right",
+    fallback
+  };
+}
+
+function findHomepageHighlightMatch(highlight = {}) {
+  if (highlight.matchRecordId) {
+    return db.prepare("SELECT * FROM matches WHERE id = ?").get(String(highlight.matchRecordId));
+  }
+  if (highlight.matchId) {
+    const byExternalId = db.prepare("SELECT * FROM matches WHERE match_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(String(highlight.matchId));
+    if (byExternalId) return byExternalId;
+  }
+  if (!highlight.date) return null;
+  return db.prepare("SELECT * FROM matches WHERE date = ? AND match_no = ? ORDER BY created_at DESC LIMIT 1")
+    .get(String(highlight.date), Number(highlight.matchNo || 1));
+}
+
+function findHomepageHighlightPlayer(match, highlight = {}) {
+  const details = parseJsonObject(match?.player_details || match?.playerDetails);
+  if (highlight.playerId && details[highlight.playerId]) {
+    const player = db.prepare("SELECT id, name FROM players WHERE id = ?").get(String(highlight.playerId));
+    return player ? { ...player, detail: details[player.id] } : null;
+  }
+  const players = db.prepare("SELECT id, name FROM players WHERE name = ? ORDER BY created_at ASC")
+    .all(String(highlight.playerName || ""));
+  const hero = String(highlight.hero || "").trim();
+  const player = players.find((item) => details[item.id] && (!hero || String(details[item.id]?.hero || "").trim() === hero))
+    || players.find((item) => details[item.id]);
+  return player ? { ...player, detail: details[player.id] } : null;
+}
+
+function createHttpError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function enforceHomepageHighlightLimit(now = new Date().toISOString()) {
+  const overflow = db.prepare(`
+    SELECT id FROM homepage_highlights
+    WHERE status = 'published'
+    ORDER BY sort_order ASC, published_at DESC, updated_at DESC
+    LIMIT -1 OFFSET 3
+  `).all();
+  const archive = db.prepare("UPDATE homepage_highlights SET status = 'archived', updated_at = ? WHERE id = ?");
+  overflow.forEach(({ id }) => archive.run(now, id));
+}
+
+function replaceHomepageHighlights(highlights) {
+  const insert = db.prepare(`
+    INSERT INTO homepage_highlights (
+      id, match_record_id, player_id, date, match_no, match_id, player_name, hero, image, object_position,
+      framing, layout, status, sort_order, fallback, published_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const now = new Date().toISOString();
+  db.exec("DELETE FROM homepage_highlights");
+  highlights.forEach((item, index) => {
+    const highlight = normalizeHomepageHighlight(item);
+    const status = ["draft", "published", "archived"].includes(item.status) ? item.status : "draft";
+    insert.run(
+      item.id || crypto.randomUUID(),
+      highlight.matchRecordId,
+      highlight.playerId,
+      highlight.date,
+      highlight.matchNo,
+      highlight.matchId,
+      highlight.playerName,
+      highlight.hero,
+      highlight.image,
+      highlight.objectPosition,
+      JSON.stringify(highlight.framing),
+      highlight.layout,
+      status,
+      Number.isFinite(Number(item.sortOrder)) ? Number(item.sortOrder) : index,
+      JSON.stringify(highlight.fallback),
+      item.publishedAt || "",
+      item.createdAt || now,
+      item.updatedAt || now
+    );
+  });
+  enforceHomepageHighlightLimit(now);
+}
+
 function getState() {
   const season = getActiveSeason();
   return {
@@ -562,6 +1016,7 @@ function getState() {
       FROM rating_snapshots
       ORDER BY date ASC, player_id ASC
     `).all(),
+    homepageHighlights: getHomepageHighlights(),
     currentTeams: getTeams(),
     playoffTeams: getPlayoffTeams(),
     playoffTeamNames: getPlayoffTeamNames(),
@@ -1536,6 +1991,22 @@ async function readJson(request) {
 }
 
 async function serveStatic(request, response, pathname) {
+  if (pathname.startsWith("/uploads/")) {
+    if (!/^\/uploads\/highlights\/[a-f0-9-]{36}\.webp$/.test(pathname)) {
+      sendJson(response, 404, { error: "图片不存在" });
+      return;
+    }
+    const path = join(HIGHLIGHT_UPLOAD_DIR, pathname.split("/").pop());
+    if (!existsSync(path)) {
+      sendJson(response, 404, { error: "图片不存在" });
+      return;
+    }
+    response.writeHead(200, { "Content-Type": "image/webp", "Content-Length": statSync(path).size,
+      "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" });
+    if (request.method === "HEAD") response.end();
+    else createReadStream(path).on("error", () => response.destroy()).pipe(response);
+    return;
+  }
   const requested = pathname === "/" ? "/index.html" : pathname;
   const filePath = normalize(join(__dirname, decodeURIComponent(requested)));
 

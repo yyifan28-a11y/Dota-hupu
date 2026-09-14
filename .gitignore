@@ -8,6 +8,10 @@ node_modules/
 # Local logs and backups.
 *.log
 backups/
+uploads/
+/tmp/
+/记录/*.xlsx
+*.blend1
 
 # OS/editor noise.
 .DS_Store

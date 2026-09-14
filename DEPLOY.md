@@ -63,4 +63,12 @@ $env:DATABASE_PATH="E:\Coding\Codex Project\Dota-S3-Redesign\data\dota.db"; $env
 
 ## 注意
 
+## 首页图片上传
+
+管理员可在首页图管理中直接选择 PNG、JPG 或 WebP（最大 10 MB），保存草稿时上传。服务端验证图片并转为质量 90 的 WebP，最长边限制为 3840 像素，不放大小图。现有 assets 图片仍兼容。
+
+上传目录默认是 S3 数据库所在目录下的 `uploads/highlights`。例如 `S3_DATABASE_PATH=/data/dota-s3.db` 时，图片保存在 `/data/uploads/highlights`，和 SQLite 共用 `/data` 持久化 Volume。也可以设置 `HIGHLIGHT_UPLOAD_DIR` 指向其他持久化目录。不要指向随部署替换的临时文件系统。
+
+部署新版后需要安装依赖（`npm ci`）并重启服务。JSON 数据备份只包含图片引用，不包含上传的二进制图片；迁移、备份时需同时保存上传目录。归档不会删除图片，取消或替换上传也不会自动清理旧文件，避免破坏仍被引用的图片。
+
 如果没有配置 `DATABASE_PATH=/data/dota.db` 和 Volume，云端重启或重新部署后数据可能丢失。

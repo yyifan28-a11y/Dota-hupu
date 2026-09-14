@@ -4,6 +4,7 @@ let db = {
   readOnly: false,
   players: [],
   matches: [],
+  homepageHighlights: null,
   currentTeams: { radiant: [], dire: [] },
   playoffTeams: { A: [], B: [], C: [], D: [] },
   playoffTeamNames: { A: "A", B: "B", C: "C", D: "D" },
@@ -15,10 +16,11 @@ const CURRENT_SEASON = new URLSearchParams(window.location.search).get("season")
 const IS_ARCHIVE_SEASON = CURRENT_SEASON === "s2";
 const REQUESTED_VIEW = new URLSearchParams(window.location.search).get("view") || "";
 const REQUESTED_PLAYER_ID = new URLSearchParams(window.location.search).get("player") || "";
+const IS_HOMEPAGE_PREVIEW_FRAME = new URLSearchParams(window.location.search).get("homepagePreview") === "1";
 const POSITIONS = ["1", "2", "3", "4", "5"];
 const HEROES = Array.isArray(window.DOTA_HEROES) ? window.DOTA_HEROES : [];
 const HERO_IMAGE_BASE = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes";
-const DASHBOARD_HIGHLIGHTS = Object.freeze([
+const DEFAULT_DASHBOARD_HIGHLIGHTS = Object.freeze([
   Object.freeze({
     date: "2026-05-17",
     matchNo: 2,
@@ -161,6 +163,14 @@ let selectedPlayerProfileMatchDate = "";
 let adminPlayoffDraftTeams = null;
 let adminPlayoffSelectedPlayerId = "";
 let adminPlayoffSelectedTeam = "";
+let editingHomepageHighlightId = "";
+let homepageHighlightPreviewOverride = null;
+let homepageHighlightObjectUrl = "";
+let homepageFramingDraft = null;
+let homepageFramingDevice = "desktop";
+let homepageFramingTarget = "image";
+let homepageFramingFrameReady = false;
+let homepageFramingDragState = null;
 let teamGenerationCooldownTimer = null;
 let playerSearchSelectedId = "";
 let isComposingPlayerSearch = false;
@@ -180,6 +190,13 @@ let pairRankModes = {
   stomp: "winrate"
 };
 let stateLoadPromise = null;
+
+const HOMEPAGE_FRAMING_DEVICES = Object.freeze({
+  desktop: Object.freeze({ label: "1080P", width: 1920, height: 1080 }),
+  desktop4k: Object.freeze({ label: "4K", width: 3840, height: 2160 }),
+  ultrawide: Object.freeze({ label: "超宽屏", width: 3440, height: 1440 }),
+  mobile: Object.freeze({ label: "手机", width: 390, height: 844 })
+});
 
 const dataSortState = {
   basicData: { key: "rating", direction: "desc" },
@@ -847,68 +864,147 @@ function renderDashboard() {
   renderDashboardMatches();
 }
 
+function clampHomepageFramingValue(value, fallback, minimum, maximum) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.min(maximum, Math.max(minimum, Math.round(numeric * 100) / 100)) : fallback;
+}
+
+function normalizeHomepageFramingForClient(highlight = {}) {
+  const positionMatch = String(highlight.objectPosition || "50% 47%").match(/^(\d{1,3})%\s+(\d{1,3})%$/);
+  const fallback = {
+    x: clampHomepageFramingValue(positionMatch?.[1], 50, 0, 100),
+    y: clampHomepageFramingValue(positionMatch?.[2], 47, 0, 100),
+    scale: 1
+  };
+  const framing = highlight.framing && typeof highlight.framing === "object" ? highlight.framing : {};
+  const normalizeFrame = (frame, defaults) => ({
+    x: clampHomepageFramingValue(frame?.x, defaults.x, 0, 100),
+    y: clampHomepageFramingValue(frame?.y, defaults.y, 0, 100),
+    scale: clampHomepageFramingValue(frame?.scale, defaults.scale, 1, 1.4),
+    textX: clampHomepageFramingValue(frame?.textX, defaults.textX ?? 0, -40, 40),
+    textY: clampHomepageFramingValue(frame?.textY, defaults.textY ?? 0, -40, 40),
+    textScale: clampHomepageFramingValue(frame?.textScale, defaults.textScale ?? 1, 0.6, 3.2)
+  });
+  const desktop = normalizeFrame(framing.desktop, { ...fallback, textX: 0, textY: 0, textScale: 1 });
+  const legacyMobile = framing.syncMobile === false ? framing.mobile : desktop;
+  return {
+    desktop,
+    desktop4k: normalizeFrame(framing.desktop4k, desktop),
+    ultrawide: normalizeFrame(framing.ultrawide, desktop),
+    mobile: normalizeFrame(framing.mobile, legacyMobile || desktop)
+  };
+}
+
+function getHomepageHighlightImageStyle(highlight = {}) {
+  const framing = normalizeHomepageFramingForClient(highlight);
+  return [
+    `--highlight-object-position: ${framing.desktop.x}% ${framing.desktop.y}%`,
+    `--highlight-image-scale: ${framing.desktop.scale}`,
+    `--highlight-4k-object-position: ${framing.desktop4k.x}% ${framing.desktop4k.y}%`,
+    `--highlight-4k-image-scale: ${framing.desktop4k.scale}`,
+    `--highlight-ultrawide-object-position: ${framing.ultrawide.x}% ${framing.ultrawide.y}%`,
+    `--highlight-ultrawide-image-scale: ${framing.ultrawide.scale}`,
+    `--highlight-mobile-object-position: ${framing.mobile.x}% ${framing.mobile.y}%`,
+    `--highlight-mobile-image-scale: ${framing.mobile.scale}`
+  ].join("; ");
+}
+
+function getHomepageHighlightContentStyle(highlight = {}) {
+  const framing = normalizeHomepageFramingForClient(highlight);
+  return [
+    `--highlight-content-x: ${framing.desktop.textX}`,
+    `--highlight-content-y: ${framing.desktop.textY}`,
+    `--highlight-content-scale: ${framing.desktop.textScale}`,
+    `--highlight-4k-content-x: ${framing.desktop4k.textX}`,
+    `--highlight-4k-content-y: ${framing.desktop4k.textY}`,
+    `--highlight-4k-content-scale: ${framing.desktop4k.textScale}`,
+    `--highlight-ultrawide-content-x: ${framing.ultrawide.textX}`,
+    `--highlight-ultrawide-content-y: ${framing.ultrawide.textY}`,
+    `--highlight-ultrawide-content-scale: ${framing.ultrawide.textScale}`,
+    `--highlight-mobile-content-x: ${framing.mobile.textX}`,
+    `--highlight-mobile-content-y: ${framing.mobile.textY}`,
+    `--highlight-mobile-content-scale: ${framing.mobile.textScale}`
+  ].join("; ");
+}
+
+function getDashboardHighlights() {
+  if (homepageHighlightPreviewOverride) return [homepageHighlightPreviewOverride];
+  if (!Array.isArray(db.homepageHighlights)) return DEFAULT_DASHBOARD_HIGHLIGHTS;
+  return db.homepageHighlights
+    .filter((highlight) => highlight.status === "published")
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
+    .slice(0, 3);
+}
+
 function renderDashboardHighlight() {
   const target = $("#featuredHighlight");
   if (!target) return;
-  const highlight = DASHBOARD_HIGHLIGHTS[activeDashboardHighlightIndex] || DASHBOARD_HIGHLIGHTS[0];
+  const highlights = getDashboardHighlights();
+  if (activeDashboardHighlightIndex >= highlights.length) activeDashboardHighlightIndex = 0;
+  const highlight = highlights[activeDashboardHighlightIndex] || highlights[0];
   if (!highlight) {
     target.replaceChildren();
     return;
   }
 
   const candidateMatch = db.matches.find((item) =>
-    String(item.matchId || "") === highlight.matchId
+    (highlight.matchRecordId && item.id === highlight.matchRecordId)
+    || (highlight.matchId && String(item.matchId || "") === highlight.matchId)
     || (item.date === highlight.date && Number(item.matchNo || 1) === highlight.matchNo)
   );
   const matchDetails = Object.entries(candidateMatch?.playerDetails || {});
-  const playerDetailEntry = matchDetails.find(([playerId, detail]) =>
+  const playerDetailEntry = matchDetails.find(([playerId]) => playerId === highlight.playerId)
+    || matchDetails.find(([playerId, detail]) =>
     getPlayer(playerId)?.name === highlight.playerName
     && getHeroIdentity(detail?.hero).key === getHeroIdentity(highlight.hero).key
   ) || matchDetails.find(([, detail]) =>
     getHeroIdentity(detail?.hero).key === getHeroIdentity(highlight.hero).key
   );
   const match = playerDetailEntry ? candidateMatch : null;
-  const detail = playerDetailEntry?.[1] || highlight.fallback;
+  const fallback = highlight.fallback || {};
+  const detail = playerDetailEntry?.[1] || fallback;
   const playerName = playerDetailEntry
     ? getPlayer(playerDetailEntry[0])?.name || highlight.playerName
     : highlight.playerName;
-  const kills = Number(detail.kills ?? highlight.fallback.kills);
-  const deaths = Number(detail.deaths ?? highlight.fallback.deaths);
-  const assists = Number(detail.assists ?? highlight.fallback.assists);
+  const kills = Number(detail.kills ?? fallback.kills ?? 0);
+  const deaths = Number(detail.deaths ?? fallback.deaths ?? 0);
+  const assists = Number(detail.assists ?? fallback.assists ?? 0);
   const matchDate = String(match?.date || highlight.date || "");
   const matchNumber = Number(match?.matchNo || highlight.matchNo || 1);
   const displayDate = `${matchDate.slice(5)}-${String(matchNumber).padStart(2, "0")}`;
   const interactiveAttributes = match
     ? `data-open-match="${escapeHtml(match.id)}" tabindex="0" role="button" aria-label="查看 ${escapeHtml(displayDate)} ${escapeHtml(playerName)} 的比赛详情"`
     : "";
-  const hasMultipleHighlights = DASHBOARD_HIGHLIGHTS.length > 1;
-  const previousIndex = (activeDashboardHighlightIndex - 1 + DASHBOARD_HIGHLIGHTS.length) % DASHBOARD_HIGHLIGHTS.length;
-  const nextIndex = (activeDashboardHighlightIndex + 1) % DASHBOARD_HIGHLIGHTS.length;
+  const hasMultipleHighlights = highlights.length > 1;
+  const previousIndex = (activeDashboardHighlightIndex - 1 + highlights.length) % highlights.length;
+  const nextIndex = (activeDashboardHighlightIndex + 1) % highlights.length;
 
   target.innerHTML = `
     <article class="dashboard-highlight${match ? " is-interactive" : ""}${highlight.layout === "image-left" ? " is-image-left" : ""}" ${interactiveAttributes}>
-      <img class="dashboard-highlight-image" src="${escapeHtml(highlight.image)}" alt="" style="object-position: ${escapeHtml(highlight.objectPosition || "50% 47%")}" fetchpriority="high" />
+      <img class="dashboard-highlight-image" src="${escapeHtml(highlight.image)}" alt="" style="${escapeHtml(getHomepageHighlightImageStyle(highlight))}" fetchpriority="high" />
       <div class="dashboard-highlight-grid" aria-hidden="true"></div>
       <div class="dashboard-highlight-content">
-        <time class="dashboard-highlight-date" datetime="${escapeHtml(matchDate)}">${escapeHtml(displayDate)}</time>
-        <div class="dashboard-highlight-title">
-          <p>${escapeHtml(playerName)}</p>
-          <h3>${escapeHtml(highlight.hero)}</h3>
-        </div>
-        <dl class="dashboard-highlight-stats">
-          <div>
-            <dt>K / D / A</dt>
-            <dd>${kills} / ${deaths} / ${assists}</dd>
+        <div class="dashboard-highlight-copy" style="${escapeHtml(getHomepageHighlightContentStyle(highlight))}">
+          <time class="dashboard-highlight-date" datetime="${escapeHtml(matchDate)}">${escapeHtml(displayDate)}</time>
+          <div class="dashboard-highlight-title">
+            <p>${escapeHtml(playerName)}</p>
+            <h3>${escapeHtml(highlight.hero)}</h3>
           </div>
-        </dl>
+          <dl class="dashboard-highlight-stats">
+            <div>
+              <dt>K / D / A</dt>
+              <dd>${kills} / ${deaths} / ${assists}</dd>
+            </div>
+          </dl>
+        </div>
       </div>
     </article>
     ${hasMultipleHighlights ? `
       <button class="dashboard-highlight-arrow is-previous" type="button" data-dashboard-highlight-index="${previousIndex}" aria-label="上一张首页图">
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
       </button>
-      <span class="dashboard-highlight-position" aria-label="第 ${activeDashboardHighlightIndex + 1} 张，共 ${DASHBOARD_HIGHLIGHTS.length} 张">
-        ${String(activeDashboardHighlightIndex + 1).padStart(2, "0")} / ${String(DASHBOARD_HIGHLIGHTS.length).padStart(2, "0")}
+      <span class="dashboard-highlight-position" aria-label="第 ${activeDashboardHighlightIndex + 1} 张，共 ${highlights.length} 张">
+        ${String(activeDashboardHighlightIndex + 1).padStart(2, "0")} / ${String(highlights.length).padStart(2, "0")}
       </span>
       <button class="dashboard-highlight-arrow is-next" type="button" data-dashboard-highlight-index="${nextIndex}" aria-label="下一张首页图">
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg>
@@ -920,7 +1016,7 @@ function renderDashboardHighlight() {
 }
 
 function showDashboardHighlight(index) {
-  const count = DASHBOARD_HIGHLIGHTS.length;
+  const count = getDashboardHighlights().length;
   if (count < 2) return;
   const nextIndex = ((Number(index) || 0) % count + count) % count;
   if (nextIndex === activeDashboardHighlightIndex) return;
@@ -930,7 +1026,7 @@ function showDashboardHighlight(index) {
 
 function preloadDashboardHighlightImages() {
   const loadRemainingImages = () => {
-    DASHBOARD_HIGHLIGHTS.forEach((highlight, index) => {
+    getDashboardHighlights().forEach((highlight, index) => {
       if (index === activeDashboardHighlightIndex || preloadedDashboardHighlightImages.has(highlight.image)) return;
       const image = new Image();
       image.decoding = "async";
@@ -2840,7 +2936,7 @@ function renderRatingTrendChart(snapshots, selectedIds) {
   const xLabels = dates.map((date, index) => {
     if (index % dateStep !== 0 && index !== dates.length - 1) return "";
     const x = xFor(index);
-    return `<text class="rating-trend-axis" x="${x}" y="${height - margin.bottom + 18}" text-anchor="middle">${formatRatingTrendDateLabel(date, snapshots)}</text>`;
+    return `<text class="rating-trend-axis" data-trend-date="${index}" x="${x}" y="${height - margin.bottom + 18}" text-anchor="middle">${formatRatingTrendDateLabel(date, snapshots)}</text>`;
   }).join("");
   const paths = series.map((item) => {
     const path = item.points.reduce((commands, point, index) => {
@@ -2853,7 +2949,7 @@ function renderRatingTrendChart(snapshots, selectedIds) {
     const label = lastPoint
       ? `<text class="rating-trend-series-label" x="${xFor(lastPointIndex) + 10}" y="${yFor(lastPoint.rating) + 4}" fill="${item.color}">${escapeHtml(item.name)}</text>`
       : "";
-    const markers = item.points.map((point, index) => point.rating === null ? "" : `<circle class="rating-trend-dot" cx="${xFor(index).toFixed(1)}" cy="${yFor(point.rating).toFixed(1)}" r="3" fill="${item.color}"><title>${escapeHtml(item.name)} ${point.date}: ${formatRating(point.rating)}</title></circle>`).join("");
+    const markers = item.points.map((point, index) => point.rating === null ? "" : `<circle class="rating-trend-dot" data-trend-date="${index}" cx="${xFor(index).toFixed(1)}" cy="${yFor(point.rating).toFixed(1)}" r="4" fill="${item.color}"><title>${escapeHtml(item.name)} ${point.date}: ${formatRating(point.rating)}</title></circle>`).join("");
     return `
       <g class="rating-trend-series">
         <path class="rating-trend-hit-line" d="${path.trim()}" />
@@ -2865,9 +2961,10 @@ function renderRatingTrendChart(snapshots, selectedIds) {
   }).join("");
   const emptySelectionLabel = selectedIds.length ? "" : `<text class="rating-trend-empty-label" x="${margin.left + plotWidth / 2}" y="${margin.top + plotHeight / 2}" text-anchor="middle">未选择选手</text>`;
   return `
-    <svg class="rating-trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="选手评分走势折线图">
+    <svg class="rating-trend-svg" data-date-count="${dates.length}" data-plot-left="${margin.left}" data-plot-width="${plotWidth}" data-plot-top="${margin.top}" data-plot-bottom="${height - margin.bottom}" viewBox="0 0 ${width} ${height}" role="img" aria-label="选手评分走势折线图">
       <rect class="rating-trend-plot-bg" x="${margin.left}" y="${margin.top}" width="${plotWidth}" height="${plotHeight}" />
       ${grid}
+      <rect class="rating-trend-date-highlight" y="${margin.top}" height="${plotHeight}" visibility="hidden" />
       <line class="rating-trend-axis-line" x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" />
       <line class="rating-trend-axis-line" x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${height - margin.bottom}" />
       ${xLabels}
@@ -2875,6 +2972,43 @@ function renderRatingTrendChart(snapshots, selectedIds) {
       ${paths}
     </svg>
   `;
+}
+
+function clearRatingTrendDateHover(svg) {
+  if (!svg || svg.dataset.activeDate === undefined) return;
+  svg.querySelectorAll(".is-date-active").forEach((node) => node.classList.remove("is-date-active"));
+  svg.querySelector(".rating-trend-date-highlight")?.setAttribute("visibility", "hidden");
+  delete svg.dataset.activeDate;
+}
+
+function handleRatingTrendDateHover(event) {
+  const svg = event.currentTarget.querySelector(".rating-trend-svg");
+  if (!svg) return;
+  const matrix = svg.getScreenCTM();
+  if (!matrix) return;
+  const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+  const left = Number(svg.dataset.plotLeft);
+  const width = Number(svg.dataset.plotWidth);
+  const top = Number(svg.dataset.plotTop);
+  const bottom = Number(svg.dataset.plotBottom);
+  if (point.x < left || point.x > left + width || point.y < top || point.y > bottom + 26) {
+    clearRatingTrendDateHover(svg);
+    return;
+  }
+  const count = Number(svg.dataset.dateCount);
+  const step = count > 1 ? width / (count - 1) : width;
+  const index = count > 1 ? Math.min(count - 1, Math.max(0, Math.round((point.x - left) / step))) : 0;
+  if (svg.dataset.activeDate === String(index)) return;
+  clearRatingTrendDateHover(svg);
+  svg.dataset.activeDate = String(index);
+  svg.querySelectorAll(`[data-trend-date="${index}"]`).forEach((node) => node.classList.add("is-date-active"));
+  const center = count > 1 ? left + step * index : left + width / 2;
+  const start = Math.max(left, center - step / 2);
+  const end = Math.min(left + width, center + step / 2);
+  const highlight = svg.querySelector(".rating-trend-date-highlight");
+  highlight.setAttribute("x", String(start));
+  highlight.setAttribute("width", String(end - start));
+  highlight.setAttribute("visibility", "visible");
 }
 
 function getRatingTrendDates(snapshots) {
@@ -3805,11 +3939,415 @@ function getMatchTotalKills(match) {
 }
 
 function renderAdmin() {
+  renderAdminHomepageHighlights();
   renderAdminPlayers();
   renderAdminPlayoffTeams();
   renderMatchEntryEditor();
   renderAdminMatches();
   updateAdminUi();
+}
+
+function getHomepageHighlightPresentation(highlight) {
+  const candidateMatch = db.matches.find((item) =>
+    (highlight.matchRecordId && item.id === highlight.matchRecordId)
+    || (highlight.matchId && String(item.matchId || "") === String(highlight.matchId))
+    || (item.date === highlight.date && Number(item.matchNo || 1) === Number(highlight.matchNo || 1))
+  );
+  const detailEntry = Object.entries(candidateMatch?.playerDetails || {}).find(([playerId]) => playerId === highlight.playerId)
+    || Object.entries(candidateMatch?.playerDetails || {}).find(([playerId, detail]) =>
+    getPlayer(playerId)?.name === highlight.playerName
+    && getHeroIdentity(detail?.hero).key === getHeroIdentity(highlight.hero).key
+  ) || Object.entries(candidateMatch?.playerDetails || {}).find(([, detail]) =>
+    getHeroIdentity(detail?.hero).key === getHeroIdentity(highlight.hero).key
+  );
+  const fallback = highlight.fallback || {};
+  const detail = detailEntry?.[1] || fallback;
+  return {
+    playerName: detailEntry ? getPlayer(detailEntry[0])?.name || highlight.playerName : highlight.playerName,
+    kills: Number(detail.kills ?? fallback.kills ?? 0),
+    deaths: Number(detail.deaths ?? fallback.deaths ?? 0),
+    assists: Number(detail.assists ?? fallback.assists ?? 0),
+    displayDate: `${String(highlight.date || "").slice(5)}-${String(Number(highlight.matchNo || 1)).padStart(2, "0")}`,
+    hasMatch: Boolean(detailEntry)
+  };
+}
+
+function renderAdminHomepageHighlights() {
+  const target = $("#adminHomepageHighlights");
+  if (!target) return;
+  const highlights = Array.isArray(db.homepageHighlights) ? db.homepageHighlights : [];
+  const published = highlights.filter((highlight) => highlight.status === "published")
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+  const drafts = highlights.filter((highlight) => highlight.status === "draft")
+    .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+  const archived = highlights.filter((highlight) => highlight.status === "archived")
+    .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+  const summary = $("#homepageHighlightSummary");
+  if (summary) summary.textContent = `${published.length}/3 展示中 · ${drafts.length} 张草稿 · ${archived.length} 张归档`;
+
+  const renderGroup = (title, items, status) => `
+    <section class="admin-highlight-group" data-highlight-status="${status}">
+      <div class="admin-highlight-group-heading">
+        <strong>${title}</strong>
+        <span>${items.length}</span>
+      </div>
+      <div class="admin-highlight-grid">
+        ${items.length ? items.map((highlight, index) => renderAdminHomepageHighlightCard(highlight, index, items.length)).join("") : `<p class="admin-highlight-empty">暂无${title}</p>`}
+      </div>
+    </section>
+  `;
+
+  target.innerHTML = [
+    renderGroup("首页展示", published, "published"),
+    renderGroup("草稿", drafts, "draft"),
+    renderGroup("已归档", archived, "archived")
+  ].join("");
+  renderHomepageHighlightMatchOptions();
+}
+
+function renderAdminHomepageHighlightCard(highlight, index, groupLength) {
+  const presentation = getHomepageHighlightPresentation(highlight);
+  const framing = normalizeHomepageFramingForClient(highlight);
+  const statusLabels = { published: "展示中", draft: "草稿", archived: "已归档" };
+  const orderActions = highlight.status === "published" ? `
+    <button class="ghost-button compact-button" data-move-highlight="up" data-highlight-id="${escapeHtml(highlight.id)}" type="button" ${index === 0 ? "disabled" : ""} aria-label="向前移动">上移</button>
+    <button class="ghost-button compact-button" data-move-highlight="down" data-highlight-id="${escapeHtml(highlight.id)}" type="button" ${index === groupLength - 1 ? "disabled" : ""} aria-label="向后移动">下移</button>
+  ` : "";
+  const primaryAction = highlight.status === "published"
+    ? `<button class="ghost-button compact-button danger-ghost-button" data-highlight-status-action="archived" data-highlight-id="${escapeHtml(highlight.id)}" type="button">归档</button>`
+    : `<button class="primary-button compact-button" data-highlight-status-action="published" data-highlight-id="${escapeHtml(highlight.id)}" type="button">发布</button>`;
+
+  return `
+    <article class="admin-highlight-card status-${escapeHtml(highlight.status)}">
+      <div class="admin-highlight-card-visual">
+        <img src="${escapeHtml(highlight.image)}" alt="${escapeHtml(`${highlight.playerName} ${highlight.hero} 首页图`)}" loading="lazy" />
+        <span class="admin-highlight-status">${statusLabels[highlight.status] || "草稿"}</span>
+        <span class="admin-highlight-layout">${highlight.layout === "image-left" ? "图左" : "图右"}</span>
+      </div>
+      <div class="admin-highlight-card-body">
+        <div class="admin-highlight-card-title">
+          <div>
+            <small>${escapeHtml(presentation.displayDate)}</small>
+            <strong>${escapeHtml(highlight.playerName)} · ${escapeHtml(highlight.hero)}</strong>
+          </div>
+          <span class="${presentation.hasMatch ? "is-linked" : "is-unlinked"}">${presentation.hasMatch ? "已关联比赛" : "未匹配比赛"}</span>
+        </div>
+        <p>${presentation.kills} / ${presentation.deaths} / ${presentation.assists}<code>${framing.desktop.x}% ${framing.desktop.y}% · ${Math.round(framing.desktop.scale * 100)}%</code></p>
+        <div class="admin-highlight-card-actions">
+          <button class="ghost-button compact-button" data-preview-highlight="${escapeHtml(highlight.id)}" type="button">取景</button>
+          <button class="ghost-button compact-button" data-edit-highlight="${escapeHtml(highlight.id)}" type="button">编辑</button>
+          ${orderActions}
+          ${primaryAction}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderHomepageHighlightMatchOptions(selectedId = "") {
+  const select = $("#homepageHighlightMatchRecordId");
+  if (!select) return;
+  const matches = getMatchesByScheduleDesc().filter(hasCompletePlayerDetails);
+  select.innerHTML = `
+    <option value="">选择一场已完整录入的比赛</option>
+    ${matches.map((match) => `<option value="${escapeHtml(match.id)}" ${match.id === selectedId ? "selected" : ""}>${escapeHtml(formatAdminMatchCode(match))}${match.matchId ? ` · ${escapeHtml(match.matchId)}` : ""}</option>`).join("")}
+  `;
+}
+
+function updateHomepageHighlightPlayerOptions(selectedPlayerId = "") {
+  const matchSelect = $("#homepageHighlightMatchRecordId");
+  const playerSelect = $("#homepageHighlightPlayerId");
+  const summary = $("#homepageHighlightLinkedSummary");
+  if (!matchSelect || !playerSelect || !summary) return;
+  const match = db.matches.find((item) => item.id === matchSelect.value);
+  if (!match) {
+    playerSelect.disabled = true;
+    playerSelect.innerHTML = `<option value="">请先选择比赛</option>`;
+    summary.innerHTML = `<span>选择比赛和选手后，将自动带出日期、比赛 ID、英雄与 K/D/A。</span>`;
+    return;
+  }
+
+  const players = [...(match.radiant || []), ...(match.dire || [])]
+    .map((playerId) => ({ player: getPlayer(playerId), detail: match.playerDetails?.[playerId] || {} }))
+    .filter(({ player, detail }) => player && detail.hero);
+  playerSelect.disabled = false;
+  playerSelect.innerHTML = `
+    <option value="">选择本场发挥出色的选手</option>
+    ${players.map(({ player, detail }) => `<option value="${escapeHtml(player.id)}" ${player.id === selectedPlayerId ? "selected" : ""}>${escapeHtml(player.name)} · ${escapeHtml(detail.hero)} · ${Number(detail.kills || 0)}/${Number(detail.deaths || 0)}/${Number(detail.assists || 0)}</option>`).join("")}
+  `;
+  updateHomepageHighlightLinkedSummary();
+}
+
+function updateHomepageHighlightLinkedSummary() {
+  const match = db.matches.find((item) => item.id === $("#homepageHighlightMatchRecordId")?.value);
+  const playerId = $("#homepageHighlightPlayerId")?.value;
+  const detail = match?.playerDetails?.[playerId];
+  const player = getPlayer(playerId);
+  const summary = $("#homepageHighlightLinkedSummary");
+  if (!summary) return;
+  if (!match || !player || !detail) {
+    summary.innerHTML = `<span>请选择这场比赛中的一名选手。</span>`;
+    return;
+  }
+  summary.innerHTML = `
+    <span><b>${escapeHtml(formatAdminMatchCode(match))}</b>${match.matchId ? ` · 比赛 ID ${escapeHtml(match.matchId)}` : ""}</span>
+    <strong>${escapeHtml(player.name)} · ${escapeHtml(detail.hero)} · ${Number(detail.kills || 0)} / ${Number(detail.deaths || 0)} / ${Number(detail.assists || 0)}</strong>
+  `;
+}
+
+function resetHomepageHighlightForm(highlight = null) {
+  const form = $("#homepageHighlightForm");
+  if (!form) return;
+  if (homepageHighlightObjectUrl) {
+    URL.revokeObjectURL(homepageHighlightObjectUrl);
+    homepageHighlightObjectUrl = "";
+  }
+  editingHomepageHighlightId = highlight?.id || "";
+  form.hidden = false;
+  $("#homepageHighlightId").value = editingHomepageHighlightId;
+  const linkedMatch = db.matches.find((match) => match.id === highlight?.matchRecordId)
+    || db.matches.find((match) => highlight?.matchId && String(match.matchId || "") === String(highlight.matchId))
+    || db.matches.find((match) => match.date === highlight?.date && Number(match.matchNo || 1) === Number(highlight?.matchNo || 1));
+  const linkedPlayerId = highlight?.playerId
+    || Object.keys(linkedMatch?.playerDetails || {}).find((playerId) => getPlayer(playerId)?.name === highlight?.playerName);
+  renderHomepageHighlightMatchOptions(linkedMatch?.id || "");
+  updateHomepageHighlightPlayerOptions(linkedPlayerId || "");
+  $("#homepageHighlightImage").value = highlight?.image || "";
+  $("#homepageHighlightFile").value = "";
+  $("#homepageHighlightUploadStatus").textContent = highlight?.image
+    ? "已保留当前图片；选择新文件可替换。"
+    : "选择 PNG、JPG 或 WebP 图片，最大 10 MB。";
+  $("#homepageHighlightLayout").value = highlight?.layout === "image-left" ? "image-left" : "image-right";
+  writeHomepageFramingInput(normalizeHomepageFramingForClient(highlight || {}));
+  $("#saveHomepageHighlight").textContent = editingHomepageHighlightId ? "保存修改" : "保存草稿";
+  form.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function closeHomepageHighlightForm() {
+  const form = $("#homepageHighlightForm");
+  if (form) form.hidden = true;
+  editingHomepageHighlightId = "";
+  if (homepageHighlightObjectUrl) {
+    URL.revokeObjectURL(homepageHighlightObjectUrl);
+    homepageHighlightObjectUrl = "";
+  }
+}
+
+function cloneHomepageFraming(framing) {
+  return {
+    desktop: { ...framing.desktop },
+    desktop4k: { ...framing.desktop4k },
+    ultrawide: { ...framing.ultrawide },
+    mobile: { ...framing.mobile }
+  };
+}
+
+function readHomepageFramingInput() {
+  let framing = {};
+  try {
+    framing = JSON.parse($("#homepageHighlightFraming")?.value || "{}");
+  } catch {
+    framing = {};
+  }
+  return normalizeHomepageFramingForClient({
+    objectPosition: $("#homepageHighlightObjectPosition")?.value || "50% 47%",
+    framing
+  });
+}
+
+function writeHomepageFramingInput(framing) {
+  const normalized = normalizeHomepageFramingForClient({ framing });
+  const objectPosition = `${normalized.desktop.x}% ${normalized.desktop.y}%`;
+  const framingInput = $("#homepageHighlightFraming");
+  const positionInput = $("#homepageHighlightObjectPosition");
+  const summary = $("#homepageHighlightFramingSummary");
+  if (framingInput) framingInput.value = JSON.stringify(normalized);
+  if (positionInput) positionInput.value = objectPosition;
+  if (summary) {
+    summary.textContent = Object.entries(HOMEPAGE_FRAMING_DEVICES).map(([key, device]) => (
+      `${device.label} ${Math.round(normalized[key].scale * 100)}%`
+    )).join("｜");
+  }
+}
+
+function getHomepageFramingPreviewHighlight() {
+  const match = db.matches.find((item) => item.id === $("#homepageHighlightMatchRecordId")?.value);
+  const playerId = $("#homepageHighlightPlayerId")?.value || "";
+  const detail = match?.playerDetails?.[playerId] || {};
+  const player = getPlayer(playerId);
+  const image = homepageHighlightObjectUrl || $("#homepageHighlightImage")?.value || "";
+  return {
+    id: editingHomepageHighlightId || "homepage-framing-preview",
+    matchRecordId: match?.id || "",
+    playerId,
+    date: match?.date || new Date().toISOString().slice(0, 10),
+    matchNo: Number(match?.matchNo || 1),
+    matchId: String(match?.matchId || ""),
+    playerName: player?.name || "选手",
+    hero: String(detail.hero || "英雄"),
+    image,
+    layout: $("#homepageHighlightLayout")?.value === "image-left" ? "image-left" : "image-right",
+    objectPosition: `${homepageFramingDraft.desktop.x}% ${homepageFramingDraft.desktop.y}%`,
+    framing: cloneHomepageFraming(homepageFramingDraft),
+    fallback: {
+      kills: Number(detail.kills || 0),
+      deaths: Number(detail.deaths || 0),
+      assists: Number(detail.assists || 0)
+    }
+  };
+}
+
+function postHomepageFramingPreview(render = true) {
+  const frame = $("#homepageFramingFrame");
+  if (!homepageFramingFrameReady || !frame?.contentWindow || !homepageFramingDraft) return;
+  frame.contentWindow.postMessage({
+    type: "homepage-highlight-preview-update",
+    highlight: getHomepageFramingPreviewHighlight(),
+    target: homepageFramingTarget,
+    render
+  }, window.location.origin);
+}
+
+function getActiveHomepageFramingFrame() {
+  return homepageFramingDraft?.[homepageFramingDevice] || homepageFramingDraft?.desktop;
+}
+
+function getActiveHomepageFramingScale() {
+  const frame = getActiveHomepageFramingFrame();
+  return homepageFramingTarget === "text" ? frame.textScale : frame.scale;
+}
+
+function updateHomepageFramingControls() {
+  if (!homepageFramingDraft) return;
+  const frame = getActiveHomepageFramingFrame();
+  const zoom = $("#homepageFramingZoom");
+  const output = $("#homepageFramingZoomValue");
+  const activeScale = getActiveHomepageFramingScale();
+  if (zoom) {
+    zoom.min = homepageFramingTarget === "text" ? "60" : "100";
+    zoom.max = homepageFramingTarget === "text" ? "320" : "140";
+    zoom.value = String(Math.round(activeScale * 100));
+    zoom.setAttribute("aria-label", homepageFramingTarget === "text" ? "文字缩放比例" : "图片缩放比例");
+  }
+  if (output) output.value = `${Math.round(activeScale * 100)}%`;
+  $$("[data-homepage-framing-device]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.homepageFramingDevice === homepageFramingDevice);
+  });
+  $$("[data-homepage-framing-target]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.homepageFramingTarget === homepageFramingTarget);
+  });
+  const dragLayer = $("#homepageFramingDragLayer");
+  dragLayer?.setAttribute("aria-label", homepageFramingTarget === "image"
+    ? "拖动调整图片位置；方向键微调，按住 Shift 可加速"
+    : "拖动调整文字位置；方向键微调，按住 Shift 可加速");
+  dragLayer?.classList.toggle("is-text-target", homepageFramingTarget === "text");
+  const hint = $("#homepageFramingHint");
+  if (hint) {
+    const label = HOMEPAGE_FRAMING_DEVICES[homepageFramingDevice]?.label || "1080P";
+    hint.textContent = homepageFramingTarget === "image"
+      ? `${label} · 图片焦点 ${frame.x}% ${frame.y}% · 缩放 ${Math.round(frame.scale * 100)}%。拖动画面，滚轮缩放。`
+      : `${label} · 文字偏移 X ${frame.textX}% · Y ${frame.textY}% · 缩放 ${Math.round(frame.textScale * 100)}%。拖动文字，滑杆缩放。`;
+  }
+}
+
+function resizeHomepageFramingViewport() {
+  const stage = $("#homepageFramingStage");
+  const viewport = $("#homepageFramingViewport");
+  const frame = $("#homepageFramingFrame");
+  if (!stage || !viewport || !frame) return;
+  const device = HOMEPAGE_FRAMING_DEVICES[homepageFramingDevice] || HOMEPAGE_FRAMING_DEVICES.desktop;
+  const availableWidth = Math.max(280, stage.clientWidth);
+  const availableHeight = Math.max(320, Math.min(window.innerHeight * 0.64, 760));
+  const scale = Math.min(1, availableWidth / device.width, availableHeight / device.height);
+  viewport.style.width = `${device.width}px`;
+  viewport.style.height = `${device.height}px`;
+  viewport.style.transform = `scale(${scale})`;
+  frame.width = String(device.width);
+  frame.height = String(device.height);
+  stage.style.height = `${Math.ceil(device.height * scale)}px`;
+}
+
+function setHomepageFramingScale(percent) {
+  if (!homepageFramingDraft) return;
+  const frame = getActiveHomepageFramingFrame();
+  if (homepageFramingTarget === "text") {
+    frame.textScale = clampHomepageFramingValue(Number(percent) / 100, frame.textScale, 0.6, 3.2);
+  } else {
+    frame.scale = clampHomepageFramingValue(Number(percent) / 100, frame.scale, 1, 1.4);
+  }
+  updateHomepageFramingControls();
+  postHomepageFramingPreview(false);
+}
+
+function nudgeHomepageFraming(deltaX, deltaY) {
+  if (!homepageFramingDraft) return;
+  const frame = getActiveHomepageFramingFrame();
+  if (homepageFramingTarget === "text") {
+    frame.textX = clampHomepageFramingValue(frame.textX + deltaX, frame.textX, -40, 40);
+    frame.textY = clampHomepageFramingValue(frame.textY + deltaY, frame.textY, -40, 40);
+  } else {
+    frame.x = clampHomepageFramingValue(frame.x + deltaX, frame.x, 0, 100);
+    frame.y = clampHomepageFramingValue(frame.y + deltaY, frame.y, 0, 100);
+  }
+  updateHomepageFramingControls();
+  postHomepageFramingPreview(false);
+}
+
+function openHomepageHighlightFraming() {
+  const dialog = $("#homepageHighlightPreviewDialog");
+  const frame = $("#homepageFramingFrame");
+  const image = homepageHighlightObjectUrl || $("#homepageHighlightImage")?.value;
+  if (!dialog || !frame || !image) {
+    $("#homepageHighlightUploadStatus").textContent = "请先选择一张图片，再打开取景器。";
+    $("#homepageHighlightFile")?.focus();
+    return;
+  }
+  homepageFramingDraft = cloneHomepageFraming(readHomepageFramingInput());
+  homepageFramingDevice = "desktop";
+  homepageFramingTarget = "image";
+  homepageFramingFrameReady = false;
+  if (!frame.getAttribute("src")) frame.src = frame.dataset.src;
+  dialog.showModal();
+  resizeHomepageFramingViewport();
+  updateHomepageFramingControls();
+}
+
+function closeHomepageHighlightFraming({ apply = false } = {}) {
+  const dialog = $("#homepageHighlightPreviewDialog");
+  if (apply && homepageFramingDraft) writeHomepageFramingInput(homepageFramingDraft);
+  dialog?.close();
+  const frame = $("#homepageFramingFrame");
+  if (frame) {
+    frame.src = "about:blank";
+    frame.removeAttribute("src");
+  }
+  homepageFramingFrameReady = false;
+  homepageFramingDragState = null;
+}
+
+function initializeHomepagePreviewFrameMessaging() {
+  window.addEventListener("message", (event) => {
+    if (event.origin !== window.location.origin) return;
+    if (IS_HOMEPAGE_PREVIEW_FRAME && event.data?.type === "homepage-highlight-preview-update") {
+      homepageHighlightPreviewOverride = event.data.highlight;
+      activeDashboardHighlightIndex = 0;
+      if (event.data.render === false) {
+        const image = $("#featuredHighlight .dashboard-highlight-image");
+        if (image) image.setAttribute("style", getHomepageHighlightImageStyle(homepageHighlightPreviewOverride));
+        const content = $("#featuredHighlight .dashboard-highlight-copy");
+        if (content) content.setAttribute("style", getHomepageHighlightContentStyle(homepageHighlightPreviewOverride));
+      } else {
+        renderDashboardHighlight();
+      }
+      document.body.classList.toggle("homepage-preview-edit-text", event.data.target === "text");
+      return;
+    }
+    if (!IS_HOMEPAGE_PREVIEW_FRAME && event.source === $("#homepageFramingFrame")?.contentWindow
+      && event.data?.type === "homepage-highlight-preview-ready") {
+      homepageFramingFrameReady = true;
+      postHomepageFramingPreview(true);
+    }
+  });
 }
 
 function renderAdminPlayoffTeams() {
@@ -5073,6 +5611,7 @@ function bindEvents() {
   $("#previousMatchDate")?.addEventListener("click", () => moveDashboardMatchDate(-1));
   $("#nextMatchDate")?.addEventListener("click", () => moveDashboardMatchDate(1));
   $("#closeMatchDialog").addEventListener("click", () => $("#matchDetailDialog").close());
+  $("#closeHomepageHighlightPreview")?.addEventListener("click", () => closeHomepageHighlightFraming());
   $("#matchDetailDialog").addEventListener("click", (event) => {
     if (event.target.id === "matchDetailDialog") event.target.close();
   });
@@ -5219,6 +5758,11 @@ function bindEvents() {
     }
   });
 
+  $("#ratingTrendChart")?.addEventListener("pointermove", handleRatingTrendDateHover);
+  $("#ratingTrendChart")?.addEventListener("pointerleave", (event) => {
+    clearRatingTrendDateHover(event.currentTarget.querySelector(".rating-trend-svg"));
+  });
+
   $("#ratingTrends")?.addEventListener("change", (event) => {
     const input = event.target.closest("[data-rating-trend-player]");
     if (!input) return;
@@ -5284,6 +5828,247 @@ function bindEvents() {
       sortState.direction = "desc";
     }
     renderDataView();
+  });
+
+  $("#newHomepageHighlight")?.addEventListener("click", () => resetHomepageHighlightForm());
+  $("#cancelHomepageHighlight")?.addEventListener("click", closeHomepageHighlightForm);
+  $("#homepageHighlightMatchRecordId")?.addEventListener("change", () => updateHomepageHighlightPlayerOptions());
+  $("#homepageHighlightPlayerId")?.addEventListener("change", updateHomepageHighlightLinkedSummary);
+  $("#openHomepageHighlightFraming")?.addEventListener("click", openHomepageHighlightFraming);
+  $("#homepageHighlightFile")?.addEventListener("change", (event) => {
+    const file = event.target.files[0];
+    const status = $("#homepageHighlightUploadStatus");
+    if (file && (file.size > 10 * 1024 * 1024 || !["image/png", "image/jpeg", "image/webp"].includes(file.type))) {
+      event.target.value = "";
+      status.textContent = "请选择不超过 10 MB 的 PNG、JPG 或 WebP 图片。";
+      return;
+    }
+    if (homepageHighlightObjectUrl) URL.revokeObjectURL(homepageHighlightObjectUrl);
+    homepageHighlightObjectUrl = file ? URL.createObjectURL(file) : "";
+    status.textContent = file ? `已选择 ${file.name}（${(file.size / 1024 / 1024).toFixed(2)} MB），保存时上传。`
+      : $("#homepageHighlightImage").value ? "已保留当前图片。" : "请选择图片。";
+    if (file) openHomepageHighlightFraming();
+  });
+  $("#homepageFramingZoom")?.addEventListener("input", (event) => setHomepageFramingScale(event.target.value));
+  $("#homepageFramingZoomOut")?.addEventListener("click", () => {
+    setHomepageFramingScale(Math.round(getActiveHomepageFramingScale() * 100) - 2);
+  });
+  $("#homepageFramingZoomIn")?.addEventListener("click", () => {
+    setHomepageFramingScale(Math.round(getActiveHomepageFramingScale() * 100) + 2);
+  });
+  $("#homepageFramingReset")?.addEventListener("click", () => {
+    if (!homepageFramingDraft) return;
+    const frame = getActiveHomepageFramingFrame();
+    if (homepageFramingTarget === "text") {
+      frame.textX = 0;
+      frame.textY = 0;
+      frame.textScale = 1;
+    } else {
+      frame.x = 50;
+      frame.y = 47;
+      frame.scale = 1;
+    }
+    updateHomepageFramingControls();
+    postHomepageFramingPreview(false);
+  });
+  $$("[data-homepage-framing-device]").forEach((button) => {
+    button.addEventListener("click", () => {
+      homepageFramingDevice = button.dataset.homepageFramingDevice;
+      resizeHomepageFramingViewport();
+      updateHomepageFramingControls();
+      postHomepageFramingPreview(false);
+    });
+  });
+  $$("[data-homepage-framing-target]").forEach((button) => {
+    button.addEventListener("click", () => {
+      homepageFramingTarget = button.dataset.homepageFramingTarget === "text" ? "text" : "image";
+      updateHomepageFramingControls();
+      postHomepageFramingPreview(false);
+      $("#homepageFramingDragLayer")?.focus();
+    });
+  });
+  $("#applyHomepageFraming")?.addEventListener("click", () => closeHomepageHighlightFraming({ apply: true }));
+  $("#homepageHighlightPreviewDialog")?.addEventListener("click", (event) => {
+    if (event.target.id === "homepageHighlightPreviewDialog") closeHomepageHighlightFraming();
+  });
+  $("#homepageHighlightPreviewDialog")?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeHomepageHighlightFraming();
+  });
+  const framingDragLayer = $("#homepageFramingDragLayer");
+  framingDragLayer?.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || !homepageFramingDraft) return;
+    homepageFramingDragState = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+    framingDragLayer.setPointerCapture(event.pointerId);
+    framingDragLayer.classList.add("is-dragging");
+    event.preventDefault();
+  });
+  framingDragLayer?.addEventListener("pointermove", (event) => {
+    if (!homepageFramingDragState || event.pointerId !== homepageFramingDragState.pointerId) return;
+    const rect = framingDragLayer.getBoundingClientRect();
+    const deltaX = event.clientX - homepageFramingDragState.x;
+    const deltaY = event.clientY - homepageFramingDragState.y;
+    homepageFramingDragState.x = event.clientX;
+    homepageFramingDragState.y = event.clientY;
+    if (homepageFramingTarget === "text") {
+      nudgeHomepageFraming(deltaX / Math.max(1, rect.width) * 100, deltaY / Math.max(1, rect.height) * 100);
+    } else {
+      nudgeHomepageFraming(-deltaX / Math.max(1, rect.width) * 220, -deltaY / Math.max(1, rect.height) * 220);
+    }
+  });
+  const stopHomepageFramingDrag = (event) => {
+    if (!homepageFramingDragState || event.pointerId !== homepageFramingDragState.pointerId) return;
+    homepageFramingDragState = null;
+    framingDragLayer?.classList.remove("is-dragging");
+  };
+  framingDragLayer?.addEventListener("pointerup", stopHomepageFramingDrag);
+  framingDragLayer?.addEventListener("pointercancel", stopHomepageFramingDrag);
+  framingDragLayer?.addEventListener("wheel", (event) => {
+    if (!homepageFramingDraft) return;
+    setHomepageFramingScale(Math.round(getActiveHomepageFramingScale() * 100) + (event.deltaY < 0 ? 2 : -2));
+    event.preventDefault();
+  }, { passive: false });
+  framingDragLayer?.addEventListener("keydown", (event) => {
+    const step = event.shiftKey ? 5 : 1;
+    const imageMovement = {
+      ArrowLeft: [step, 0],
+      ArrowRight: [-step, 0],
+      ArrowUp: [0, step],
+      ArrowDown: [0, -step]
+    };
+    const textMovement = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step]
+    };
+    const movement = (homepageFramingTarget === "text" ? textMovement : imageMovement)[event.key];
+    if (!movement) return;
+    nudgeHomepageFraming(...movement);
+    event.preventDefault();
+  });
+  $("#homepageFramingFrame")?.addEventListener("load", () => {
+    if (!$("#homepageFramingFrame")?.getAttribute("src")) return;
+    homepageFramingFrameReady = true;
+    postHomepageFramingPreview(true);
+  });
+  window.addEventListener("resize", () => {
+    if ($("#homepageHighlightPreviewDialog")?.open) resizeHomepageFramingViewport();
+  });
+  $("#homepageHighlightForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (form.dataset.saving === "true") return;
+    const id = editingHomepageHighlightId;
+    const controls = [...form.querySelectorAll("input, select, button")];
+    const previousDisabled = controls.map((control) => control.disabled);
+    const status = $("#homepageHighlightUploadStatus");
+    const file = $("#homepageHighlightFile").files[0];
+    if (!file && !$("#homepageHighlightImage").value) {
+      status.textContent = "请先选择首页图片。";
+      $("#homepageHighlightFile").focus();
+      return;
+    }
+    form.dataset.saving = "true";
+    controls.forEach((control) => { control.disabled = true; });
+    $("#newHomepageHighlight").disabled = true;
+    try {
+      if (file) {
+        status.textContent = "正在上传并优化图片，请稍候…";
+        const uploaded = await adminApi("/api/homepage-highlights/upload", {
+          method: "POST", headers: { "Content-Type": file.type }, body: file
+        });
+        $("#homepageHighlightImage").value = uploaded.image;
+        $("#homepageHighlightFile").value = "";
+        status.textContent = `图片已上传：${uploaded.width} × ${uploaded.height}，${(uploaded.bytes / 1024 / 1024).toFixed(2)} MB。`;
+      }
+      await adminApi(id ? `/api/homepage-highlights/${id}` : "/api/homepage-highlights", {
+        method: id ? "PUT" : "POST",
+        body: JSON.stringify({
+          matchRecordId: $("#homepageHighlightMatchRecordId").value,
+          playerId: $("#homepageHighlightPlayerId").value,
+          image: $("#homepageHighlightImage").value.trim(),
+          layout: $("#homepageHighlightLayout").value,
+          objectPosition: $("#homepageHighlightObjectPosition").value.trim(),
+          framing: readHomepageFramingInput()
+        })
+      });
+      closeHomepageHighlightForm();
+      await loadState();
+    } catch (error) {
+      status.textContent = `保存失败：${error.message}。可重试保存。`;
+      alert(error.message);
+    } finally {
+      form.dataset.saving = "false";
+      controls.forEach((control, index) => { control.disabled = previousDisabled[index]; });
+      $("#newHomepageHighlight").disabled = false;
+    }
+  });
+
+  $("#adminHomepageHighlights")?.addEventListener("click", async (event) => {
+    if ($("#homepageHighlightForm")?.dataset.saving === "true") return;
+    const previewButton = event.target.closest("[data-preview-highlight]");
+    if (previewButton) {
+      const highlight = db.homepageHighlights?.find((item) => item.id === previewButton.dataset.previewHighlight);
+      if (highlight) {
+        resetHomepageHighlightForm(highlight);
+        openHomepageHighlightFraming();
+      }
+      return;
+    }
+
+    const editButton = event.target.closest("[data-edit-highlight]");
+    if (editButton) {
+      const highlight = db.homepageHighlights?.find((item) => item.id === editButton.dataset.editHighlight);
+      if (highlight) resetHomepageHighlightForm(highlight);
+      return;
+    }
+
+    const moveButton = event.target.closest("[data-move-highlight]");
+    if (moveButton) {
+      const published = (db.homepageHighlights || []).filter((item) => item.status === "published")
+        .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+      const index = published.findIndex((item) => item.id === moveButton.dataset.highlightId);
+      const targetIndex = moveButton.dataset.moveHighlight === "up" ? index - 1 : index + 1;
+      if (index < 0 || targetIndex < 0 || targetIndex >= published.length) return;
+      [published[index], published[targetIndex]] = [published[targetIndex], published[index]];
+      try {
+        await adminApi("/api/homepage-highlights/reorder", {
+          method: "POST",
+          body: JSON.stringify({ ids: published.map((item) => item.id) })
+        });
+        await loadState();
+      } catch (error) {
+        alert(error.message);
+      }
+      return;
+    }
+
+    const statusButton = event.target.closest("[data-highlight-status-action]");
+    if (!statusButton) return;
+    const nextStatus = statusButton.dataset.highlightStatusAction;
+    const highlight = db.homepageHighlights?.find((item) => item.id === statusButton.dataset.highlightId);
+    if (!highlight) return;
+    if (nextStatus === "published") {
+      const publishedCount = (db.homepageHighlights || []).filter((item) => item.status === "published").length;
+      const message = publishedCount >= 3
+        ? `发布“${highlight.playerName} · ${highlight.hero}”后，当前最后一张首页图会自动归档。继续吗？`
+        : `确认发布“${highlight.playerName} · ${highlight.hero}”到首页吗？`;
+      if (!confirm(message)) return;
+    } else if (!confirm(`确认归档“${highlight.playerName} · ${highlight.hero}”吗？`)) {
+      return;
+    }
+    try {
+      await adminApi(`/api/homepage-highlights/${highlight.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ status: nextStatus })
+      });
+      activeDashboardHighlightIndex = 0;
+      closeHomepageHighlightForm();
+      await loadState();
+    } catch (error) {
+      alert(error.message);
+    }
   });
 
   $("#playerForm").addEventListener("submit", async (event) => {
@@ -6238,8 +7023,8 @@ function initializeDashboardScrollSequence() {
     const gridFadeDistance = Math.max(260, viewportHeight * 0.54);
     const gridProgress = clamp((gridFadeStart - heroBottom) / gridFadeDistance, 0, 1);
     const gridOpacity = reducedMotion.matches ? (gridProgress > 0 ? 0.96 : 0) : gridProgress * 0.96;
-    const ranksRevealLine = Math.max(navigationBottom + 4, 64);
-    const rosterRevealDistance = Math.min(220, Math.max(150, viewportHeight * 0.22));
+    const ranksRevealLine = Math.max(navigationBottom + 4, viewportHeight * 0.85);
+    const rosterRevealDistance = 40;
     const ranksVisible = heroBottom <= ranksRevealLine;
     const rosterVisible = ranksVisible && heroBottom <= ranksRevealLine - rosterRevealDistance;
 
@@ -6265,6 +7050,7 @@ function initializeDashboardScrollSequence() {
 }
 
 applySeasonUi();
+initializeHomepagePreviewFrameMessaging();
 bindEvents();
 initializeCardInteractions();
 initializePageFieldInteractions();
@@ -6274,4 +7060,7 @@ initializeDashboardScrollSequence();
 Promise.allSettled([restoreAdminSession(), ensureStateLoaded()]).then((results) => {
   updateAdminUi();
   if (results[1]?.status === "rejected") console.error(results[1].reason);
+  if (IS_HOMEPAGE_PREVIEW_FRAME && results[1]?.status === "fulfilled") {
+    window.parent.postMessage({ type: "homepage-highlight-preview-ready" }, window.location.origin);
+  }
 });

@@ -561,6 +561,74 @@
               <button class="secondary-button" id="adminLogout" type="button">退出管理员模式</button>
             </div>
 
+            <details class="panel collapsible-panel admin-only" id="adminHomepageHighlightsPanel" open>
+              <summary class="collapsible-summary">
+                <span>首页图管理</span>
+                <small id="homepageHighlightSummary" class="admin-highlight-summary">最多展示最近三张</small>
+              </summary>
+              <div class="admin-highlight-manager">
+                <div class="admin-highlight-toolbar">
+                  <div>
+                    <strong>首页轮播</strong>
+                    <span>新图先保存为草稿，确认效果后再发布；第四张发布时最旧图片会自动归档。</span>
+                  </div>
+                  <button class="primary-button" id="newHomepageHighlight" type="button">新建草稿</button>
+                </div>
+
+                <form class="admin-highlight-form" id="homepageHighlightForm" hidden>
+                  <input id="homepageHighlightId" type="hidden" />
+                  <div class="form-grid admin-highlight-form-grid">
+                    <label class="wide">
+                      关联比赛
+                      <select id="homepageHighlightMatchRecordId" required>
+                        <option value="">选择一场已完整录入的比赛</option>
+                      </select>
+                    </label>
+                    <label>
+                      本场选手
+                      <select id="homepageHighlightPlayerId" required disabled>
+                        <option value="">请先选择比赛</option>
+                      </select>
+                    </label>
+                    <label>
+                      图文布局
+                      <select id="homepageHighlightLayout">
+                        <option value="image-right">文字在左，图片在右</option>
+                        <option value="image-left">图片在左，文字在右</option>
+                      </select>
+                    </label>
+                    <div class="admin-highlight-linked-summary wide" id="homepageHighlightLinkedSummary" aria-live="polite">
+                      <span>选择比赛和选手后，将自动带出日期、比赛 ID、英雄与 K/D/A。</span>
+                    </div>
+                    <label class="wide">
+                      首页图片
+                      <input id="homepageHighlightFile" type="file" accept="image/png,image/jpeg,image/webp" />
+                      <input id="homepageHighlightImage" type="hidden" />
+                      <span id="homepageHighlightUploadStatus" role="status" aria-live="polite">选择 PNG、JPG 或 WebP 图片，最大 10 MB。</span>
+                    </label>
+                    <input id="homepageHighlightObjectPosition" type="hidden" value="50% 47%" />
+                    <input id="homepageHighlightFraming" type="hidden" />
+                    <div class="admin-highlight-framing-control wide">
+                      <div>
+                        <strong>首页取景</strong>
+                        <span id="homepageHighlightFramingSummary">桌面 50% 47% · 100%｜移动端同步</span>
+                      </div>
+                      <button class="secondary-button" id="openHomepageHighlightFraming" type="button">打开取景器</button>
+                    </div>
+                  </div>
+                  <div class="admin-highlight-form-actions">
+                    <span>保存时上传并优化图片；草稿预览确认后再发布。编辑时不选新图则保留原图。</span>
+                    <div class="button-row">
+                      <button class="secondary-button" id="cancelHomepageHighlight" type="button">取消</button>
+                      <button class="primary-button" id="saveHomepageHighlight" type="submit">保存草稿</button>
+                    </div>
+                  </div>
+                </form>
+
+                <div id="adminHomepageHighlights" class="admin-highlight-list"></div>
+              </div>
+            </details>
+
             <details class="panel collapsible-panel admin-only" id="adminExcelImportPanel">
               <summary class="collapsible-summary">
                 <span>数据导入</span>
@@ -681,6 +749,47 @@
     <template id="emptyStateTemplate">
       <div class="empty-state">暂无数据</div>
     </template>
+
+    <dialog id="homepageHighlightPreviewDialog" class="homepage-highlight-preview-dialog">
+      <div class="dialog-header">
+        <div>
+          <small>HOMEPAGE FRAMING</small>
+          <h2>首页取景器</h2>
+        </div>
+        <button class="icon-button" id="closeHomepageHighlightPreview" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="homepage-framing-editor">
+        <div class="homepage-framing-toolbar">
+          <div class="homepage-framing-devices" role="group" aria-label="预览设备">
+            <button class="is-active" type="button" data-homepage-framing-device="desktop">1080P</button>
+            <button type="button" data-homepage-framing-device="desktop4k">4K</button>
+            <button type="button" data-homepage-framing-device="ultrawide">超宽屏</button>
+            <button type="button" data-homepage-framing-device="mobile">手机</button>
+          </div>
+          <div class="homepage-framing-targets" role="group" aria-label="调整对象">
+            <button class="is-active" type="button" data-homepage-framing-target="image">调整图片</button>
+            <button type="button" data-homepage-framing-target="text">调整文字</button>
+          </div>
+          <div class="homepage-framing-zoom" role="group" aria-label="当前对象缩放">
+            <button id="homepageFramingZoomOut" type="button" aria-label="缩小图片">−</button>
+            <input id="homepageFramingZoom" type="range" min="100" max="140" step="1" value="100" aria-label="图片缩放比例" />
+            <button id="homepageFramingZoomIn" type="button" aria-label="放大图片">+</button>
+            <output id="homepageFramingZoomValue" for="homepageFramingZoom">100%</output>
+          </div>
+          <button class="secondary-button homepage-framing-reset" id="homepageFramingReset" type="button">重置</button>
+        </div>
+        <div class="homepage-framing-stage" id="homepageFramingStage">
+          <div class="homepage-framing-viewport" id="homepageFramingViewport">
+            <iframe id="homepageFramingFrame" title="真实首页设备预览" data-src="/?view=dashboard&amp;homepagePreview=1"></iframe>
+            <div class="homepage-framing-drag-layer" id="homepageFramingDragLayer" role="group" tabindex="0" aria-label="拖动调整图片位置；方向键微调，按住 Shift 可加速"></div>
+          </div>
+        </div>
+        <div class="homepage-framing-footer">
+          <p id="homepageFramingHint">四种设备分别保存。选择图片或文字后拖动，方向键可精确微调。</p>
+          <button class="primary-button" id="applyHomepageFraming" type="button">应用取景</button>
+        </div>
+      </div>
+    </dialog>
 
     <dialog id="matchDetailDialog" class="match-dialog">
       <div class="dialog-header">
