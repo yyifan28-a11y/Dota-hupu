@@ -596,8 +596,7 @@ body.is-entering .view.is-active .data-panel {
   background: var(--surface);
 }
 
-body[data-season="s3"] .season-only-s2,
-body[data-season="s2"] .editable-season-only {
+body[data-season="s3"] .season-only-s2 {
   display: none !important;
 }
 
@@ -4638,6 +4637,8 @@ body[data-ui="modern"] .main {
 
 body[data-ui="modern"] #dashboard {
   gap: 28px;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   color: var(--dashboard-text);
 }
 
@@ -8394,6 +8395,14 @@ body[data-ui="modern"] .dashboard-highlight-slot {
   justify-self: start;
 }
 
+body[data-ui="modern"] .dashboard-highlight-slot:empty {
+  display: none;
+}
+
+body[data-ui="modern"] #dashboard .dashboard-highlight-slot:empty + .dashboard-stats {
+  margin-top: 0;
+}
+
 body[data-ui="modern"] .dashboard-highlight-slot::after {
   content: "";
   position: absolute;
@@ -9413,6 +9422,10 @@ body[data-ui="modern"] #dashboard .dashboard-grid-intro::after {
   white-space: nowrap;
 }
 
+body[data-ui="modern"][data-season="s2"] #dashboard .dashboard-grid-intro::after {
+  content: "S2 // PERFORMANCE MATRIX  ·  SIGNAL 01";
+}
+
 body[data-ui="modern"] #dashboard .dashboard-grid-intro > span + * {
   min-width: 0;
 }
@@ -9905,6 +9918,7 @@ body[data-ui="modern"] .view#ratingTrends .page-heading::before { content: "S3 /
 body[data-ui="modern"] .view#generator .page-heading::before { content: "S3 // MATCHMAKING LAB"; }
 body[data-ui="modern"][data-season="s2"] .view#generator .page-heading::before { content: "S2 // MATCHMAKING LAB"; }
 body[data-ui="modern"] .view#admin .page-heading::before { content: "S3 // CONTROL CENTER"; }
+body[data-ui="modern"][data-season="s2"] .view#admin .page-heading::before { content: "S2 // CONTROL CENTER"; }
 
 body[data-ui="modern"] .view:not(#dashboard) .page-heading::after {
   content: "";

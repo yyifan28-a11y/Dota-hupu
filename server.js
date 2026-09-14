@@ -23,6 +23,9 @@ const databases = {
   s2: new DatabaseSync(DB_PATHS.s2),
   s3: new DatabaseSync(DB_PATHS.s3)
 };
+// Homepage artwork is temporarily shared by both seasons. Keep the existing S3
+// records as the single source of truth while player and match data stay isolated.
+const sharedHomepageDatabase = databases.s3;
 const databaseContext = new AsyncLocalStorage();
 const db = new Proxy({}, {
   get(_target, property) {
@@ -303,7 +306,6 @@ function backfillHomepageHighlightLinks() {
 
 async function handleApi(request, response, url) {
   const method = request.method;
-  const season = getActiveSeason();
 
   if (method === "GET" && url.pathname === "/api/state") {
     sendJson(response, 200, getState());
@@ -316,10 +318,6 @@ async function handleApi(request, response, url) {
   }
 
   const isTeamRequest = method === "POST" && ["/api/teams", "/api/teams/manual"].includes(url.pathname);
-  if (season === "s2" && method !== "GET" && url.pathname !== "/api/admin/check" && !isTeamRequest) {
-    sendJson(response, 403, { error: "S2 已归档，只能查看历史数据。" });
-    return;
-  }
 
   if (method !== "GET" && !isPublicMutation(method, url.pathname) && !requireAdmin(request, response)) {
     return;
@@ -376,14 +374,14 @@ async function handleApi(request, response, url) {
       return;
     }
 
-    const updateOrder = db.prepare("UPDATE homepage_highlights SET sort_order = ?, updated_at = ? WHERE id = ? AND status = 'published'");
+    const updateOrder = sharedHomepageDatabase.prepare("UPDATE homepage_highlights SET sort_order = ?, updated_at = ? WHERE id = ? AND status = 'published'");
     const now = new Date().toISOString();
-    db.exec("BEGIN");
+    sharedHomepageDatabase.exec("BEGIN");
     try {
       requestedIds.forEach((id, index) => updateOrder.run(index, now, id));
-      db.exec("COMMIT");
+      sharedHomepageDatabase.exec("COMMIT");
     } catch (error) {
-      db.exec("ROLLBACK");
+      sharedHomepageDatabase.exec("ROLLBACK");
       throw error;
     }
     sendJson(response, 200, getState());
@@ -395,7 +393,7 @@ async function handleApi(request, response, url) {
     const highlight = normalizeHomepageHighlight(body);
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
-    db.prepare(`
+    sharedHomepageDatabase.prepare(`
       INSERT INTO homepage_highlights (
         id, match_record_id, player_id, date, match_no, match_id, player_name, hero, image, object_position,
         framing, layout, status, sort_order, fallback, published_at, created_at, updated_at
@@ -423,7 +421,7 @@ async function handleApi(request, response, url) {
 
   if (method === "PUT" && url.pathname.startsWith("/api/homepage-highlights/")) {
     const id = decodeURIComponent(url.pathname.replace("/api/homepage-highlights/", ""));
-    const existingRow = db.prepare("SELECT * FROM homepage_highlights WHERE id = ?").get(id);
+    const existingRow = sharedHomepageDatabase.prepare("SELECT * FROM homepage_highlights WHERE id = ?").get(id);
     if (!existingRow) {
       sendJson(response, 404, { error: "首页图记录不存在" });
       return;
@@ -436,12 +434,12 @@ async function handleApi(request, response, url) {
     const now = new Date().toISOString();
     const isNewPublish = nextStatus === "published" && existing.status !== "published";
 
-    db.exec("BEGIN");
+    sharedHomepageDatabase.exec("BEGIN");
     try {
       if (isNewPublish) {
-        db.prepare("UPDATE homepage_highlights SET sort_order = sort_order + 1 WHERE status = 'published'").run();
+        sharedHomepageDatabase.prepare("UPDATE homepage_highlights SET sort_order = sort_order + 1 WHERE status = 'published'").run();
       }
-      db.prepare(`
+      sharedHomepageDatabase.prepare(`
         UPDATE homepage_highlights
         SET match_record_id = ?, player_id = ?, date = ?, match_no = ?, match_id = ?, player_name = ?, hero = ?, image = ?,
             object_position = ?, framing = ?, layout = ?, status = ?, sort_order = ?, fallback = ?,
@@ -467,9 +465,9 @@ async function handleApi(request, response, url) {
         id
       );
       enforceHomepageHighlightLimit(now);
-      db.exec("COMMIT");
+      sharedHomepageDatabase.exec("COMMIT");
     } catch (error) {
-      db.exec("ROLLBACK");
+      sharedHomepageDatabase.exec("ROLLBACK");
       throw error;
     }
     sendJson(response, 200, getState());
@@ -793,7 +791,7 @@ function isPublicMutation(method, pathname) {
 function getHomepageHighlights({ publishedOnly = false } = {}) {
   const where = publishedOnly ? "WHERE status = 'published'" : "";
   const limit = publishedOnly ? "LIMIT 3" : "";
-  return db.prepare(`
+  return sharedHomepageDatabase.prepare(`
     SELECT id, match_record_id, player_id, date, match_no, match_id, player_name, hero, image, object_position,
            framing, layout, status, sort_order, fallback, published_at, created_at, updated_at
     FROM homepage_highlights
@@ -888,7 +886,18 @@ function normalizeHomepageHighlight(input = {}) {
     ? String(input.objectPosition).trim()
     : "50% 47%";
   const framing = normalizeHomepageHighlightFraming(input.framing, objectPosition);
-  const fallbackInput = input.fallback && typeof input.fallback === "object" ? input.fallback : {};
+  const fallbackInput = input.fallback && typeof input.fallback === "object" ? { ...input.fallback } : {};
+  if (linkedMatch && linkedPlayer?.detail) {
+    Object.assign(fallbackInput, {
+      winner: linkedMatch.winner,
+      kills: Number(linkedPlayer.detail.kills || 0),
+      deaths: Number(linkedPlayer.detail.deaths || 0),
+      assists: Number(linkedPlayer.detail.assists || 0),
+      damage: Number(linkedPlayer.detail.damage || 0),
+      participation: Number(linkedPlayer.detail.participation || 0),
+      gpm: Number(linkedPlayer.detail.gpm || 0)
+    });
+  }
   const fallback = Object.fromEntries(
     Object.entries(fallbackInput).filter(([, value]) => ["string", "number", "boolean"].includes(typeof value))
   );
@@ -909,26 +918,33 @@ function normalizeHomepageHighlight(input = {}) {
 }
 
 function findHomepageHighlightMatch(highlight = {}) {
-  if (highlight.matchRecordId) {
-    return db.prepare("SELECT * FROM matches WHERE id = ?").get(String(highlight.matchRecordId));
+  const activeSeason = getActiveSeason();
+  const seasons = [activeSeason, activeSeason === "s2" ? "s3" : "s2"];
+  for (const season of seasons) {
+    const sourceDatabase = databases[season];
+    let match = null;
+    if (highlight.matchRecordId) {
+      match = sourceDatabase.prepare("SELECT * FROM matches WHERE id = ?").get(String(highlight.matchRecordId));
+    } else if (highlight.matchId) {
+      match = sourceDatabase.prepare("SELECT * FROM matches WHERE match_id = ? ORDER BY created_at DESC LIMIT 1")
+        .get(String(highlight.matchId));
+    } else if (highlight.date) {
+      match = sourceDatabase.prepare("SELECT * FROM matches WHERE date = ? AND match_no = ? ORDER BY created_at DESC LIMIT 1")
+        .get(String(highlight.date), Number(highlight.matchNo || 1));
+    }
+    if (match) return { ...match, homepageSourceSeason: season };
   }
-  if (highlight.matchId) {
-    const byExternalId = db.prepare("SELECT * FROM matches WHERE match_id = ? ORDER BY created_at DESC LIMIT 1")
-      .get(String(highlight.matchId));
-    if (byExternalId) return byExternalId;
-  }
-  if (!highlight.date) return null;
-  return db.prepare("SELECT * FROM matches WHERE date = ? AND match_no = ? ORDER BY created_at DESC LIMIT 1")
-    .get(String(highlight.date), Number(highlight.matchNo || 1));
+  return null;
 }
 
 function findHomepageHighlightPlayer(match, highlight = {}) {
+  const sourceDatabase = databases[match?.homepageSourceSeason] || db;
   const details = parseJsonObject(match?.player_details || match?.playerDetails);
   if (highlight.playerId && details[highlight.playerId]) {
-    const player = db.prepare("SELECT id, name FROM players WHERE id = ?").get(String(highlight.playerId));
+    const player = sourceDatabase.prepare("SELECT id, name FROM players WHERE id = ?").get(String(highlight.playerId));
     return player ? { ...player, detail: details[player.id] } : null;
   }
-  const players = db.prepare("SELECT id, name FROM players WHERE name = ? ORDER BY created_at ASC")
+  const players = sourceDatabase.prepare("SELECT id, name FROM players WHERE name = ? ORDER BY created_at ASC")
     .all(String(highlight.playerName || ""));
   const hero = String(highlight.hero || "").trim();
   const player = players.find((item) => details[item.id] && (!hero || String(details[item.id]?.hero || "").trim() === hero))
@@ -943,25 +959,25 @@ function createHttpError(statusCode, message) {
 }
 
 function enforceHomepageHighlightLimit(now = new Date().toISOString()) {
-  const overflow = db.prepare(`
+  const overflow = sharedHomepageDatabase.prepare(`
     SELECT id FROM homepage_highlights
     WHERE status = 'published'
     ORDER BY sort_order ASC, published_at DESC, updated_at DESC
     LIMIT -1 OFFSET 3
   `).all();
-  const archive = db.prepare("UPDATE homepage_highlights SET status = 'archived', updated_at = ? WHERE id = ?");
+  const archive = sharedHomepageDatabase.prepare("UPDATE homepage_highlights SET status = 'archived', updated_at = ? WHERE id = ?");
   overflow.forEach(({ id }) => archive.run(now, id));
 }
 
 function replaceHomepageHighlights(highlights) {
-  const insert = db.prepare(`
+  const insert = sharedHomepageDatabase.prepare(`
     INSERT INTO homepage_highlights (
       id, match_record_id, player_id, date, match_no, match_id, player_name, hero, image, object_position,
       framing, layout, status, sort_order, fallback, published_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const now = new Date().toISOString();
-  db.exec("DELETE FROM homepage_highlights");
+  sharedHomepageDatabase.exec("DELETE FROM homepage_highlights");
   highlights.forEach((item, index) => {
     const highlight = normalizeHomepageHighlight(item);
     const status = ["draft", "published", "archived"].includes(item.status) ? item.status : "draft";
@@ -994,7 +1010,7 @@ function getState() {
   return {
     season,
     seasonLabel: season.toUpperCase(),
-    readOnly: season === "s2",
+    readOnly: false,
     players: db.prepare(`
       SELECT id, name, steam_id AS steamId, rating, rating_updated_at AS ratingUpdatedAt, note
       FROM players
@@ -1029,7 +1045,7 @@ function getSummary() {
   const players = db.prepare("SELECT COUNT(*) AS count FROM players").get().count;
   const matches = db.prepare("SELECT COUNT(*) AS count FROM matches").get().count;
   const season = getActiveSeason();
-  return { players, matches, season, seasonLabel: season.toUpperCase(), readOnly: season === "s2" };
+  return { players, matches, season, seasonLabel: season.toUpperCase(), readOnly: false };
 }
 
 function getTeams() {

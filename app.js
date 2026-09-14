@@ -13,7 +13,7 @@ let db = {
 };
 
 const CURRENT_SEASON = new URLSearchParams(window.location.search).get("season")?.toLowerCase() === "s2" ? "s2" : "s3";
-const IS_ARCHIVE_SEASON = CURRENT_SEASON === "s2";
+const IS_S2_SEASON = CURRENT_SEASON === "s2";
 const REQUESTED_VIEW = new URLSearchParams(window.location.search).get("view") || "";
 const REQUESTED_PLAYER_ID = new URLSearchParams(window.location.search).get("player") || "";
 const IS_HOMEPAGE_PREVIEW_FRAME = new URLSearchParams(window.location.search).get("homepagePreview") === "1";
@@ -329,10 +329,6 @@ async function verifyAdminPassword(password) {
 }
 
 async function restoreAdminSession() {
-  if (IS_ARCHIVE_SEASON) {
-    isAdmin = false;
-    return;
-  }
   const password = sessionStorage.getItem(ADMIN_PASSWORD_KEY);
   if (!password) {
     isAdmin = false;
@@ -390,8 +386,10 @@ function applySeasonUi() {
   if (centerTitle) centerTitle.textContent = `${label} 赛季数据中心`;
   const splashLabel = $("#splashSeasonLabel");
   const sidebarLabel = $("#sidebarSeasonLabel");
-  if (splashLabel) splashLabel.textContent = `${label}赛季${IS_ARCHIVE_SEASON ? " · 历史归档" : ""}`;
-  if (sidebarLabel) sidebarLabel.textContent = `${label} 赛季${IS_ARCHIVE_SEASON ? " · 只读" : ""}`;
+  const adminSeasonContext = $("#adminSeasonContext");
+  if (splashLabel) splashLabel.textContent = `${label}赛季`;
+  if (sidebarLabel) sidebarLabel.textContent = `${label} 赛季`;
+  if (adminSeasonContext) adminSeasonContext.textContent = `当前维护 ${label} 的选手与比赛；首页图由 S2 / S3 共用。`;
   $$("[data-season-option]").forEach((link) => {
     const season = link.dataset.seasonOption;
     const isActive = season === CURRENT_SEASON;
@@ -406,11 +404,11 @@ function applySeasonUi() {
       link.removeAttribute("aria-current");
     }
   });
-  const targetSeason = IS_ARCHIVE_SEASON ? "s3" : "s2";
-  const switchText = IS_ARCHIVE_SEASON ? "返回 S3" : "查看 S2 历史";
+  const targetSeason = IS_S2_SEASON ? "s3" : "s2";
+  const switchText = IS_S2_SEASON ? "切换到 S3" : "切换到 S2";
   [$("#splashSeasonLink"), $("#sidebarSeasonLink")].forEach((link) => {
     if (!link) return;
-    link.href = IS_ARCHIVE_SEASON ? "?season=s3" : `?season=${targetSeason}&view=dashboard`;
+    link.href = IS_S2_SEASON ? "?season=s3" : `?season=${targetSeason}&view=dashboard`;
     link.firstChild.textContent = switchText;
   });
 }
@@ -819,10 +817,10 @@ function updateAppLocation(viewId, playerId = "", { replace = false } = {}) {
 }
 
 function switchView(viewId) {
-  if ((IS_ARCHIVE_SEASON && viewId === "admin") || (!IS_ARCHIVE_SEASON && ["playoffs", "champion"].includes(viewId))) {
+  if (!IS_S2_SEASON && ["playoffs", "champion"].includes(viewId)) {
     viewId = "dashboard";
   }
-  if (IS_ARCHIVE_SEASON && viewId === "champion") viewId = "playoffs";
+  if (IS_S2_SEASON && viewId === "champion") viewId = "playoffs";
   const hasTargetView = Boolean($(`#${viewId}`));
   if (!hasTargetView) viewId = "dashboard";
   const navGroups = {
@@ -3968,7 +3966,8 @@ function getHomepageHighlightPresentation(highlight) {
     deaths: Number(detail.deaths ?? fallback.deaths ?? 0),
     assists: Number(detail.assists ?? fallback.assists ?? 0),
     displayDate: `${String(highlight.date || "").slice(5)}-${String(Number(highlight.matchNo || 1)).padStart(2, "0")}`,
-    hasMatch: Boolean(detailEntry)
+    hasMatch: Boolean(detailEntry),
+    hasSharedMatch: !detailEntry && Boolean(highlight.matchRecordId)
   };
 }
 
@@ -4030,7 +4029,7 @@ function renderAdminHomepageHighlightCard(highlight, index, groupLength) {
             <small>${escapeHtml(presentation.displayDate)}</small>
             <strong>${escapeHtml(highlight.playerName)} · ${escapeHtml(highlight.hero)}</strong>
           </div>
-          <span class="${presentation.hasMatch ? "is-linked" : "is-unlinked"}">${presentation.hasMatch ? "已关联比赛" : "未匹配比赛"}</span>
+          <span class="${presentation.hasMatch || presentation.hasSharedMatch ? "is-linked" : "is-unlinked"}">${presentation.hasMatch ? "已关联本赛季" : presentation.hasSharedMatch ? "已关联另一赛季" : "未匹配比赛"}</span>
         </div>
         <p>${presentation.kills} / ${presentation.deaths} / ${presentation.assists}<code>${framing.desktop.x}% ${framing.desktop.y}% · ${Math.round(framing.desktop.scale * 100)}%</code></p>
         <div class="admin-highlight-card-actions">
@@ -4044,12 +4043,16 @@ function renderAdminHomepageHighlightCard(highlight, index, groupLength) {
   `;
 }
 
-function renderHomepageHighlightMatchOptions(selectedId = "") {
+function renderHomepageHighlightMatchOptions(selectedId = "", selectedHighlight = null) {
   const select = $("#homepageHighlightMatchRecordId");
   if (!select) return;
   const matches = getMatchesByScheduleDesc().filter(hasCompletePlayerDetails);
+  const externalOption = selectedId && !matches.some((match) => match.id === selectedId)
+    ? `<option value="${escapeHtml(selectedId)}" selected>${escapeHtml(`${selectedHighlight?.date || "--"} 第 ${Number(selectedHighlight?.matchNo || 1)} 场 · 另一赛季关联`)}</option>`
+    : "";
   select.innerHTML = `
     <option value="">选择一场已完整录入的比赛</option>
+    ${externalOption}
     ${matches.map((match) => `<option value="${escapeHtml(match.id)}" ${match.id === selectedId ? "selected" : ""}>${escapeHtml(formatAdminMatchCode(match))}${match.matchId ? ` · ${escapeHtml(match.matchId)}` : ""}</option>`).join("")}
   `;
 }
@@ -4061,6 +4064,16 @@ function updateHomepageHighlightPlayerOptions(selectedPlayerId = "") {
   if (!matchSelect || !playerSelect || !summary) return;
   const match = db.matches.find((item) => item.id === matchSelect.value);
   if (!match) {
+    const sharedHighlight = db.homepageHighlights?.find((item) => item.id === editingHomepageHighlightId);
+    if (sharedHighlight?.matchRecordId && matchSelect.value === sharedHighlight.matchRecordId) {
+      playerSelect.disabled = true;
+      playerSelect.innerHTML = `<option value="${escapeHtml(sharedHighlight.playerId || "")}" selected>${escapeHtml(sharedHighlight.playerName || "已关联选手")}</option>`;
+      summary.innerHTML = `
+        <span><b>${escapeHtml(`${sharedHighlight.date || "--"} 第 ${Number(sharedHighlight.matchNo || 1)} 场`)}</b> · 共享首页图关联了另一赛季的比赛</span>
+        <strong>${escapeHtml(sharedHighlight.playerName)} · ${escapeHtml(sharedHighlight.hero)}</strong>
+      `;
+      return;
+    }
     playerSelect.disabled = true;
     playerSelect.innerHTML = `<option value="">请先选择比赛</option>`;
     summary.innerHTML = `<span>选择比赛和选手后，将自动带出日期、比赛 ID、英雄与 K/D/A。</span>`;
@@ -4110,7 +4123,8 @@ function resetHomepageHighlightForm(highlight = null) {
     || db.matches.find((match) => match.date === highlight?.date && Number(match.matchNo || 1) === Number(highlight?.matchNo || 1));
   const linkedPlayerId = highlight?.playerId
     || Object.keys(linkedMatch?.playerDetails || {}).find((playerId) => getPlayer(playerId)?.name === highlight?.playerName);
-  renderHomepageHighlightMatchOptions(linkedMatch?.id || "");
+  const selectedMatchId = linkedMatch?.id || highlight?.matchRecordId || "";
+  renderHomepageHighlightMatchOptions(selectedMatchId, highlight);
   updateHomepageHighlightPlayerOptions(linkedPlayerId || "");
   $("#homepageHighlightImage").value = highlight?.image || "";
   $("#homepageHighlightFile").value = "";
