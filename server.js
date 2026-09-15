@@ -1,10 +1,12 @@
 import { createServer } from "node:http";
-import { readFile, writeFile } from "node:fs/promises";
+import { open, readFile, writeFile, unlink } from "node:fs/promises";
 import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import crypto from "node:crypto";
 import * as XLSX from "xlsx";
 import sharp from "sharp";
@@ -16,8 +18,20 @@ const ADMIN_PASSWORD = ENV.ADMIN_PASSWORD || "admin123";
 const DB_PATHS = getDatabasePaths();
 const HIGHLIGHT_UPLOAD_DIR = resolveDatabasePath(ENV.HIGHLIGHT_UPLOAD_DIR || join(dirname(DB_PATHS.s3), "uploads", "highlights"));
 const MAX_HIGHLIGHT_UPLOAD_BYTES = 10 * 1024 * 1024;
+const REPLAY_UPLOAD_DIR = isAbsolute(ENV.REPLAY_UPLOAD_DIR || "")
+  ? ENV.REPLAY_UPLOAD_DIR
+  : join(tmpdir(), ENV.REPLAY_UPLOAD_DIR || "dota-replay-imports");
+const REPLAY_PARSER_PATH = join(__dirname, "scripts", "parse-dota-replay.py");
+const REPLAY_PYTHON = ENV.REPLAY_PYTHON || (globalThis.process.platform === "win32" ? "python" : "python3");
+const MAX_REPLAY_UPLOAD_BYTES = Math.max(1, Number(ENV.REPLAY_MAX_BYTES || 200 * 1024 * 1024));
+const MAX_REPLAY_JOBS = Math.max(1, Number(ENV.REPLAY_MAX_JOBS || 3));
+const REPLAY_PARSE_TIMEOUT_MS = Math.max(30_000, Number(ENV.REPLAY_PARSE_TIMEOUT_MS || 5 * 60 * 1000));
 let highlightUploadBusy = false;
+let replayParseBusy = false;
+const replayJobs = new Map();
+const replayQueue = [];
 mkdirSync(HIGHLIGHT_UPLOAD_DIR, { recursive: true });
+mkdirSync(REPLAY_UPLOAD_DIR, { recursive: true });
 Object.values(DB_PATHS).forEach((path) => mkdirSync(dirname(path), { recursive: true }));
 const databases = {
   s2: new DatabaseSync(DB_PATHS.s2),
@@ -75,6 +89,7 @@ const defaultHomepageHighlights = [
 
 databaseContext.run({ season: "s2", database: databases.s2 }, () => initDatabase({ seedDefaults: false }));
 databaseContext.run({ season: "s3", database: databases.s3 }, () => initDatabase({ seedDefaults: false }));
+bootstrapEmptyS3FromS2();
 
 const server = createServer(async (request, response) => {
   try {
@@ -164,6 +179,19 @@ function initDatabase({ seedDefaults = false } = {}) {
       PRIMARY KEY (date, player_id)
     );
 
+    CREATE TABLE IF NOT EXISTS player_steam_accounts (
+      id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL,
+      steam_id TEXT NOT NULL UNIQUE,
+      game_name TEXT DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_seen_at TEXT DEFAULT ''
+    );
+
+    CREATE INDEX IF NOT EXISTS player_steam_accounts_player_id
+    ON player_steam_accounts (player_id);
+
     CREATE TABLE IF NOT EXISTS homepage_highlights (
       id TEXT PRIMARY KEY,
       match_record_id TEXT DEFAULT '',
@@ -224,6 +252,21 @@ function initDatabase({ seedDefaults = false } = {}) {
     WHERE rating IS NOT NULL;
   `);
 
+  const legacySteamAccounts = db.prepare(`
+    SELECT id AS player_id, steam_id
+    FROM players
+    WHERE TRIM(COALESCE(steam_id, '')) <> ''
+  `).all();
+  const insertLegacySteamAccount = db.prepare(`
+    INSERT OR IGNORE INTO player_steam_accounts (
+      id, player_id, steam_id, game_name, created_at, updated_at, last_seen_at
+    ) VALUES (?, ?, ?, '', ?, ?, '')
+  `);
+  legacySteamAccounts.forEach((account) => {
+    const now = new Date().toISOString();
+    insertLegacySteamAccount.run(crypto.randomUUID(), account.player_id, String(account.steam_id).trim(), now, now);
+  });
+
   const playerCount = db.prepare("SELECT COUNT(*) AS count FROM players").get().count;
   if (seedDefaults && playerCount === 0) {
     const insert = db.prepare(`
@@ -243,6 +286,97 @@ function initDatabase({ seedDefaults = false } = {}) {
 
   seedHomepageHighlights();
   backfillHomepageHighlightLinks();
+}
+
+function bootstrapEmptyS3FromS2() {
+  const source = databases.s2;
+  const target = databases.s3;
+  const targetCounts = {
+    players: Number(target.prepare("SELECT COUNT(*) AS count FROM players").get().count || 0),
+    matches: Number(target.prepare("SELECT COUNT(*) AS count FROM matches").get().count || 0)
+  };
+  if (targetCounts.players || targetCounts.matches) return;
+
+  const rosterSnapshot = source.prepare(`
+    SELECT date, COUNT(DISTINCT player_id) AS player_count
+    FROM rating_snapshots
+    GROUP BY date
+    ORDER BY player_count DESC, date DESC
+    LIMIT 1
+  `).get();
+  let players = rosterSnapshot?.date
+    ? source.prepare(`
+        SELECT DISTINCT p.id, p.name, p.steam_id, p.rating, p.rating_updated_at, p.note, p.created_at
+        FROM players p
+        JOIN rating_snapshots rs ON rs.player_id = p.id
+        WHERE rs.date = ?
+        ORDER BY p.created_at ASC
+      `).all(rosterSnapshot.date)
+    : [];
+  if (!players.length) {
+    players = source.prepare(`
+      SELECT id, name, steam_id, rating, rating_updated_at, note, created_at
+      FROM players
+      ORDER BY created_at ASC
+    `).all();
+  }
+  if (!players.length) return;
+
+  const finalDate = source.prepare("SELECT MAX(date) AS date FROM rating_snapshots").get()?.date
+    || new Date().toISOString().slice(0, 10);
+  const playerIds = new Set(players.map((player) => player.id));
+  const accounts = source.prepare(`
+    SELECT id, player_id, steam_id, game_name, created_at, updated_at, last_seen_at
+    FROM player_steam_accounts
+    ORDER BY created_at ASC
+  `).all().filter((account) => playerIds.has(account.player_id));
+  const insertPlayer = target.prepare(`
+    INSERT INTO players (id, name, steam_id, rating, rating_updated_at, note, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertSnapshot = target.prepare(`
+    INSERT INTO rating_snapshots (date, player_id, rating, source, created_at, updated_at)
+    VALUES (?, ?, ?, 's2-final-roster', ?, ?)
+  `);
+  const insertAccount = target.prepare(`
+    INSERT INTO player_steam_accounts (id, player_id, steam_id, game_name, created_at, updated_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const now = new Date().toISOString();
+  target.exec("BEGIN");
+  try {
+    players.forEach((player) => {
+      insertPlayer.run(
+        player.id,
+        player.name,
+        player.steam_id || "",
+        clampRating(player.rating),
+        player.rating_updated_at || now,
+        player.note || "",
+        player.created_at || now
+      );
+      insertSnapshot.run(finalDate, player.id, clampRating(player.rating), now, now);
+    });
+    accounts.forEach((account) => insertAccount.run(
+      account.id,
+      account.player_id,
+      account.steam_id,
+      account.game_name || "",
+      account.created_at || now,
+      account.updated_at || now,
+      account.last_seen_at || ""
+    ));
+    target.prepare(`
+      INSERT INTO app_state (key, value)
+      VALUES ('s3BootstrapFromS2V1', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(JSON.stringify({ rosterDate: rosterSnapshot?.date || "", finalDate, playerCount: players.length, createdAt: now }));
+    target.exec("COMMIT");
+    console.log(`S3 initialized from S2 final roster: ${players.length} players (${rosterSnapshot?.date || "current"})`);
+  } catch (error) {
+    target.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function addColumnIfMissing(table, column, definition) {
@@ -325,6 +459,60 @@ async function handleApi(request, response, url) {
 
   if (method === "POST" && url.pathname === "/api/admin/check") {
     sendJson(response, 200, { ok: true });
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/replays/preview") {
+    const activeJobs = Array.from(replayJobs.values())
+      .filter((job) => ["queued", "parsing"].includes(job.status)).length;
+    if (activeJobs >= MAX_REPLAY_JOBS) {
+      throw createHttpError(429, "录像解析队列已满，请等待当前任务完成");
+    }
+    if (Number(request.headers["content-length"] || 0) > MAX_REPLAY_UPLOAD_BYTES) {
+      throw createHttpError(413, `录像不能超过 ${Math.round(MAX_REPLAY_UPLOAD_BYTES / 1024 / 1024)} MB`);
+    }
+
+    const jobId = crypto.randomUUID();
+    const filePath = join(REPLAY_UPLOAD_DIR, `${jobId}.dem`);
+    const uploaded = await streamReplayUpload(request, filePath);
+    const originalName = decodeReplayFileName(request.headers["x-replay-file-name"]);
+    const job = {
+      id: jobId,
+      season: getActiveSeason(),
+      status: "queued",
+      stage: "等待解析",
+      originalName,
+      filePath,
+      bytes: uploaded.bytes,
+      sha256: uploaded.sha256,
+      createdAt: new Date().toISOString(),
+      result: null,
+      error: ""
+    };
+    replayJobs.set(jobId, job);
+    replayQueue.push(jobId);
+    void processReplayQueue();
+    sendJson(response, 202, publicReplayJob(job));
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/replays/status") {
+    const body = await readJson(request);
+    const job = getReplayJobForSeason(body.jobId);
+    sendJson(response, 200, publicReplayJob(job, { includeResult: true }));
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/replays/import") {
+    const body = await readJson(request);
+    const job = getReplayJobForSeason(body.jobId);
+    if (job.status !== "ready" || !job.result) {
+      throw createHttpError(409, "录像尚未解析完成");
+    }
+    const imported = importReplayMatch(job, body);
+    job.status = "imported";
+    job.stage = "已导入";
+    sendJson(response, 201, { imported: 1, matchId: imported.matchId, state: getState() });
     return;
   }
 
@@ -501,6 +689,32 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  const playerSteamAccountsMatch = url.pathname.match(/^\/api\/players\/([^/]+)\/steam-accounts$/);
+  if (method === "POST" && playerSteamAccountsMatch) {
+    const playerId = decodeURIComponent(playerSteamAccountsMatch[1]);
+    const body = await readJson(request);
+    const player = db.prepare("SELECT id FROM players WHERE id = ?").get(playerId);
+    if (!player) throw createHttpError(404, "选手不存在");
+    linkSteamAccount({
+      playerId,
+      steamId: body.steamId,
+      gameName: body.gameName,
+      markSeen: false
+    });
+    sendJson(response, 200, getState());
+    return;
+  }
+
+  if (method === "DELETE" && url.pathname.startsWith("/api/steam-accounts/")) {
+    const accountId = decodeURIComponent(url.pathname.replace("/api/steam-accounts/", ""));
+    const account = db.prepare("SELECT player_id FROM player_steam_accounts WHERE id = ?").get(accountId);
+    if (!account) throw createHttpError(404, "游戏账号关联不存在");
+    db.prepare("DELETE FROM player_steam_accounts WHERE id = ?").run(accountId);
+    syncLegacySteamId(account.player_id);
+    sendJson(response, 200, getState());
+    return;
+  }
+
   if (method === "PUT" && url.pathname.startsWith("/api/players/") && url.pathname.endsWith("/rating")) {
     const id = decodeURIComponent(url.pathname.replace("/api/players/", "").replace("/rating", ""));
     const body = await readJson(request);
@@ -514,6 +728,7 @@ async function handleApi(request, response, url) {
 
   if (method === "DELETE" && url.pathname.startsWith("/api/players/")) {
     const id = decodeURIComponent(url.pathname.replace("/api/players/", ""));
+    db.prepare("DELETE FROM player_steam_accounts WHERE player_id = ?").run(id);
     db.prepare("DELETE FROM players WHERE id = ?").run(id);
     db.prepare("DELETE FROM rating_snapshots WHERE player_id = ?").run(id);
     const teams = getTeams();
@@ -656,15 +871,16 @@ async function handleApi(request, response, url) {
       return;
     }
 
-    db.exec("DELETE FROM players; DELETE FROM matches; DELETE FROM rating_snapshots;");
+    db.exec("DELETE FROM player_steam_accounts; DELETE FROM players; DELETE FROM matches; DELETE FROM rating_snapshots;");
     const insertPlayer = db.prepare(`
       INSERT INTO players (id, name, steam_id, rating, rating_updated_at, note, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     body.players.forEach((player) => {
       const now = new Date().toISOString();
+      const playerId = player.id || crypto.randomUUID();
       insertPlayer.run(
-        player.id || crypto.randomUUID(),
+        playerId,
         player.name || "未命名选手",
         player.steamId || player.steam_id || "",
         clampRating(player.rating ?? player.mmr / 1000 ?? 5),
@@ -672,6 +888,15 @@ async function handleApi(request, response, url) {
         player.note || "",
         now
       );
+      const importedAccounts = Array.isArray(player.steamAccounts) && player.steamAccounts.length
+        ? player.steamAccounts
+        : (player.steamId || player.steam_id ? [{ steamId: player.steamId || player.steam_id, gameName: "" }] : []);
+      importedAccounts.forEach((account) => linkSteamAccount({
+        playerId,
+        steamId: account.steamId || account.steam_id,
+        gameName: account.gameName || account.game_name || "",
+        markSeen: false
+      }));
     });
 
     const insertMatch = db.prepare(`
@@ -766,7 +991,7 @@ async function handleApi(request, response, url) {
   }
 
   if (method === "POST" && url.pathname === "/api/reset") {
-    db.exec("DELETE FROM players; DELETE FROM matches; DELETE FROM rating_snapshots;");
+    db.exec("DELETE FROM player_steam_accounts; DELETE FROM players; DELETE FROM matches; DELETE FROM rating_snapshots;");
     saveTeams({ radiant: [], dire: [] });
     savePlayoffTeams({ A: [], B: [], C: [], D: [] });
     sendJson(response, 200, getState());
@@ -774,6 +999,370 @@ async function handleApi(request, response, url) {
   }
 
   sendJson(response, 404, { error: "接口不存在" });
+}
+
+function decodeReplayFileName(value) {
+  try {
+    return decodeURIComponent(String(value || "")).slice(0, 200) || "replay.dem";
+  } catch {
+    return "replay.dem";
+  }
+}
+
+async function streamReplayUpload(request, filePath) {
+  const file = await open(filePath, "wx");
+  const hash = crypto.createHash("sha256");
+  let bytes = 0;
+  let header = Buffer.alloc(0);
+  try {
+    for await (const chunk of request) {
+      bytes += chunk.length;
+      if (bytes > MAX_REPLAY_UPLOAD_BYTES) {
+        throw createHttpError(413, `录像不能超过 ${Math.round(MAX_REPLAY_UPLOAD_BYTES / 1024 / 1024)} MB`);
+      }
+      if (header.length < 8) {
+        header = Buffer.concat([header, chunk.subarray(0, 8 - header.length)]);
+      }
+      hash.update(chunk);
+      await file.write(chunk);
+    }
+  } catch (error) {
+    await file.close().catch(() => {});
+    await unlink(filePath).catch(() => {});
+    throw error;
+  }
+  await file.close();
+  if (!bytes) {
+    await unlink(filePath).catch(() => {});
+    throw createHttpError(400, "请选择 Dota 2 录像文件");
+  }
+  if (!header.equals(Buffer.from("PBDEMS2\0", "ascii"))) {
+    await unlink(filePath).catch(() => {});
+    throw createHttpError(400, "文件不是有效的 Dota 2 Source 2 录像");
+  }
+  return { bytes, sha256: hash.digest("hex") };
+}
+
+function getReplayJobForSeason(jobId) {
+  const job = replayJobs.get(String(jobId || ""));
+  if (!job || job.season !== getActiveSeason()) {
+    throw createHttpError(404, "录像解析任务不存在或已过期");
+  }
+  return job;
+}
+
+function publicReplayJob(job, { includeResult = false } = {}) {
+  const payload = {
+    jobId: job.id,
+    status: job.status,
+    stage: job.stage,
+    fileName: job.originalName,
+    bytes: job.bytes,
+    createdAt: job.createdAt,
+    error: job.error || ""
+  };
+  if (includeResult && job.result) payload.result = enrichReplayResult(job.result);
+  return payload;
+}
+
+function enrichReplayResult(result) {
+  const players = db.prepare("SELECT id, name FROM players ORDER BY created_at ASC").all();
+  const playerById = new Map(players.map((player) => [player.id, player]));
+  const bySteamId = new Map(db.prepare(`
+    SELECT player_id, steam_id
+    FROM player_steam_accounts
+  `).all().map((account) => [String(account.steam_id), playerById.get(account.player_id)]));
+  const duplicate = Boolean(result.matchId && db.prepare("SELECT id FROM matches WHERE match_id = ? LIMIT 1").get(result.matchId));
+  return {
+    ...result,
+    duplicate,
+    nextMatchNo: getNextMatchNo(result.date),
+    players: result.players.map((replayPlayer) => {
+      const steamMatch = bySteamId.get(String(replayPlayer.steamId || ""));
+      return {
+        ...replayPlayer,
+        matchedPlayerId: steamMatch?.id || "",
+        matchedBy: steamMatch ? "steamId" : ""
+      };
+    })
+  };
+}
+
+function getNextMatchNo(date) {
+  if (!isValidDateString(date)) return 1;
+  const row = db.prepare("SELECT COALESCE(MAX(match_no), 0) + 1 AS next_match_no FROM matches WHERE date = ?").get(date);
+  return Math.max(1, Number(row?.next_match_no || 1));
+}
+
+function processReplayQueue() {
+  if (replayParseBusy) return;
+  const jobId = replayQueue.shift();
+  if (!jobId) return;
+  const job = replayJobs.get(jobId);
+  if (!job) {
+    void processReplayQueue();
+    return;
+  }
+
+  replayParseBusy = true;
+  job.status = "parsing";
+  job.stage = "正在解析录像";
+  runReplayParser(job.filePath)
+    .then((result) => {
+      if (!Array.isArray(result.players) || result.players.length !== 10) {
+        throw new Error(`录像只识别到 ${result.players?.length || 0} 名选手`);
+      }
+      job.result = result;
+      job.status = "ready";
+      job.stage = "解析完成，等待确认";
+    })
+    .catch((error) => {
+      job.status = "error";
+      job.stage = "解析失败";
+      job.error = String(error.message || error).slice(0, 1000);
+    })
+    .finally(async () => {
+      await unlink(job.filePath).catch(() => {});
+      replayParseBusy = false;
+      const cleanupTimer = setTimeout(() => replayJobs.delete(job.id), 2 * 60 * 60 * 1000);
+      cleanupTimer.unref?.();
+      void processReplayQueue();
+    });
+}
+
+function runReplayParser(filePath) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(REPLAY_PYTHON, [REPLAY_PARSER_PATH, filePath], {
+      cwd: __dirname,
+      windowsHide: true,
+      shell: false,
+      env: ENV
+    });
+    let stdout = "";
+    let stderr = "";
+    let failure = "";
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback(value);
+    };
+    const timeout = setTimeout(() => {
+      failure = "录像解析超过时间限制";
+      child.kill();
+    }, REPLAY_PARSE_TIMEOUT_MS);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+      if (stdout.length > 2 * 1024 * 1024) {
+        failure = "录像解析结果异常过大";
+        child.kill();
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      if (stderr.length < 64 * 1024) stderr += chunk.toString("utf8");
+    });
+    child.on("error", (error) => finish(reject, new Error(`无法启动录像解析器：${error.message}`)));
+    child.on("close", (code) => {
+      if (failure) {
+        finish(reject, new Error(failure));
+        return;
+      }
+      if (code !== 0) {
+        finish(reject, new Error(stderr.trim() || `录像解析器退出，状态码 ${code}`));
+        return;
+      }
+      try {
+        finish(resolve, JSON.parse(stdout.trim()));
+      } catch {
+        finish(reject, new Error("录像解析器没有返回有效结果"));
+      }
+    });
+  });
+}
+
+function importReplayMatch(job, body) {
+  const result = job.result;
+  if (!result.matchId || !isValidDateString(result.date) || !["radiant", "dire"].includes(result.winner)) {
+    throw createHttpError(400, "录像缺少比赛 ID、日期或胜方，不能自动导入");
+  }
+  if (db.prepare("SELECT id FROM matches WHERE match_id = ? LIMIT 1").get(result.matchId)) {
+    throw createHttpError(409, `比赛 ID ${result.matchId} 已经导入`);
+  }
+
+  const mappings = body.playerMappings && typeof body.playerMappings === "object" ? body.playerMappings : {};
+  const requestedPositions = body.positions && typeof body.positions === "object" ? body.positions : {};
+  const heroNames = body.heroNames && typeof body.heroNames === "object" ? body.heroNames : {};
+  const databasePlayers = db.prepare("SELECT id, name FROM players").all();
+  const playerById = new Map(databasePlayers.map((player) => [player.id, player]));
+  const mappedIds = result.players.map((player) => String(mappings[player.slot] || ""));
+  if (mappedIds.some((id) => !playerById.has(id)) || new Set(mappedIds).size !== 10) {
+    throw createHttpError(400, "请为录像中的十名玩家分别选择不同的站内选手");
+  }
+
+  for (const team of ["radiant", "dire"]) {
+    const teamPositions = result.players.filter((player) => player.team === team)
+      .map((player) => String(requestedPositions[player.slot] || ""));
+    if (teamPositions.length !== 5 || new Set(teamPositions).size !== 5
+      || teamPositions.some((position) => !["1", "2", "3", "4", "5"].includes(position))) {
+      throw createHttpError(400, `${team === "radiant" ? "天辉" : "夜魇"}需要分别确认 1–5 号位`);
+    }
+  }
+
+  result.players.forEach((replayPlayer) => {
+    const selected = playerById.get(String(mappings[replayPlayer.slot]));
+    const steamId = String(replayPlayer.steamId || "").trim();
+    if (!steamId) return;
+    const account = db.prepare(`
+      SELECT a.player_id, p.name
+      FROM player_steam_accounts a
+      JOIN players p ON p.id = a.player_id
+      WHERE a.steam_id = ?
+    `).get(steamId);
+    if (account && account.player_id !== selected.id) {
+      throw createHttpError(409, `Steam ID ${steamId} 已绑定选手 ${account.name}`);
+    }
+  });
+
+  const teams = {
+    radiant: result.players.filter((player) => player.team === "radiant").map((player) => String(mappings[player.slot])),
+    dire: result.players.filter((player) => player.team === "dire").map((player) => String(mappings[player.slot]))
+  };
+  const positions = {};
+  const details = {};
+  const teamDamage = {
+    radiant: result.players.filter((player) => player.team === "radiant").reduce((sum, player) => sum + Number(player.damage || 0), 0),
+    dire: result.players.filter((player) => player.team === "dire").reduce((sum, player) => sum + Number(player.damage || 0), 0)
+  };
+  result.players.forEach((player) => {
+    const playerId = String(mappings[player.slot]);
+    const teamKills = player.team === "radiant" ? Number(result.radiantScore || 0) : Number(result.direScore || 0);
+    positions[playerId] = String(requestedPositions[player.slot]);
+    details[playerId] = {
+      hero: String(heroNames[player.slot] || player.heroSlug || "").trim(),
+      position: positions[playerId],
+      kills: Number(player.kills || 0),
+      deaths: Number(player.deaths || 0),
+      assists: Number(player.assists || 0),
+      participation: teamKills ? (Number(player.kills || 0) + Number(player.assists || 0)) / teamKills : 0,
+      damageShare: teamDamage[player.team] ? Number(player.damage || 0) / teamDamage[player.team] : 0,
+      gpm: Number(player.gpm || 0),
+      xpm: Number(player.xpm || 0),
+      lastHits: Number(player.lastHits || 0),
+      netWorth10: Number(player.netWorth10 || 0),
+      damage: Number(player.damage || 0),
+      buildingDamage: Number(player.buildingDamage || 0),
+      damageTaken: Number(player.damageTaken || 0),
+      healing: Number(player.healing || 0),
+      special: "录像自动导入"
+    };
+  });
+
+  const matchNo = getNextMatchNo(result.date);
+  const duration = formatReplayDuration(result.durationSeconds);
+  const score = `${Number(result.radiantScore || 0)}-${Number(result.direScore || 0)} / ${duration}`;
+  const now = new Date().toISOString();
+  const matchRecordId = crypto.randomUUID();
+  db.exec("BEGIN");
+  try {
+    result.players.forEach((replayPlayer) => {
+      const playerId = String(mappings[replayPlayer.slot]);
+      const steamId = String(replayPlayer.steamId || "").trim();
+      if (steamId) linkSteamAccount({
+        playerId,
+        steamId,
+        gameName: replayPlayer.playerName,
+        markSeen: true
+      });
+    });
+    db.prepare(`
+      INSERT INTO matches (id, date, match_no, match_id, winner, score, note, radiant, dire, positions, player_details, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      matchRecordId,
+      result.date,
+      matchNo,
+      result.matchId,
+      result.winner,
+      score,
+      `录像导入：${job.originalName}`,
+      JSON.stringify(teams.radiant),
+      JSON.stringify(teams.dire),
+      JSON.stringify(cleanPositions(positions, teams)),
+      JSON.stringify(cleanPlayerDetails(details, teams)),
+      now
+    );
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return { id: matchRecordId, matchId: result.matchId };
+}
+
+function formatReplayDuration(value) {
+  const seconds = Math.max(0, Math.round(Number(value || 0)));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function normalizeSteamId(value) {
+  const steamId = String(value || "").trim();
+  if (!/^\d{17}$/.test(steamId)) {
+    throw createHttpError(400, "请输入 17 位 Steam ID64；好友代码或游戏昵称不能用于录像自动匹配");
+  }
+  return steamId;
+}
+
+function linkSteamAccount({ playerId, steamId, gameName = "", markSeen = false }) {
+  const normalizedSteamId = normalizeSteamId(steamId);
+  const normalizedGameName = String(gameName || "").trim().slice(0, 100);
+  const existing = db.prepare(`
+    SELECT id, player_id
+    FROM player_steam_accounts
+    WHERE steam_id = ?
+  `).get(normalizedSteamId);
+  if (existing && existing.player_id !== playerId) {
+    const owner = db.prepare("SELECT name FROM players WHERE id = ?").get(existing.player_id);
+    throw createHttpError(409, `Steam ID ${normalizedSteamId} 已绑定选手 ${owner?.name || "未知选手"}`);
+  }
+
+  const now = new Date().toISOString();
+  if (existing) {
+    db.prepare(`
+      UPDATE player_steam_accounts
+      SET game_name = CASE WHEN ? <> '' THEN ? ELSE game_name END,
+          updated_at = ?,
+          last_seen_at = CASE WHEN ? THEN ? ELSE last_seen_at END
+      WHERE id = ?
+    `).run(normalizedGameName, normalizedGameName, now, markSeen ? 1 : 0, now, existing.id);
+  } else {
+    db.prepare(`
+      INSERT INTO player_steam_accounts (
+        id, player_id, steam_id, game_name, created_at, updated_at, last_seen_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      crypto.randomUUID(),
+      playerId,
+      normalizedSteamId,
+      normalizedGameName,
+      now,
+      now,
+      markSeen ? now : ""
+    );
+  }
+  syncLegacySteamId(playerId);
+}
+
+function syncLegacySteamId(playerId) {
+  const firstAccount = db.prepare(`
+    SELECT steam_id
+    FROM player_steam_accounts
+    WHERE player_id = ?
+    ORDER BY created_at ASC, id ASC
+    LIMIT 1
+  `).get(playerId);
+  db.prepare("UPDATE players SET steam_id = ? WHERE id = ?").run(firstAccount?.steam_id || "", playerId);
 }
 
 function requireAdmin(request, response) {
@@ -1007,6 +1596,16 @@ function replaceHomepageHighlights(highlights) {
 
 function getState() {
   const season = getActiveSeason();
+  const steamAccountsByPlayer = new Map();
+  db.prepare(`
+    SELECT id, player_id AS playerId, steam_id AS steamId, game_name AS gameName,
+           created_at AS createdAt, updated_at AS updatedAt, last_seen_at AS lastSeenAt
+    FROM player_steam_accounts
+    ORDER BY created_at ASC, id ASC
+  `).all().forEach((account) => {
+    if (!steamAccountsByPlayer.has(account.playerId)) steamAccountsByPlayer.set(account.playerId, []);
+    steamAccountsByPlayer.get(account.playerId).push(account);
+  });
   return {
     season,
     seasonLabel: season.toUpperCase(),
@@ -1015,7 +1614,10 @@ function getState() {
       SELECT id, name, steam_id AS steamId, rating, rating_updated_at AS ratingUpdatedAt, note
       FROM players
       ORDER BY created_at ASC
-    `).all(),
+    `).all().map((player) => ({
+      ...player,
+      steamAccounts: steamAccountsByPlayer.get(player.id) || []
+    })),
     matches: db.prepare(`
       SELECT id, date, match_no AS matchNo, match_id AS matchId, winner, score, note, radiant, dire, positions, player_details AS playerDetails
       FROM matches

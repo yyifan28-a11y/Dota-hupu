@@ -634,7 +634,19 @@
                 <span>数据导入</span>
               </summary>
               <div class="backup-panel-body">
-                <p>请导入 S3 内战数据表.xlsx</p>
+                <h3>录像导入</h3>
+                <p>上传 Dota 2 的 .dem 录像。解析后请确认十名选手和双方 1–5 号位，再写入比赛记录。</p>
+                <div class="button-row">
+                  <label class="primary-button file-button admin-only">
+                    上传录像
+                    <input id="importReplayData" type="file" accept=".dem,application/octet-stream" />
+                  </label>
+                  <span id="replayUploadStatus" class="replay-upload-status" role="status" aria-live="polite"></span>
+                </div>
+                <div id="replayImportPreview" class="excel-import-preview"></div>
+
+                <h3>Excel 导入</h3>
+                <p>保留原有 Excel 导入方式，必要时仍可使用 S3 内战数据表。</p>
                 <div class="button-row">
                   <label class="secondary-button file-button admin-only">
                     导入 Excel
@@ -671,6 +683,7 @@
                       <th>昵称</th>
                       <th>评分</th>
                       <th>最后改分</th>
+                      <th>Steam 账号（可多绑）</th>
                       <th>备注</th>
                       <th>操作</th>
                     </tr>

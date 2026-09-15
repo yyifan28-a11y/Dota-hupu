@@ -4001,6 +4001,65 @@ select:focus {
   margin-top: 14px;
 }
 
+.steam-account-list {
+  display: flex;
+  min-width: 250px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.steam-account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(26, 127, 88, 0.2);
+  border-radius: 7px;
+  background: rgba(26, 127, 88, 0.06);
+  padding: 5px 6px 5px 8px;
+}
+
+.steam-account-chip > span {
+  display: grid;
+  gap: 1px;
+}
+
+.steam-account-chip b {
+  max-width: 150px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.steam-account-chip small {
+  color: var(--muted);
+  font-family: Consolas, monospace;
+  font-size: 10px;
+}
+
+.steam-account-chip button {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.steam-account-chip button:hover {
+  background: rgba(185, 28, 28, 0.1);
+  color: #b91c1c;
+}
+
+.steam-account-add {
+  white-space: nowrap;
+}
+
 .backup-panel-body {
   display: grid;
   gap: 12px;
@@ -4188,6 +4247,67 @@ select:focus {
 .excel-preview-table th,
 .excel-preview-table td {
   white-space: nowrap;
+}
+
+.replay-upload-status {
+  align-self: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.replay-upload-status[data-state="working"] {
+  color: #b76a06;
+}
+
+.replay-upload-status[data-state="success"] {
+  color: var(--green-dark);
+}
+
+.replay-upload-status[data-state="error"] {
+  color: var(--red);
+}
+
+.replay-preview-table-wrap {
+  max-height: 540px;
+}
+
+.replay-preview-table-wrap .replay-preview-table {
+  min-width: 1180px;
+}
+
+.replay-preview-table select {
+  min-width: 112px;
+}
+
+.replay-preview-table td:nth-child(7) select {
+  min-width: 150px;
+}
+
+.replay-steam-id,
+.replay-lane-role,
+.replay-match-hint {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.replay-team-badge {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.replay-team-badge.radiant {
+  background: rgba(34, 139, 94, 0.12);
+  color: var(--green-dark);
+}
+
+.replay-team-badge.dire {
+  background: rgba(185, 75, 67, 0.12);
+  color: var(--red);
 }
 
 .excel-duplicate-row {

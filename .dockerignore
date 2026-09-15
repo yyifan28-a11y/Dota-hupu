@@ -1,0 +1,14 @@
+.git
+.gitignore
+node_modules
+*.db
+*.db-*
+*.log
+*.xlsx
+*.xls
+*.dem
+backups
+output
+tmp
+uploads
+记录

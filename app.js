@@ -148,6 +148,9 @@ let heroRankStats = [];
 let pairRankStats = { teammate: [], trio: [], opponent: [] };
 let pendingExcelMatches = [];
 let pendingRatingSnapshots = [];
+let pendingReplayJobId = "";
+let pendingReplayResult = null;
+let replayStatusTimer = 0;
 let selectedDashboardMatchDate = "";
 let activeDashboardRankMetric = "rating";
 let activeDashboardHighlightIndex = 0;
@@ -1496,7 +1499,12 @@ function getPlayerProfilePlayers() {
 }
 
 function getPlayerProfileSearchValues(player) {
-  return [player.name, player.steam_id, player.steamId]
+  return [
+    player.name,
+    player.steam_id,
+    player.steamId,
+    ...(player.steamAccounts || []).flatMap((account) => [account.steamId, account.gameName])
+  ]
     .filter(Boolean)
     .map((value) => String(value).trim().toLocaleLowerCase());
 }
@@ -3234,12 +3242,13 @@ function getPlayerSearchText(player) {
   return normalizeSearchText([
     player.name,
     player.steamId,
-    player.steam_id
+    player.steam_id,
+    ...(player.steamAccounts || []).flatMap((account) => [account.steamId, account.gameName])
   ].filter(Boolean).join(" "));
 }
 
 function getPlayerDisplayId(player) {
-  return player?.steam_id || player?.steamId || player?.name || "";
+  return player?.steamAccounts?.[0]?.steamId || player?.steam_id || player?.steamId || player?.name || "";
 }
 
 function getPlayerSearchSelectionLabel(player) {
@@ -4429,12 +4438,14 @@ function renderAdminPlayers() {
   if (!body) return;
 
   if (!db.players.length) {
-    body.innerHTML = `<tr><td colspan="5" class="muted">暂无选手</td></tr>`;
+    body.innerHTML = `<tr><td colspan="6" class="muted">暂无选手</td></tr>`;
     return;
   }
 
   body.innerHTML = db.players
-    .map((player) => `
+    .map((player) => {
+      const accounts = Array.isArray(player.steamAccounts) ? player.steamAccounts : [];
+      return `
       <tr>
         <td><strong>${escapeHtml(player.name)}</strong></td>
         <td>
@@ -4444,12 +4455,24 @@ function renderAdminPlayers() {
           </div>
         </td>
         <td>${formatDateTime(player.ratingUpdatedAt)}</td>
+        <td>
+          <div class="steam-account-list">
+            ${accounts.map((account) => `
+              <span class="steam-account-chip">
+                <span><b>${escapeHtml(account.gameName || "未记录游戏昵称")}</b><small>${escapeHtml(account.steamId)}</small></span>
+                <button data-delete-steam-account="${escapeHtml(account.id)}" data-player-name="${escapeHtml(player.name)}" type="button" aria-label="解除 ${escapeHtml(player.name)} 的 Steam ID 关联">×</button>
+              </span>
+            `).join("")}
+            <button class="ghost-button compact-button steam-account-add" data-add-steam-account="${player.id}" type="button">+ 绑定账号</button>
+          </div>
+        </td>
         <td>${escapeHtml(player.note || "-")}</td>
         <td class="row-actions">
           <button class="text-button" data-delete-player="${player.id}" type="button">删除</button>
         </td>
       </tr>
-    `)
+    `;
+    })
     .join("");
 }
 
@@ -5314,6 +5337,154 @@ function renderPercentStat(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return escapeHtml(value);
   return `${(number <= 1 ? number * 100 : number).toFixed(1)}%`;
+}
+
+function setReplayUploadStatus(message, state = "") {
+  const target = $("#replayUploadStatus");
+  if (!target) return;
+  target.textContent = message;
+  target.dataset.state = state;
+}
+
+function uploadReplayFile(file) {
+  const password = sessionStorage.getItem(ADMIN_PASSWORD_KEY) || $("#adminPasswordInput")?.value;
+  if (!password) return Promise.reject(new Error("请先进入管理员模式。"));
+  const requestUrl = new URL("/api/replays/preview", window.location.href);
+  requestUrl.searchParams.set("season", CURRENT_SEASON);
+
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", requestUrl);
+    request.setRequestHeader("X-Admin-Password", password);
+    request.setRequestHeader("Content-Type", "application/octet-stream");
+    request.setRequestHeader("X-Replay-File-Name", encodeURIComponent(file.name));
+    request.upload.addEventListener("progress", (event) => {
+      if (!event.lengthComputable) return;
+      setReplayUploadStatus(`正在上传 ${Math.round(event.loaded / event.total * 100)}%`, "working");
+    });
+    request.addEventListener("load", () => {
+      const payload = JSON.parse(request.responseText || "{}");
+      if (request.status < 200 || request.status >= 300) {
+        reject(Object.assign(new Error(payload.error || `上传失败：${request.status}`), payload));
+        return;
+      }
+      resolve(payload);
+    });
+    request.addEventListener("error", () => reject(new Error("录像上传失败，请检查网络连接。")));
+    request.send(file);
+  });
+}
+
+function scheduleReplayStatusPoll(delay = 1200) {
+  window.clearTimeout(replayStatusTimer);
+  replayStatusTimer = window.setTimeout(pollReplayStatus, delay);
+}
+
+async function pollReplayStatus() {
+  if (!pendingReplayJobId) return;
+  try {
+    const job = await adminApi("/api/replays/status", {
+      method: "POST",
+      body: JSON.stringify({ jobId: pendingReplayJobId })
+    });
+    if (job.status === "ready") {
+      pendingReplayResult = job.result;
+      setReplayUploadStatus("解析完成，请确认选手和位置。", "success");
+      renderReplayImportPreview(job.result);
+      return;
+    }
+    if (job.status === "error") {
+      setReplayUploadStatus(`解析失败：${job.error || "未知错误"}`, "error");
+      return;
+    }
+    if (job.status === "imported") {
+      setReplayUploadStatus("这份录像已经导入。", "success");
+      return;
+    }
+    setReplayUploadStatus(job.stage || "正在解析录像…", "working");
+    scheduleReplayStatusPoll();
+  } catch (error) {
+    setReplayUploadStatus(error.message || "无法查询录像解析状态。", "error");
+  }
+}
+
+function replayHeroDisplayName(slug) {
+  return findHero(slug)?.cn || String(slug || "").replaceAll("_", " ");
+}
+
+function replayLaneRoleLabel(value) {
+  return ({ 1: "优势路", 2: "中路", 3: "劣势路", 4: "打野", 5: "游走" })[Number(value)] || "未知";
+}
+
+function formatReplayPreviewDuration(value) {
+  const seconds = Math.max(0, Math.round(Number(value || 0)));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function renderReplayImportPreview(result) {
+  const target = $("#replayImportPreview");
+  if (!target) return;
+  const playerOptions = db.players
+    .map((player) => `<option value="${escapeHtml(player.id)}">${escapeHtml(player.name)}</option>`)
+    .join("");
+  const rows = (result.players || []).map((player) => {
+    const heroName = replayHeroDisplayName(player.heroSlug);
+    return `
+      <tr>
+        <td><span class="replay-team-badge ${player.team}">${player.team === "radiant" ? "天辉" : "夜魇"}</span></td>
+        <td><strong>${escapeHtml(player.playerName || "未知玩家")}</strong><small class="replay-steam-id">${escapeHtml(player.steamId || "无 Steam ID")}</small></td>
+        <td>${escapeHtml(heroName)}<small class="replay-lane-role">${escapeHtml(replayLaneRoleLabel(player.laneRole))}</small></td>
+        <td>${Number(player.kills || 0)}/${Number(player.deaths || 0)}/${Number(player.assists || 0)}</td>
+        <td>${Number(player.gpm || 0)} / ${Number(player.xpm || 0)}</td>
+        <td>${Number(player.netWorth10 || 0)}</td>
+        <td>
+          <select data-replay-player-slot="${Number(player.slot)}" aria-label="匹配站内选手">
+            <option value="">请选择选手</option>
+            ${playerOptions}
+          </select>
+          ${player.matchedBy ? `<small class="replay-match-hint">已按 Steam ID 匹配</small>` : ""}
+        </td>
+        <td>
+          <select data-replay-position-slot="${Number(player.slot)}" aria-label="确认位置">
+            ${POSITIONS.map((position) => `<option value="${position}" ${String(player.suggestedPosition) === position ? "selected" : ""}>${position} 号位</option>`).join("")}
+          </select>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  target.innerHTML = `
+    <div class="excel-preview-card replay-preview-card">
+      <h4>录像导入预览</h4>
+      <p>${escapeHtml(result.date || "日期未知")} 第 ${Number(result.nextMatchNo || 1)} 场 · 比赛 ID ${escapeHtml(result.matchId || "-")} · ${Number(result.radiantScore || 0)}-${Number(result.direScore || 0)} / ${escapeHtml(formatReplayPreviewDuration(result.durationSeconds))} · ${result.winner === "radiant" ? "天辉胜利" : "夜魇胜利"}</p>
+      ${result.duplicate ? `<div class="excel-message error"><p>这场比赛已经存在，不能重复导入。</p></div>` : ""}
+      <div class="excel-message warning"><p>位置是根据分路和 10 分钟经济推测的，请逐项确认。手动选定后会把该 Steam ID 关联到站内选手；游戏昵称仅用于辅助辨认。</p></div>
+      <div class="table-wrap excel-preview-table-wrap replay-preview-table-wrap">
+        <table class="excel-preview-table replay-preview-table">
+          <thead><tr><th>阵营</th><th>录像玩家</th><th>英雄/分路</th><th>K/D/A</th><th>GPM/XPM</th><th>10分钟经济</th><th>站内选手</th><th>位置</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="button-row">
+        <button class="primary-button" id="confirmReplayImport" type="button" ${result.duplicate ? "disabled" : ""}>确认导入录像比赛</button>
+        <button class="secondary-button" id="clearReplayImport" type="button">取消预览</button>
+      </div>
+    </div>
+  `;
+
+  (result.players || []).forEach((player) => {
+    const select = target.querySelector(`[data-replay-player-slot="${Number(player.slot)}"]`);
+    if (select && player.matchedPlayerId) select.value = player.matchedPlayerId;
+  });
+}
+
+function clearReplayImportPreview() {
+  window.clearTimeout(replayStatusTimer);
+  pendingReplayJobId = "";
+  pendingReplayResult = null;
+  const target = $("#replayImportPreview");
+  if (target) target.innerHTML = "";
+  setReplayUploadStatus("");
 }
 
 async function fileToBase64(file) {
@@ -6187,6 +6358,42 @@ function bindEvents() {
   });
 
   $("#adminPlayersBody").addEventListener("click", async (event) => {
+    const addAccountButton = event.target.closest("[data-add-steam-account]");
+    if (addAccountButton) {
+      const player = getPlayer(addAccountButton.dataset.addSteamAccount);
+      if (!player) return;
+      const steamId = prompt(`为“${player.name}”绑定 Steam ID64（17 位数字）：`);
+      if (steamId === null) return;
+      const gameName = prompt("这个账号当前显示的游戏 ID / 昵称（仅辅助辨认，可留空）：", "");
+      if (gameName === null) return;
+      try {
+        addAccountButton.disabled = true;
+        await adminApi(`/api/players/${player.id}/steam-accounts`, {
+          method: "POST",
+          body: JSON.stringify({ steamId: steamId.trim(), gameName: gameName.trim() })
+        });
+        await loadState();
+      } catch (error) {
+        alert(error.message);
+        addAccountButton.disabled = false;
+      }
+      return;
+    }
+
+    const deleteAccountButton = event.target.closest("[data-delete-steam-account]");
+    if (deleteAccountButton) {
+      if (!confirm(`确认解除“${deleteAccountButton.dataset.playerName}”与这个 Steam ID 的关联吗？`)) return;
+      try {
+        deleteAccountButton.disabled = true;
+        await adminApi(`/api/steam-accounts/${deleteAccountButton.dataset.deleteSteamAccount}`, { method: "DELETE" });
+        await loadState();
+      } catch (error) {
+        alert(error.message);
+        deleteAccountButton.disabled = false;
+      }
+      return;
+    }
+
     const deleteId = event.target.dataset.deletePlayer;
     if (!deleteId) return;
 
@@ -6389,6 +6596,84 @@ function bindEvents() {
       alert(error.message || "导入失败，请确认文件是本工具导出的 JSON。");
     } finally {
       event.target.value = "";
+    }
+  });
+
+  $("#importReplayData")?.addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    clearReplayImportPreview();
+    if (!file.name.toLowerCase().endsWith(".dem")) {
+      setReplayUploadStatus("请选择 .dem 录像文件。", "error");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > 200 * 1024 * 1024) {
+      setReplayUploadStatus("录像不能超过 200 MB。", "error");
+      event.target.value = "";
+      return;
+    }
+
+    try {
+      setReplayUploadStatus("正在上传录像…", "working");
+      const job = await uploadReplayFile(file);
+      pendingReplayJobId = job.jobId;
+      setReplayUploadStatus(job.stage || "上传完成，等待解析…", "working");
+      scheduleReplayStatusPoll(300);
+    } catch (error) {
+      setReplayUploadStatus(error.message || "录像上传失败。", "error");
+    } finally {
+      event.target.value = "";
+    }
+  });
+
+  $("#replayImportPreview")?.addEventListener("click", async (event) => {
+    if (event.target.id === "clearReplayImport") {
+      clearReplayImportPreview();
+      return;
+    }
+    if (event.target.id !== "confirmReplayImport" || !pendingReplayResult || !pendingReplayJobId) return;
+
+    const playerMappings = {};
+    const positions = {};
+    const heroNames = {};
+    pendingReplayResult.players.forEach((player) => {
+      playerMappings[player.slot] = $(`[data-replay-player-slot="${Number(player.slot)}"]`)?.value || "";
+      positions[player.slot] = $(`[data-replay-position-slot="${Number(player.slot)}"]`)?.value || "";
+      heroNames[player.slot] = replayHeroDisplayName(player.heroSlug);
+    });
+    const selectedPlayerIds = Object.values(playerMappings);
+    if (selectedPlayerIds.some((id) => !id) || new Set(selectedPlayerIds).size !== 10) {
+      alert("请为录像中的十名玩家分别选择不同的站内选手。");
+      return;
+    }
+    for (const team of ["radiant", "dire"]) {
+      const teamPositions = pendingReplayResult.players.filter((player) => player.team === team)
+        .map((player) => positions[player.slot]);
+      if (new Set(teamPositions).size !== 5 || teamPositions.some((position) => !POSITIONS.includes(position))) {
+        alert(`${team === "radiant" ? "天辉" : "夜魇"}需要分别确认 1–5 号位。`);
+        return;
+      }
+    }
+    if (!confirm(`确认导入 ${pendingReplayResult.date} 第 ${pendingReplayResult.nextMatchNo} 场录像吗？`)) return;
+
+    const button = event.target;
+    button.disabled = true;
+    button.textContent = "正在导入…";
+    try {
+      const result = await adminApi("/api/replays/import", {
+        method: "POST",
+        body: JSON.stringify({ jobId: pendingReplayJobId, playerMappings, positions, heroNames })
+      });
+      db = result.state;
+      rebuildDerivedStats();
+      clearReplayImportPreview();
+      renderAll();
+      alert(`比赛 ${result.matchId} 已成功导入。`);
+    } catch (error) {
+      alert(error.message || "录像导入失败。");
+      button.disabled = false;
+      button.textContent = "确认导入录像比赛";
     }
   });
 

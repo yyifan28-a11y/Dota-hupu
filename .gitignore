@@ -1,4 +1,7 @@
 node_modules/
+.venv/
+__pycache__/
+*.pyc
 
 # Local SQLite data. Do not commit private match records.
 *.db
@@ -10,7 +13,8 @@ node_modules/
 backups/
 uploads/
 /tmp/
-/记录/*.xlsx
+/记录/
+*.dem
 *.blend1
 
 # OS/editor noise.
