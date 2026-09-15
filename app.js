@@ -20,46 +20,6 @@ const IS_HOMEPAGE_PREVIEW_FRAME = new URLSearchParams(window.location.search).ge
 const POSITIONS = ["1", "2", "3", "4", "5"];
 const HEROES = Array.isArray(window.DOTA_HEROES) ? window.DOTA_HEROES : [];
 const HERO_IMAGE_BASE = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes";
-const DEFAULT_DASHBOARD_HIGHLIGHTS = Object.freeze([
-  Object.freeze({
-    date: "2026-05-17",
-    matchNo: 2,
-    matchId: "8814798529",
-    playerName: "xian",
-    hero: "帕克",
-    image: "./assets/highlights/puck-1.png",
-    objectPosition: "50% 47%",
-    layout: "image-right",
-    fallback: {
-      winner: "dire",
-      kills: 17,
-      deaths: 4,
-      assists: 25,
-      damage: 79885,
-      participation: 0.857,
-      gpm: 737
-    }
-  }),
-  Object.freeze({
-    date: "2026-05-14",
-    matchNo: 3,
-    matchId: "8810694716",
-    playerName: "ldxy",
-    hero: "灰烬之灵",
-    image: "./assets/highlights/ember-spirit-ldxy-2026-05-14-03-v8.webp",
-    objectPosition: "50% 28%",
-    layout: "image-left",
-    fallback: {
-      winner: "radiant",
-      kills: 16,
-      deaths: 3,
-      assists: 16,
-      damage: 46228,
-      participation: 0.762,
-      gpm: 686
-    }
-  })
-]);
 const ADMIN_PASSWORD_KEY = "dota-admin-password";
 const APP_ENTERED_KEY = "dota-app-entered";
 const ACTIVE_VIEW_KEY = "dota-active-view";
@@ -155,6 +115,8 @@ let selectedDashboardMatchDate = "";
 let activeDashboardRankMetric = "rating";
 let activeDashboardHighlightIndex = 0;
 const preloadedDashboardHighlightImages = new Set();
+const DASHBOARD_HIGHLIGHT_AUTO_INTERVAL = 15000;
+let dashboardHighlightAutoAdvanceTimer = 0;
 let activeDataViewMode = "basic";
 let selectedPlayerProfileId = REQUESTED_PLAYER_ID;
 let playerProfileSearchQuery = "";
@@ -930,7 +892,7 @@ function getHomepageHighlightContentStyle(highlight = {}) {
 
 function getDashboardHighlights() {
   if (homepageHighlightPreviewOverride) return [homepageHighlightPreviewOverride];
-  if (!Array.isArray(db.homepageHighlights)) return DEFAULT_DASHBOARD_HIGHLIGHTS;
+  if (!Array.isArray(db.homepageHighlights)) return [];
   return db.homepageHighlights
     .filter((highlight) => highlight.status === "published")
     .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
@@ -945,6 +907,7 @@ function renderDashboardHighlight() {
   const highlight = highlights[activeDashboardHighlightIndex] || highlights[0];
   if (!highlight) {
     target.replaceChildren();
+    scheduleDashboardHighlightAutoAdvance();
     return;
   }
 
@@ -1004,9 +967,17 @@ function renderDashboardHighlight() {
       <button class="dashboard-highlight-arrow is-previous" type="button" data-dashboard-highlight-index="${previousIndex}" aria-label="上一张首页图">
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
       </button>
-      <span class="dashboard-highlight-position" aria-label="第 ${activeDashboardHighlightIndex + 1} 张，共 ${highlights.length} 张">
-        ${String(activeDashboardHighlightIndex + 1).padStart(2, "0")} / ${String(highlights.length).padStart(2, "0")}
-      </span>
+      <nav class="dashboard-highlight-pagination" aria-label="首页图切换">
+        ${highlights.map((_, index) => `
+          <button
+            class="dashboard-highlight-dot${index === activeDashboardHighlightIndex ? " is-active" : ""}"
+            type="button"
+            data-dashboard-highlight-index="${index}"
+            aria-label="查看第 ${index + 1} 张首页图"
+            ${index === activeDashboardHighlightIndex ? 'aria-current="true"' : ""}
+          ></button>
+        `).join("")}
+      </nav>
       <button class="dashboard-highlight-arrow is-next" type="button" data-dashboard-highlight-index="${nextIndex}" aria-label="下一张首页图">
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg>
       </button>
@@ -1014,6 +985,7 @@ function renderDashboardHighlight() {
   `;
 
   preloadDashboardHighlightImages();
+  scheduleDashboardHighlightAutoAdvance();
 }
 
 function showDashboardHighlight(index) {
@@ -1023,6 +995,28 @@ function showDashboardHighlight(index) {
   if (nextIndex === activeDashboardHighlightIndex) return;
   activeDashboardHighlightIndex = nextIndex;
   renderDashboardHighlight();
+}
+
+function scheduleDashboardHighlightAutoAdvance() {
+  window.clearTimeout(dashboardHighlightAutoAdvanceTimer);
+  dashboardHighlightAutoAdvanceTimer = 0;
+  if (
+    IS_HOMEPAGE_PREVIEW_FRAME
+    || homepageHighlightPreviewOverride
+    || getDashboardHighlights().length < 2
+    || window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  ) return;
+
+  dashboardHighlightAutoAdvanceTimer = window.setTimeout(() => {
+    const target = $("#featuredHighlight");
+    const dashboardActive = $("#dashboard")?.classList.contains("is-active");
+    const userIsInspecting = target?.matches(":hover") || target?.contains(document.activeElement);
+    if (document.hidden || !dashboardActive || userIsInspecting) {
+      scheduleDashboardHighlightAutoAdvance();
+      return;
+    }
+    showDashboardHighlight(activeDashboardHighlightIndex + 1);
+  }, DASHBOARD_HIGHLIGHT_AUTO_INTERVAL);
 }
 
 function preloadDashboardHighlightImages() {
@@ -3829,8 +3823,8 @@ function renderRecordRankPanel(record, entry, rank, activeRank) {
   const isActive = rank === activeRank;
   const disabled = !entry?.matchId;
   const heroImage = getRecordHeroImageUrl(entry?.hero);
-  const playerId = entry?.type === "personal" ? getRecordPlayerId(entry.player) : "";
-  const playerIdClass = hasLowercaseLatin(playerId) ? " record-player-id-lowercase" : "";
+  const playerName = entry?.type === "personal" ? getRecordPlayerName(entry.player) : "";
+  const playerNameClass = hasLowercaseLatin(playerName) ? " record-player-id-lowercase" : "";
   const cardStyle = heroImage ? ` style="--record-bg-image: url('${escapeHtml(heroImage)}')"` : "";
   const cardClass = [
     "record-card",
@@ -3854,7 +3848,7 @@ function renderRecordRankPanel(record, entry, rank, activeRank) {
         <span class="record-card-body">
           <span class="record-card-main">
             <strong>${escapeHtml(entry.value)}</strong>
-            ${entry.type === "personal" ? `<em class="record-player-id${playerIdClass}">${escapeHtml(playerId)}</em>` : ""}
+            ${entry.type === "personal" ? `<em class="record-player-id${playerNameClass}">${escapeHtml(playerName)}</em>` : ""}
           </span>
         </span>
         ${entry.type === "personal" ? "" : `<small>${escapeHtml(entry.matchLabel || "比赛信息未录入")}</small>`}
@@ -3890,8 +3884,8 @@ function formatRecordMatchLabel(match) {
   return `${dateLabel}-${String(Number(match.matchNo || 1)).padStart(2, "0")}`;
 }
 
-function getRecordPlayerId(player) {
-  return player?.steam_id || player?.steamId || player?.name || "选手未录入";
+function getRecordPlayerName(player) {
+  return player?.name || "选手未录入";
 }
 
 function hasLowercaseLatin(value) {
