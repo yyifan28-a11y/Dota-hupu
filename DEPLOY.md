@@ -101,6 +101,23 @@ npm start
 $env:DATABASE_PATH="E:\Coding\Codex Project\Dota-S3-Redesign\data\dota.db"; $env:ADMIN_PASSWORD="admin123"; npm start
 ```
 
+## Ubuntu + PM2 部署
+
+如果服务运行在普通 Ubuntu 主机而不是 Docker 中，需要在项目目录单独安装 Python 录像解析环境：
+
+```bash
+cd ~/Dota-hupu
+sudo apt-get update
+sudo apt-get install -y python3-venv
+python3 -m venv .venv
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python -c "from gem.combat.aggregator import _CombatAggregator; print('录像解析依赖正常')"
+REPLAY_PYTHON="$PWD/.venv/bin/python" pm2 restart dota-hupu --update-env
+```
+
+服务会优先使用 `REPLAY_PYTHON`；没有配置该变量时，也会自动寻找项目根目录的 `.venv/bin/python`。每次 `requirements.txt` 有变化时重新执行安装命令。
+
 ## 注意
 
 ## 首页图片上传

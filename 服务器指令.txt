@@ -6,5 +6,13 @@ git status
 git pull --rebase origin main
 
 npm install
-pm2 restart dota-hupu --update-env
+
+sudo apt-get update
+sudo apt-get install -y python3-venv
+python3 -m venv .venv
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python -c "from gem.combat.aggregator import _CombatAggregator; print('录像解析依赖正常')"
+
+REPLAY_PYTHON="$PWD/.venv/bin/python" pm2 restart dota-hupu --update-env
 pm2 list

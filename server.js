@@ -22,7 +22,11 @@ const REPLAY_UPLOAD_DIR = isAbsolute(ENV.REPLAY_UPLOAD_DIR || "")
   ? ENV.REPLAY_UPLOAD_DIR
   : join(tmpdir(), ENV.REPLAY_UPLOAD_DIR || "dota-replay-imports");
 const REPLAY_PARSER_PATH = join(__dirname, "scripts", "parse-dota-replay.py");
-const REPLAY_PYTHON = ENV.REPLAY_PYTHON || (globalThis.process.platform === "win32" ? "python" : "python3");
+const LOCAL_REPLAY_PYTHON = globalThis.process.platform === "win32"
+  ? join(__dirname, ".venv", "Scripts", "python.exe")
+  : join(__dirname, ".venv", "bin", "python");
+const REPLAY_PYTHON = ENV.REPLAY_PYTHON
+  || (existsSync(LOCAL_REPLAY_PYTHON) ? LOCAL_REPLAY_PYTHON : (globalThis.process.platform === "win32" ? "python" : "python3"));
 const MAX_REPLAY_UPLOAD_BYTES = Math.max(1, Number(ENV.REPLAY_MAX_BYTES || 200 * 1024 * 1024));
 const MAX_REPLAY_JOBS = Math.max(1, Number(ENV.REPLAY_MAX_JOBS || 3));
 const REPLAY_PARSE_TIMEOUT_MS = Math.max(30_000, Number(ENV.REPLAY_PARSE_TIMEOUT_MS || 5 * 60 * 1000));
