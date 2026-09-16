@@ -161,6 +161,7 @@ let pairRankModes = {
   stomp: "winrate"
 };
 let stateLoadPromise = null;
+let hasLoadedState = false;
 
 const HOMEPAGE_FRAMING_DEVICES = Object.freeze({
   desktop: Object.freeze({ label: "1080P", width: 1920, height: 1080 }),
@@ -323,6 +324,7 @@ async function loadState() {
   applySeasonUi();
   adminPlayoffDraftTeams = null;
   rebuildDerivedStats();
+  hasLoadedState = true;
   updateSplashStats();
   renderAll();
 }
@@ -805,12 +807,16 @@ function switchView(viewId) {
     viewId = "dashboard";
   }
   if (IS_S2_SEASON && viewId === "champion") viewId = "playoffs";
+  if (viewId === "playerProfile" && !selectedPlayerProfileId) {
+    viewId = "players";
+    updateAppLocation("players", "", { replace: true });
+  }
   const hasTargetView = Boolean($(`#${viewId}`));
   if (!hasTargetView) viewId = "dashboard";
   const navGroups = {
     matches: ["matchDetail"],
-    players: ["overallData", "players", "data", "heroes"],
-    playerProfile: ["playerProfile", "relations", "ratingTrends", "records"]
+    players: ["players", "playerProfile", "relations", "ratingTrends", "records"],
+    data: ["data", "heroes", "overallData"]
   };
   const parentView = Object.entries(navGroups).find(([, views]) => views.includes(viewId))?.[0] || "";
 
@@ -1531,24 +1537,51 @@ function renderPlayers() {
     .sort(compareRecordPlayers);
 
   if (!players.length) {
-    body.innerHTML = `<tr><td colspan="5" class="muted">暂无比赛数据</td></tr>`;
+    body.innerHTML = `<tr><td colspan="6" class="muted">暂无比赛数据</td></tr>`;
     return;
   }
 
   body.innerHTML = players
     .map((player) => {
       const stats = player.stats;
+      const signatureHeroes = getPlayerSignatureHeroes(player.id);
       return `
-        <tr>
-          <td><strong>${escapeHtml(player.name)}</strong></td>
+        <tr class="player-ranking-row" data-player-profile-id="${escapeHtml(player.id)}" tabindex="0" role="link" aria-label="查看 ${escapeHtml(player.name)} 的个人页面">
+          <td>
+            <span class="player-ranking-identity">
+              <span class="player-ranking-name">
+                <strong>${escapeHtml(player.name)}</strong>
+              </span>
+            </span>
+          </td>
           <td>${formatRating(player.rating)}</td>
           <td>${formatWinLoss(stats)}</td>
           <td>${stats.games}</td>
+          <td>${renderPlayerSignatureHeroes(signatureHeroes, player.name)}</td>
           <td>${renderTendency(player.id)}</td>
         </tr>
       `;
     })
     .join("");
+}
+
+function getPlayerSignatureHeroes(playerId, limit = 3) {
+  return Array.from(heroUsageByPlayerId.get(playerId)?.values() || [])
+    .sort((a, b) => b.count - a.count || b.wins - a.wins || a.name.localeCompare(b.name, "zh-Hans"))
+    .slice(0, limit);
+}
+
+function renderPlayerSignatureHeroes(heroes, playerName) {
+  if (!heroes.length) return `<span class="player-signature-empty">暂无英雄记录</span>`;
+  return `
+    <span class="player-signature-heroes" aria-label="${escapeHtml(playerName)} 使用最多的英雄">
+      ${heroes.map((hero) => `
+        <span class="player-signature-hero" title="${escapeHtml(hero.name)}">
+          ${renderHeroUsageAvatar(hero.name)}
+        </span>
+      `).join("")}
+    </span>
+  `;
 }
 
 function renderRecordHeader(table) {
@@ -1558,7 +1591,7 @@ function renderRecordHeader(table) {
   if (!header) return;
   const positionColumns = RECORD_COLUMNS.filter((column) => column.key.startsWith("position-"));
   header.innerHTML = `
-    ${RECORD_COLUMNS.slice(0, 4).map((column) => `
+    ${RECORD_COLUMNS.slice(0, 1).map((column) => `
       <th>
         <button class="table-heading sort-heading" data-record-sort="${column.key}" type="button" aria-label="${escapeHtml(column.sortLabel)}">
           <span>${escapeHtml(column.label)}</span>
@@ -1566,6 +1599,15 @@ function renderRecordHeader(table) {
         </button>
       </th>
     `).join("")}
+    ${RECORD_COLUMNS.slice(1, 4).map((column) => `
+      <th>
+        <button class="table-heading sort-heading" data-record-sort="${column.key}" type="button" aria-label="${escapeHtml(column.sortLabel)}">
+          <span>${escapeHtml(column.label)}</span>
+          <span class="sort-arrow ${recordSort === column.key ? "is-active" : ""}">${getRecordSortIcon(column.key)}</span>
+        </button>
+      </th>
+    `).join("")}
+    <th><span class="table-heading">招牌英雄</span></th>
     <th class="record-position-heading">
       <span class="table-heading record-position-title">
         <span>位置</span>
@@ -1626,7 +1668,7 @@ function openPlayerProfileById(playerId, options = {}) {
   selectedPlayerProfileHeroKey = "";
   selectedPlayerProfileMatchDate = "";
   updateAppLocation("playerProfile", selectedPlayerProfileId);
-  renderPlayerProfile();
+  switchView("playerProfile");
   if (options.sharedElement) {
     const view = $("#playerProfile");
     if (view) {
@@ -1945,11 +1987,13 @@ function renderPlayerProfileRecentMatches(playerId, recentForm = []) {
     <div class="player-profile-recent-scroll">
       <table class="player-profile-recent-table">
         <thead>
-          <tr><th>英雄</th><th>胜负</th><th>时长</th><th>KDA</th><th>GPM</th><th>XPM</th><th>伤害量</th></tr>
+          <tr><th>英雄</th><th>胜负</th><th>时长</th><th>POS</th><th>等级</th><th>K / D / A</th><th>正 / 反补</th><th>NET</th><th>GPM / XPM</th><th>英雄伤害</th><th>建筑伤害</th><th>承受伤害</th><th>治疗</th><th>物品</th></tr>
         </thead>
         <tbody>
           ${recentForm.map(({ match, isWin }) => {
-            const detail = match.playerDetails?.[playerId] || {};
+            const analysis = getMatchAnalysis(match.id);
+            if (!analysis && !matchAnalysisRequests.has(match.id)) void loadMatchAnalysis(match.id);
+            const detail = getMatchDetailRow(match, playerId, analysis);
             const hero = detail.hero || "英雄未记录";
             const heroAvatar = renderHeroAvatar(hero) || `<span class="player-profile-recent-hero-placeholder" aria-hidden="true">?</span>`;
             return `
@@ -1957,15 +2001,22 @@ function renderPlayerProfileRecentMatches(playerId, recentForm = []) {
                 <td>
                   <span class="player-profile-recent-hero">
                     ${heroAvatar}
-                    <span><strong>${escapeHtml(hero)}</strong><small>${escapeHtml(formatShortMatchDate(match.date))} · 第 ${Number(match.matchNo || 1)} 场</small></span>
+                    <strong>${escapeHtml(hero)}</strong>
                   </span>
                 </td>
                 <td><span class="player-profile-recent-result"><i aria-hidden="true"></i><strong>${isWin ? "胜利" : "失败"}</strong></span></td>
                 <td class="player-profile-recent-duration">${escapeHtml(getMatchDurationLabel(match))}</td>
+                <td>${escapeHtml(detail.position || "—")}</td>
+                <td>${formatMatchMetric(detail.level)}</td>
                 <td><span class="player-profile-recent-kda"><b>${formatMatchMetric(detail.kills)}</b><em>${formatMatchMetric(detail.deaths)}</em><b>${formatMatchMetric(detail.assists)}</b></span></td>
-                <td>${formatMatchMetric(detail.gpm)}</td>
-                <td>${formatMatchMetric(detail.xpm)}</td>
+                <td>${formatMatchMetric(detail.lastHits)} / ${formatMatchMetric(detail.denies)}</td>
+                <td class="match-net">${formatMatchMetric(detail.netWorth, { compact: true })}</td>
+                <td>${formatMatchMetric(detail.gpm)} / ${formatMatchMetric(detail.xpm)}</td>
                 <td>${formatMatchMetric(detail.damage, { compact: true })}</td>
+                <td>${formatMatchMetric(detail.buildingDamage, { compact: true })}</td>
+                <td>${formatMatchMetric(detail.damageTaken, { compact: true })}</td>
+                <td>${formatMatchMetric(detail.healing, { compact: true })}</td>
+                <td>${renderMatchItems(detail)}</td>
               </tr>`;
           }).join("")}
         </tbody>
@@ -1978,7 +2029,7 @@ function renderPlayerProfileIntro(player, stats, recentForm, rank) {
     <nav class="player-profile-location" aria-label="选手档案位置">
       <button type="button" data-player-profile-back>
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
-        <span>返回选手目录</span>
+        <span>返回选手页</span>
       </button>
       <small>PLAYER / ${escapeHtml(player.name)}</small>
     </nav>
@@ -2031,32 +2082,18 @@ function renderPlayerProfile() {
 
   const players = getPlayerProfilePlayers();
   ensureSelectedPlayerProfileId(players);
-  renderPlayerProfileDirectory(players);
 
   const player = players.find((item) => item.id === selectedPlayerProfileId);
-  if (players.length && !player && new URLSearchParams(window.location.search).has("player")) {
-    updateAppLocation("playerProfile", "", { replace: true });
+  if (!player) {
+    if (!hasLoadedState) return;
+    updateAppLocation("players", "", { replace: true });
+    switchView("players");
+    return;
   }
+  renderPlayerProfileDirectory(players);
   view?.classList.toggle("has-player-selection", Boolean(player));
   view?.classList.toggle("is-directory-mode", !player);
   syncPlayerOrbit(player ? [] : players);
-
-  if (!players.length) {
-    detail.innerHTML = `<p class="muted">暂无选手</p>`;
-    return;
-  }
-
-  if (!player) {
-    detail.innerHTML = `
-      <div class="player-profile-empty-state">
-        <span>PLAYER ARCHIVE</span>
-        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
-        <h3>选择一名选手</h3>
-        <p>从选手目录中选择一名选手，查看他的个人档案。</p>
-      </div>
-    `;
-    return;
-  }
 
   const stats = player.stats || createEmptyPlayerStats();
   const filteredStats = getFilteredPlayerProfileStats(player.id);
@@ -4694,12 +4731,14 @@ function loadMatchAnalysis(matchId) {
       if (selectedMatchDetailId === matchId && $("#matchDetail")?.classList.contains("is-active")) {
         renderMatchDetailPage();
       }
+      if ($("#playerProfile")?.classList.contains("is-active")) renderPlayerProfile();
       return analysis;
     })
     .catch((error) => {
       matchAnalysisRequests.delete(matchId);
       matchAnalysisCache.set(matchId, { available: false, error: error.message, players: {}, timeline: {} });
       if (selectedMatchDetailId === matchId) renderMatchDetailPage();
+      if ($("#playerProfile")?.classList.contains("is-active")) renderPlayerProfile();
     });
   matchAnalysisRequests.set(matchId, request);
   return request;
@@ -6203,14 +6242,26 @@ function bindEvents() {
   $("#players").addEventListener("click", (event) => {
     const sortButton = event.target.closest("[data-record-sort]");
     const sortKey = sortButton?.dataset.recordSort;
-    if (!sortKey) return;
-    if (recordSort === sortKey) {
-      recordSortDirection = recordSortDirection === "desc" ? "asc" : "desc";
-    } else {
-      recordSort = sortKey;
-      recordSortDirection = "desc";
+    if (sortKey) {
+      if (recordSort === sortKey) {
+        recordSortDirection = recordSortDirection === "desc" ? "asc" : "desc";
+      } else {
+        recordSort = sortKey;
+        recordSortDirection = "desc";
+      }
+      renderPlayers();
+      return;
     }
-    renderPlayers();
+
+    const playerRow = event.target.closest("[data-player-profile-id]");
+    if (playerRow) openPlayerProfileById(playerRow.dataset.playerProfileId);
+  });
+  $("#players").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const playerRow = event.target.closest("[data-player-profile-id]");
+    if (!playerRow) return;
+    event.preventDefault();
+    openPlayerProfileById(playerRow.dataset.playerProfileId);
   });
 
   const playerProfileSearchInput = $("#playerProfileSearchInput");
@@ -6271,9 +6322,9 @@ function bindEvents() {
       selectedPlayerProfilePosition = "";
       selectedPlayerProfileHeroKey = "";
       selectedPlayerProfileMatchDate = "";
-      updateAppLocation("playerProfile");
-      renderPlayerProfile();
-      scrollPlayerProfileToTop();
+      updateAppLocation("players", "", { replace: true });
+      switchView("players");
+      window.scrollTo({ top: 0, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
       return;
     }
 
