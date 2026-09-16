@@ -13520,7 +13520,7 @@ body[data-ui="modern"] #overallData .page-heading {
 .match-history-table-head,
 .match-history-row {
   display: grid;
-  grid-template-columns: minmax(115px, 0.68fr) 66px 84px minmax(170px, 1fr) minmax(170px, 1fr);
+  grid-template-columns: minmax(82px, 0.46fr) 66px 84px minmax(185px, 1fr) minmax(185px, 1fr);
   gap: 12px;
   min-width: 680px;
   align-items: center;
@@ -13717,13 +13717,13 @@ body[data-ui="modern"] #overallData .page-heading {
 
   .match-history-table-head,
   .match-history-row {
-    grid-template-columns: 120px 68px 84px 190px 190px;
+    grid-template-columns: 84px 68px 84px 200px 200px;
     gap: 16px;
-    min-width: 740px;
+    min-width: 700px;
   }
 
   .match-history-list {
-    min-width: 740px;
+    min-width: 700px;
   }
 
   .match-history-table-head,
@@ -13771,7 +13771,7 @@ body[data-ui="modern"] .player-profile-recent-module {
 
 .player-profile-recent-table {
   width: 100%;
-  min-width: 1000px;
+  min-width: 620px;
   border-collapse: collapse;
   table-layout: fixed;
   font-variant-numeric: tabular-nums;
@@ -13790,24 +13790,19 @@ body[data-ui="modern"] .player-profile-recent-module {
   text-align: left;
 }
 
-.player-profile-recent-table th:first-child { width: 112px; }
-.player-profile-recent-table th:nth-child(2) { width: 56px; }
-.player-profile-recent-table th:nth-child(3) { width: 58px; }
-.player-profile-recent-table th:nth-child(4),
-.player-profile-recent-table th:nth-child(5) { width: 42px; }
-.player-profile-recent-table th:nth-child(6) { width: 80px; }
-.player-profile-recent-table th:nth-child(7) { width: 68px; }
-.player-profile-recent-table th:nth-child(8) { width: 50px; }
-.player-profile-recent-table th:nth-child(9) { width: 84px; }
-.player-profile-recent-table th:nth-child(n + 10):nth-child(-n + 13) { width: 64px; }
-.player-profile-recent-table th:nth-child(14) { width: 146px; }
+.player-profile-recent-table th:first-child { width: 128px; }
+.player-profile-recent-table th:nth-child(2) { width: 66px; }
+.player-profile-recent-table th:nth-child(3) { width: 66px; }
+.player-profile-recent-table th:nth-child(4) { width: 92px; }
+.player-profile-recent-table th:nth-child(5) { width: auto; }
 
 .player-profile-recent-table td {
-  height: 58px;
+  height: 64px;
   border-bottom: 1px solid rgba(128, 205, 215, 0.07);
   background: rgba(2, 14, 18, 0.28);
   color: #d7e6e8;
   padding: 6px 5px;
+  vertical-align: middle;
   font-family: "Fira Code", Consolas, monospace;
   font-size: 12px;
   font-weight: 650;
@@ -13854,9 +13849,9 @@ body[data-ui="modern"] .player-profile-recent-module {
 
 .player-profile-recent-hero > .hero-avatar,
 .player-profile-recent-hero-placeholder {
-  flex: 0 0 42px;
-  width: 42px;
-  height: 28px;
+  flex: 0 0 52px;
+  width: 52px;
+  height: 34px;
   border: 1px solid rgba(157, 222, 230, 0.13);
   border-radius: 3px;
   object-fit: cover;
@@ -13878,7 +13873,8 @@ body[data-ui="modern"] .player-profile-recent-module {
 }
 
 .player-profile-recent-result {
-  display: inline-flex;
+  display: flex;
+  width: max-content;
   align-items: center;
   gap: 7px;
 }
@@ -13921,18 +13917,27 @@ body[data-ui="modern"] .player-profile-recent-module {
   color: #536d72;
 }
 
-.player-profile-recent-table .match-detail-items {
-  grid-template-columns: repeat(6, 22px);
-  gap: 2px;
+.player-profile-recent-lineups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
 }
 
-.player-profile-recent-table .match-detail-item {
-  width: 22px;
-  height: 18px;
+.player-profile-recent-lineups .match-history-team {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  border-radius: 3px;
 }
 
-.player-profile-recent-table .match-detail-item small {
-  display: none;
+.player-profile-recent-lineups .match-history-hero {
+  height: 34px;
+}
+
+.player-profile-recent-lineups .match-history-team.is-winner::after {
+  top: 2px;
+  right: 2px;
+  padding: 1px 3px;
+  font-size: 8px;
 }
 
 .player-profile-recent-empty {
@@ -13952,7 +13957,7 @@ body[data-ui="modern"] .player-profile-recent-module {
   }
 
   .player-profile-recent-table {
-    min-width: 1000px;
+    min-width: 620px;
   }
 }
 

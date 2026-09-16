@@ -876,7 +876,7 @@ function renderMatches() {
       <article class="match-history-row" data-open-match="${escapeHtml(match.id)}" tabindex="0" role="button" aria-label="查看 ${escapeHtml(match.date || "日期未记录")} 第 ${Number(match.matchNo || 1)} 场比赛详情">
         <div class="match-history-identity">
           <strong>${escapeHtml(formatShortMatchDate(match.date))}</strong>
-          <span>${escapeHtml(getMatchYear(match.date))} · 第 ${Number(match.matchNo || 1)} 场</span>
+          <span>第 ${Number(match.matchNo || 1)} 场</span>
         </div>
         <div class="match-history-duration">
           <strong>${escapeHtml(getMatchDurationLabel(match))}</strong>
@@ -891,11 +891,6 @@ function renderMatches() {
         <span class="match-history-open" aria-hidden="true">›</span>
       </article>`;
   }).join("");
-}
-
-function getMatchYear(value) {
-  const year = String(value || "").match(/^(\d{4})/i)?.[1];
-  return year || "日期未录入";
 }
 
 function getMatchDurationLabel(match) {
@@ -1987,13 +1982,11 @@ function renderPlayerProfileRecentMatches(playerId, recentForm = []) {
     <div class="player-profile-recent-scroll">
       <table class="player-profile-recent-table">
         <thead>
-          <tr><th>英雄</th><th>胜负</th><th>时长</th><th>POS</th><th>等级</th><th>K / D / A</th><th>正 / 反补</th><th>NET</th><th>GPM / XPM</th><th>英雄伤害</th><th>建筑伤害</th><th>承受伤害</th><th>治疗</th><th>物品</th></tr>
+          <tr><th>英雄</th><th>时长</th><th>胜负</th><th>K / D / A</th><th>双方英雄</th></tr>
         </thead>
         <tbody>
           ${recentForm.map(({ match, isWin }) => {
-            const analysis = getMatchAnalysis(match.id);
-            if (!analysis && !matchAnalysisRequests.has(match.id)) void loadMatchAnalysis(match.id);
-            const detail = getMatchDetailRow(match, playerId, analysis);
+            const detail = match.playerDetails?.[playerId] || {};
             const hero = detail.hero || "英雄未记录";
             const heroAvatar = renderHeroAvatar(hero) || `<span class="player-profile-recent-hero-placeholder" aria-hidden="true">?</span>`;
             return `
@@ -2004,19 +1997,10 @@ function renderPlayerProfileRecentMatches(playerId, recentForm = []) {
                     <strong>${escapeHtml(hero)}</strong>
                   </span>
                 </td>
-                <td><span class="player-profile-recent-result"><i aria-hidden="true"></i><strong>${isWin ? "胜利" : "失败"}</strong></span></td>
                 <td class="player-profile-recent-duration">${escapeHtml(getMatchDurationLabel(match))}</td>
-                <td>${escapeHtml(detail.position || "—")}</td>
-                <td>${formatMatchMetric(detail.level)}</td>
+                <td><span class="player-profile-recent-result"><i aria-hidden="true"></i><strong>${isWin ? "胜利" : "失败"}</strong></span></td>
                 <td><span class="player-profile-recent-kda"><b>${formatMatchMetric(detail.kills)}</b><em>${formatMatchMetric(detail.deaths)}</em><b>${formatMatchMetric(detail.assists)}</b></span></td>
-                <td>${formatMatchMetric(detail.lastHits)} / ${formatMatchMetric(detail.denies)}</td>
-                <td class="match-net">${formatMatchMetric(detail.netWorth, { compact: true })}</td>
-                <td>${formatMatchMetric(detail.gpm)} / ${formatMatchMetric(detail.xpm)}</td>
-                <td>${formatMatchMetric(detail.damage, { compact: true })}</td>
-                <td>${formatMatchMetric(detail.buildingDamage, { compact: true })}</td>
-                <td>${formatMatchMetric(detail.damageTaken, { compact: true })}</td>
-                <td>${formatMatchMetric(detail.healing, { compact: true })}</td>
-                <td>${renderMatchItems(detail)}</td>
+                <td><div class="player-profile-recent-lineups">${renderMatchHistoryTeam("radiant", match.radiant, match, match.winner === "radiant")}${renderMatchHistoryTeam("dire", match.dire, match, match.winner === "dire")}</div></td>
               </tr>`;
           }).join("")}
         </tbody>
@@ -4731,14 +4715,12 @@ function loadMatchAnalysis(matchId) {
       if (selectedMatchDetailId === matchId && $("#matchDetail")?.classList.contains("is-active")) {
         renderMatchDetailPage();
       }
-      if ($("#playerProfile")?.classList.contains("is-active")) renderPlayerProfile();
       return analysis;
     })
     .catch((error) => {
       matchAnalysisRequests.delete(matchId);
       matchAnalysisCache.set(matchId, { available: false, error: error.message, players: {}, timeline: {} });
       if (selectedMatchDetailId === matchId) renderMatchDetailPage();
-      if ($("#playerProfile")?.classList.contains("is-active")) renderPlayerProfile();
     });
   matchAnalysisRequests.set(matchId, request);
   return request;
