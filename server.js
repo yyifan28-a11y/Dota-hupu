@@ -168,6 +168,15 @@ function initDatabase({ seedDefaults = false } = {}) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS match_analyses (
+      match_id TEXT PRIMARY KEY,
+      parser TEXT DEFAULT '',
+      parser_version TEXT DEFAULT '',
+      analysis TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS app_state (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -452,6 +461,27 @@ async function handleApi(request, response, url) {
 
   if (method === "GET" && url.pathname === "/api/summary") {
     sendJson(response, 200, getSummary());
+    return;
+  }
+
+  if (method === "GET" && /^\/api\/matches\/[^/]+\/analysis$/.test(url.pathname)) {
+    const id = decodeURIComponent(url.pathname.slice("/api/matches/".length, -"/analysis".length));
+    const match = db.prepare("SELECT id FROM matches WHERE id = ?").get(id);
+    if (!match) {
+      sendJson(response, 404, { error: "比赛记录不存在" });
+      return;
+    }
+    const row = db.prepare(`
+      SELECT parser, parser_version AS parserVersion, analysis, updated_at AS updatedAt
+      FROM match_analyses
+      WHERE match_id = ?
+    `).get(id);
+    sendJson(response, 200, row ? {
+      parser: row.parser,
+      parserVersion: row.parserVersion,
+      updatedAt: row.updatedAt,
+      ...parseJsonObject(row.analysis)
+    } : { available: false, players: {}, timeline: {} });
     return;
   }
 
@@ -863,6 +893,7 @@ async function handleApi(request, response, url) {
 
   if (method === "DELETE" && url.pathname.startsWith("/api/matches/")) {
     const id = decodeURIComponent(url.pathname.replace("/api/matches/", ""));
+    db.prepare("DELETE FROM match_analyses WHERE match_id = ?").run(id);
     db.prepare("DELETE FROM matches WHERE id = ?").run(id);
     sendJson(response, 200, getState());
     return;
@@ -875,7 +906,7 @@ async function handleApi(request, response, url) {
       return;
     }
 
-    db.exec("DELETE FROM player_steam_accounts; DELETE FROM players; DELETE FROM matches; DELETE FROM rating_snapshots;");
+    db.exec("DELETE FROM match_analyses; DELETE FROM player_steam_accounts; DELETE FROM players; DELETE FROM matches; DELETE FROM rating_snapshots;");
     const insertPlayer = db.prepare(`
       INSERT INTO players (id, name, steam_id, rating, rating_updated_at, note, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -995,7 +1026,7 @@ async function handleApi(request, response, url) {
   }
 
   if (method === "POST" && url.pathname === "/api/reset") {
-    db.exec("DELETE FROM player_steam_accounts; DELETE FROM players; DELETE FROM matches; DELETE FROM rating_snapshots;");
+    db.exec("DELETE FROM match_analyses; DELETE FROM player_steam_accounts; DELETE FROM players; DELETE FROM matches; DELETE FROM rating_snapshots;");
     saveTeams({ radiant: [], dire: [] });
     savePlayoffTeams({ A: [], B: [], C: [], D: [] });
     sendJson(response, 200, getState());
@@ -1254,6 +1285,9 @@ function importReplayMatch(job, body) {
       gpm: Number(player.gpm || 0),
       xpm: Number(player.xpm || 0),
       lastHits: Number(player.lastHits || 0),
+      denies: Number(player.denies || 0),
+      level: Number(player.level || 0),
+      netWorth: Number(player.netWorth || 0),
       netWorth10: Number(player.netWorth10 || 0),
       damage: Number(player.damage || 0),
       buildingDamage: Number(player.buildingDamage || 0),
@@ -1295,6 +1329,37 @@ function importReplayMatch(job, body) {
       JSON.stringify(teams.dire),
       JSON.stringify(cleanPositions(positions, teams)),
       JSON.stringify(cleanPlayerDetails(details, teams)),
+      now
+    );
+    const analysisPlayers = {};
+    result.players.forEach((player) => {
+      const playerId = String(mappings[player.slot]);
+      analysisPlayers[playerId] = {
+        slot: Number(player.slot),
+        level: Number(player.level || 0),
+        netWorth: Number(player.netWorth || 0),
+        denies: Number(player.denies || 0),
+        abilityBuild: Array.isArray(player.abilityBuild) ? player.abilityBuild : [],
+        finalItems: Array.isArray(player.finalItems) ? player.finalItems : [],
+        purchaseTimes: player.purchaseTimes && typeof player.purchaseTimes === "object" ? player.purchaseTimes : {},
+        buffs: player.buffs && typeof player.buffs === "object" ? player.buffs : {}
+      };
+    });
+    const analysis = {
+      available: true,
+      durationSeconds: Number(result.durationSeconds || 0),
+      players: analysisPlayers,
+      timeline: result.timeline && typeof result.timeline === "object" ? result.timeline : {}
+    };
+    db.prepare(`
+      INSERT INTO match_analyses (match_id, parser, parser_version, analysis, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      matchRecordId,
+      String(result.parser || ""),
+      String(result.parserVersion || ""),
+      JSON.stringify(analysis),
+      now,
       now
     );
     db.exec("COMMIT");

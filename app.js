@@ -16,6 +16,7 @@ const CURRENT_SEASON = new URLSearchParams(window.location.search).get("season")
 const IS_S2_SEASON = CURRENT_SEASON === "s2";
 const REQUESTED_VIEW = new URLSearchParams(window.location.search).get("view") || "";
 const REQUESTED_PLAYER_ID = new URLSearchParams(window.location.search).get("player") || "";
+const REQUESTED_MATCH_ID = new URLSearchParams(window.location.search).get("match") || "";
 const IS_HOMEPAGE_PREVIEW_FRAME = new URLSearchParams(window.location.search).get("homepagePreview") === "1";
 const POSITIONS = ["1", "2", "3", "4", "5"];
 const HEROES = Array.isArray(window.DOTA_HEROES) ? window.DOTA_HEROES : [];
@@ -125,6 +126,11 @@ let playerOrbitModulePromise = null;
 let selectedPlayerProfilePosition = "";
 let selectedPlayerProfileHeroKey = "";
 let selectedPlayerProfileMatchDate = "";
+let selectedMatchDetailId = REQUESTED_MATCH_ID;
+let activeMatchDetailTab = "summary";
+let matchDetailChartSeries = { gold: true, xp: true };
+const matchAnalysisCache = new Map();
+const matchAnalysisRequests = new Map();
 let adminPlayoffDraftTeams = null;
 let adminPlayoffSelectedPlayerId = "";
 let adminPlayoffSelectedTeam = "";
@@ -767,13 +773,18 @@ function renderEmpty(target) {
   target.innerHTML = $("#emptyStateTemplate").innerHTML;
 }
 
-function updateAppLocation(viewId, playerId = "", { replace = false } = {}) {
+function updateAppLocation(viewId, playerId = "", { replace = false, matchId = "" } = {}) {
   const url = new URL(window.location.href);
   url.searchParams.set("view", viewId || "dashboard");
   if (viewId === "playerProfile" && playerId) {
     url.searchParams.set("player", playerId);
   } else {
     url.searchParams.delete("player");
+  }
+  if (viewId === "matchDetail" && (matchId || selectedMatchDetailId)) {
+    url.searchParams.set("match", matchId || selectedMatchDetailId);
+  } else {
+    url.searchParams.delete("match");
   }
   const nextUrl = `${url.pathname}${url.search}${url.hash}`;
   const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -789,6 +800,7 @@ function switchView(viewId) {
   const hasTargetView = Boolean($(`#${viewId}`));
   if (!hasTargetView) viewId = "dashboard";
   const navGroups = {
+    matches: ["matchDetail"],
     players: ["overallData", "players", "data", "heroes"],
     playerProfile: ["playerProfile", "relations", "ratingTrends", "records"]
   };
@@ -796,7 +808,7 @@ function switchView(viewId) {
 
   $$(".nav-tab").forEach((button) => {
     const isExact = button.dataset.view === viewId;
-    const isParent = button.dataset.navDefault === parentView;
+    const isParent = button.dataset.navDefault === parentView || button.dataset.view === parentView;
     button.classList.toggle("is-active", isExact);
     button.classList.toggle("is-section-active", isParent);
   });
@@ -825,6 +837,82 @@ function renderDashboard() {
   renderDashboardRankStage(playersWithStats);
 
   renderDashboardMatches();
+}
+
+function renderMatches() {
+  const target = $("#matchHistoryList");
+  const count = $("#matchHistoryCount");
+  if (!target) return;
+
+  const matches = getMatchesByScheduleDesc();
+  if (count) count.textContent = `${matches.length} 场`;
+  if (!matches.length) {
+    target.innerHTML = `
+      <div class="match-history-empty">
+        <strong>还没有比赛记录</strong>
+        <span>录入第一场比赛后，双方阵容会显示在这里。</span>
+      </div>`;
+    return;
+  }
+
+  target.innerHTML = matches.map((match) => {
+    const winner = match.winner === "radiant" ? "radiant" : match.winner === "dire" ? "dire" : "";
+    const winnerLabel = winner === "radiant" ? "天辉" : winner === "dire" ? "夜魇" : "未记录";
+    return `
+      <article class="match-history-row" data-open-match="${escapeHtml(match.id)}" tabindex="0" role="button" aria-label="查看 ${escapeHtml(match.date || "日期未记录")} 第 ${Number(match.matchNo || 1)} 场比赛详情">
+        <div class="match-history-identity">
+          <strong>${escapeHtml(formatShortMatchDate(match.date))}</strong>
+          <span>${escapeHtml(getMatchYear(match.date))} · 第 ${Number(match.matchNo || 1)} 场</span>
+        </div>
+        <div class="match-history-duration">
+          <strong>${escapeHtml(getMatchDurationLabel(match))}</strong>
+          <span>时长</span>
+        </div>
+        <div class="match-history-winner is-${winner || "unknown"}">
+          <i aria-hidden="true"></i>
+          <span><small>胜方</small><strong>${winnerLabel}</strong></span>
+        </div>
+        ${renderMatchHistoryTeam("radiant", match.radiant, match, winner === "radiant")}
+        ${renderMatchHistoryTeam("dire", match.dire, match, winner === "dire")}
+        <span class="match-history-open" aria-hidden="true">›</span>
+      </article>`;
+  }).join("");
+}
+
+function getMatchYear(value) {
+  const year = String(value || "").match(/^(\d{4})/i)?.[1];
+  return year || "日期未录入";
+}
+
+function getMatchDurationLabel(match) {
+  const parts = String(match?.score || "").split("/").map((part) => part.trim()).filter(Boolean);
+  return parts.length > 1 ? parts.at(-1) : "—";
+}
+
+function renderMatchHistoryTeam(team, ids = [], match, isWinner) {
+  const details = match.playerDetails || {};
+  const positions = match.positions || {};
+  const orderedIds = [...ids].sort((a, b) =>
+    Number(details?.[a]?.position || positions?.[a] || 99) - Number(details?.[b]?.position || positions?.[b] || 99)
+  );
+  const label = team === "radiant" ? "天辉" : "夜魇";
+  return `
+    <div class="match-history-team is-${team}${isWinner ? " is-winner" : ""}" aria-label="${label}阵容${isWinner ? "，胜方" : ""}">
+      ${orderedIds.slice(0, 5).map((playerId) => renderMatchHistoryHero(playerId, match)).join("")}
+      ${Array.from({ length: Math.max(0, 5 - orderedIds.length) }, () => `<span class="match-history-hero is-empty" aria-hidden="true">?</span>`).join("")}
+    </div>`;
+}
+
+function renderMatchHistoryHero(playerId, match) {
+  const detail = match.playerDetails?.[playerId] || {};
+  const hero = findHero(detail.hero);
+  const player = getPlayer(playerId);
+  const position = detail.position || match.positions?.[playerId] || "—";
+  const title = `${position}号位 · ${player?.name || "未知选手"} · ${detail.hero || "英雄未记录"}`;
+  if (!hero) {
+    return `<span class="match-history-hero is-empty" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">?</span>`;
+  }
+  return `<span class="match-history-hero" title="${escapeHtml(title)}"><img src="${heroImageUrl(hero)}" alt="${escapeHtml(hero.cn)}" loading="lazy" decoding="async" /></span>`;
 }
 
 function clampHomepageFramingValue(value, fallback, minimum, maximum) {
@@ -4539,44 +4627,307 @@ function renderMatchCards(target, matches) {
 }
 
 function renderMatchDialog(match) {
-  const dialog = $("#matchDetailDialog");
-  const body = $("#matchDetailBody");
-  if (!dialog || !body || !match) return;
+  if (!match) return;
+  selectedMatchDetailId = match.id;
+  activeMatchDetailTab = "summary";
+  updateAppLocation("matchDetail", "", { matchId: match.id });
+  switchView("matchDetail");
+}
 
-  body.innerHTML = `
-    <section class="match-detail-hero">
-      <div>
-        <span>比赛</span>
-        <h3>${escapeHtml(match.date)} 第 ${Number(match.matchNo || 1)} 场</h3>
-      </div>
-      <div class="match-result ${match.winner === "radiant" ? "radiant-win" : "dire-win"}">
-        ${match.winner === "radiant" ? "天辉胜利" : "夜魇胜利"}
-      </div>
-    </section>
+function getMatchAnalysis(matchId) {
+  return matchAnalysisCache.get(matchId) || null;
+}
 
-    <section class="match-meta-grid">
-      <div>
-        <span>比赛ID</span>
-        <strong>${escapeHtml(match.matchId || "数据未录入")}</strong>
-      </div>
-      <div>
-        <span>比分 / 时长</span>
-        <strong>${escapeHtml(match.score || "数据未录入")}</strong>
-      </div>
-      <div>
-        <span>备注</span>
-        <strong>${escapeHtml(match.note || "数据未录入")}</strong>
-      </div>
-    </section>
+function loadMatchAnalysis(matchId) {
+  if (!matchId || matchAnalysisCache.has(matchId)) return Promise.resolve(getMatchAnalysis(matchId));
+  if (matchAnalysisRequests.has(matchId)) return matchAnalysisRequests.get(matchId);
+  const request = api(`/api/matches/${encodeURIComponent(matchId)}/analysis`)
+    .then((analysis) => {
+      matchAnalysisCache.set(matchId, analysis || { available: false, players: {}, timeline: {} });
+      matchAnalysisRequests.delete(matchId);
+      if (selectedMatchDetailId === matchId && $("#matchDetail")?.classList.contains("is-active")) {
+        renderMatchDetailPage();
+      }
+      return analysis;
+    })
+    .catch((error) => {
+      matchAnalysisRequests.delete(matchId);
+      matchAnalysisCache.set(matchId, { available: false, error: error.message, players: {}, timeline: {} });
+      if (selectedMatchDetailId === matchId) renderMatchDetailPage();
+    });
+  matchAnalysisRequests.set(matchId, request);
+  return request;
+}
 
-    <section class="match-detail-teams">
-      ${renderDialogTeam("天辉", match.radiant, match)}
-      ${renderDialogTeam("夜魇", match.dire, match)}
-    </section>
+function renderMatchDetailPage() {
+  const target = $("#matchDetailPage");
+  if (!target) return;
+  const match = db.matches.find((item) => item.id === selectedMatchDetailId);
+  if (!match) {
+    target.innerHTML = `
+      <section class="match-detail-empty panel">
+        <h2 id="matchDetailPageTitle">找不到这场比赛</h2>
+        <p>比赛可能已被删除，或链接来自另一个赛季。</p>
+        <button class="secondary-button" type="button" data-match-detail-back>返回上一页</button>
+      </section>`;
+    return;
+  }
 
-    ${renderMatchDetailSummary(match)}
+  const analysis = getMatchAnalysis(match.id);
+  if (!analysis && !matchAnalysisRequests.has(match.id)) void loadMatchAnalysis(match.id);
+  const scoreParts = String(match.score || "").split("/").map((part) => part.trim());
+  target.innerHTML = `
+    <header class="match-detail-page-header">
+      <button class="match-detail-back" type="button" data-match-detail-back aria-label="返回上一页">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
+        返回
+      </button>
+      <div class="match-detail-title-block">
+        <span>MATCH OVERVIEW</span>
+        <h2 id="matchDetailPageTitle">${escapeHtml(formatShortMatchDate(match.date))} · 第 ${Number(match.matchNo || 1)} 场</h2>
+        <p>${escapeHtml(match.note || "虎扑内战比赛记录")}</p>
+      </div>
+      <div class="match-detail-result-block ${match.winner === "radiant" ? "is-radiant" : "is-dire"}">
+        <span>${match.winner === "radiant" ? "RADIANT VICTORY" : "DIRE VICTORY"}</span>
+        <strong>${escapeHtml(scoreParts[0] || "—")}</strong>
+        <small>${escapeHtml(scoreParts[1] || "时长未记录")}</small>
+      </div>
+    </header>
+
+    <div class="match-detail-meta" aria-label="比赛信息">
+      <span><small>比赛 ID</small><b>${escapeHtml(match.matchId || "未记录")}</b></span>
+      <span><small>比赛日期</small><b>${escapeHtml(match.date)}</b></span>
+      <span><small>数据来源</small><b>${analysis?.available ? `录像解析 · ${escapeHtml(analysis.parserVersion || "")}` : "比赛记录"}</b></span>
+    </div>
+
+    <div class="match-detail-continuous">
+      <section class="match-detail-section" aria-labelledby="matchDataSectionTitle">
+        <header class="match-detail-section-heading">
+          <span>01 · SCOREBOARD</span>
+          <div><h3 id="matchDataSectionTitle">比赛数据</h3><p>双方选手、经济、输出与最终装备。</p></div>
+        </header>
+        ${renderMatchScoreboard(match, analysis)}
+      </section>
+
+      <section class="match-detail-section" aria-labelledby="matchSkillsSectionTitle">
+        <header class="match-detail-section-heading">
+          <span>02 · SKILL PROGRESSION</span>
+          <div><h3 id="matchSkillsSectionTitle">技能加点</h3><p>按英雄等级查看每位选手的完整技能路线。</p></div>
+        </header>
+        ${renderMatchSkillBuild(match, analysis)}
+      </section>
+
+      <section class="match-detail-section" aria-labelledby="matchMomentumSectionTitle">
+        <header class="match-detail-section-heading">
+          <span>03 · MATCH MOMENTUM</span>
+          <div><h3 id="matchMomentumSectionTitle">经济 / 经验</h3><p>逐分钟观察天辉与夜魇的领先变化。</p></div>
+        </header>
+        ${renderMatchAdvantagePanel(match, analysis)}
+      </section>
+    </div>
   `;
-  dialog.showModal();
+}
+
+function getMatchDetailRow(match, playerId, analysis) {
+  return {
+    ...(match.playerDetails?.[playerId] || {}),
+    ...(analysis?.players?.[playerId] || {})
+  };
+}
+
+function formatMatchMetric(value, { compact = false } = {}) {
+  if (value === "" || value === null || value === undefined) return "—";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  if (compact && Math.abs(number) >= 1000) {
+    return `${(number / 1000).toFixed(number >= 10000 ? 1 : 2).replace(/\.0$/, "")}k`;
+  }
+  return number.toLocaleString("zh-CN");
+}
+
+function itemImageUrl(key) {
+  return `https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/items/${encodeURIComponent(String(key || "").replace(/^item_/, ""))}.png`;
+}
+
+function abilityImageUrl(key) {
+  return `https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/abilities/${encodeURIComponent(String(key || ""))}.png`;
+}
+
+function renderMatchItems(row) {
+  const items = Array.isArray(row.finalItems) ? row.finalItems.filter((item) => Number(item.slot) < 9) : [];
+  if (!items.length) return `<span class="match-detail-no-items">—</span>`;
+  return `<div class="match-detail-items">${items.map((item) => {
+    const purchaseTime = Number(row.purchaseTimes?.[item.key]);
+    const time = Number.isFinite(purchaseTime) ? `${Math.floor(purchaseTime / 60)}:${String(Math.max(0, purchaseTime % 60)).padStart(2, "0")}` : "";
+    return `<span class="match-detail-item" title="${escapeHtml(item.name || item.key)}${time ? ` · ${time}` : ""}">
+      <span class="match-detail-item-fallback">${escapeHtml(String(item.name || item.key || "?").slice(0, 1))}</span>
+      <img class="match-item-image" src="${itemImageUrl(item.key)}" alt="${escapeHtml(item.name || item.key)}" loading="lazy" />
+      ${time ? `<small>${time}</small>` : ""}
+    </span>`;
+  }).join("")}</div>`;
+}
+
+function renderMatchScoreboard(match, analysis) {
+  return `
+    <div class="match-scoreboard-stack">
+      ${renderMatchTeamScoreboard("radiant", "天辉", match.radiant, match, analysis)}
+      ${renderMatchTeamScoreboard("dire", "夜魇", match.dire, match, analysis)}
+    </div>
+    ${!analysis?.available ? `<div class="match-analysis-note"><b>录像扩展数据尚不可用</b><span>现有历史比赛仍显示已录入的数据；重新导入录像后会出现等级、最终经济、反补和装备。</span></div>` : ""}
+  `;
+}
+
+function renderMatchTeamScoreboard(team, label, ids, match, analysis) {
+  const rows = [...ids]
+    .sort((a, b) => Number(getMatchDetailRow(match, a, analysis).position || 99) - Number(getMatchDetailRow(match, b, analysis).position || 99));
+  const totals = rows.reduce((result, id) => {
+    const row = getMatchDetailRow(match, id, analysis);
+    ["kills", "deaths", "assists", "lastHits", "denies", "netWorth", "damage", "buildingDamage", "damageTaken", "healing"].forEach((key) => {
+      result[key] += Number(row[key] || 0);
+    });
+    return result;
+  }, { kills: 0, deaths: 0, assists: 0, lastHits: 0, denies: 0, netWorth: 0, damage: 0, buildingDamage: 0, damageTaken: 0, healing: 0 });
+
+  return `<section class="match-team-board match-team-${team}">
+    <header><span class="match-team-mark" aria-hidden="true"></span><h3>${label}</h3><b>${match.winner === team ? "胜利" : "失败"}</b></header>
+    <div class="match-scoreboard-scroll">
+      <table class="match-scoreboard-table">
+        <thead><tr>
+          <th>选手</th><th>POS</th><th>等级</th><th>K / D / A</th><th>正 / 反补</th><th>NET</th><th>GPM / XPM</th><th>英雄伤害</th><th>建筑伤害</th><th>承受伤害</th><th>治疗</th><th>物品</th>
+        </tr></thead>
+        <tbody>${rows.map((id) => {
+          const player = getPlayer(id);
+          const row = getMatchDetailRow(match, id, analysis);
+          return `<tr>
+            <td><span class="match-scoreboard-player">${renderHeroAvatar(row.hero)}<span><b>${escapeHtml(player?.name || "未知选手")}</b><small>${escapeHtml(row.hero || "英雄未记录")}</small></span></span></td>
+            <td>${escapeHtml(row.position || "—")}</td>
+            <td>${formatMatchMetric(row.level)}</td>
+            <td><span class="match-kda"><i>${formatMatchMetric(row.kills)}</i><em>${formatMatchMetric(row.deaths)}</em><i>${formatMatchMetric(row.assists)}</i></span></td>
+            <td>${formatMatchMetric(row.lastHits)} / ${formatMatchMetric(row.denies)}</td>
+            <td class="match-net">${formatMatchMetric(row.netWorth, { compact: true })}</td>
+            <td>${formatMatchMetric(row.gpm)} / ${formatMatchMetric(row.xpm)}</td>
+            <td>${formatMatchMetric(row.damage, { compact: true })}</td>
+            <td>${formatMatchMetric(row.buildingDamage, { compact: true })}</td>
+            <td>${formatMatchMetric(row.damageTaken, { compact: true })}</td>
+            <td>${formatMatchMetric(row.healing, { compact: true })}</td>
+            <td>${renderMatchItems(row)}</td>
+          </tr>`;
+        }).join("")}</tbody>
+        <tfoot><tr><td>队伍合计</td><td></td><td></td><td>${totals.kills} / ${totals.deaths} / ${totals.assists}</td><td>${totals.lastHits} / ${totals.denies}</td><td>${formatMatchMetric(totals.netWorth, { compact: true })}</td><td></td><td>${formatMatchMetric(totals.damage, { compact: true })}</td><td>${formatMatchMetric(totals.buildingDamage, { compact: true })}</td><td>${formatMatchMetric(totals.damageTaken, { compact: true })}</td><td>${formatMatchMetric(totals.healing, { compact: true })}</td><td></td></tr></tfoot>
+      </table>
+    </div>
+  </section>`;
+}
+
+function renderMatchSkillBuild(match, analysis) {
+  const allIds = [...match.radiant, ...match.dire];
+  const builds = allIds.map((id) => getMatchDetailRow(match, id, analysis).abilityBuild || []);
+  if (!analysis) return renderMatchAnalysisLoading("正在读取技能加点数据");
+  if (!analysis.available || !builds.some((build) => build.length)) return renderMatchAnalysisEmpty("这场比赛没有技能加点时间线", "旧比赛需要重新导入原始录像，才能生成每级技能路线。");
+  const maxLevel = Math.max(25, ...allIds.map((id) => Number(getMatchDetailRow(match, id, analysis).level || 0)), ...builds.map((build) => build.length));
+  return `<div class="match-skill-stack">
+    ${[["radiant", "天辉", match.radiant], ["dire", "夜魇", match.dire]].map(([team, label, ids]) => `
+      <section class="match-skill-board match-team-${team}">
+        <header><span class="match-team-mark"></span><h3>${label} · 技能加点</h3></header>
+        <div class="match-skill-scroll"><table class="match-skill-table">
+          <thead><tr><th>选手</th>${Array.from({ length: maxLevel }, (_, index) => `<th>${index + 1}</th>`).join("")}</tr></thead>
+          <tbody>${ids.map((id) => {
+            const player = getPlayer(id);
+            const row = getMatchDetailRow(match, id, analysis);
+            const byLevel = new Map((row.abilityBuild || []).map((ability) => [Number(ability.level), ability]));
+            return `<tr><td><span class="match-scoreboard-player">${renderHeroAvatar(row.hero)}<span><b>${escapeHtml(player?.name || "未知选手")}</b><small>${escapeHtml(row.hero || "英雄未记录")}</small></span></span></td>${Array.from({ length: maxLevel }, (_, index) => {
+              const ability = byLevel.get(index + 1);
+              if (!ability) return `<td class="is-empty"></td>`;
+              const fallback = ability.talent ? "T" : String(ability.name || ability.abilityId || "?").slice(0, 1);
+              return `<td><span class="match-ability" title="${escapeHtml(ability.name || `技能 ${ability.abilityId}`)}"><span>${escapeHtml(fallback)}</span>${ability.key ? `<img class="match-ability-image" src="${abilityImageUrl(ability.key)}" alt="${escapeHtml(ability.name || ability.key)}" loading="lazy" />` : ""}</span></td>`;
+            }).join("")}</tr>`;
+          }).join("")}</tbody>
+        </table></div>
+      </section>`).join("")}
+  </div>`;
+}
+
+function renderMatchAnalysisLoading(label) {
+  return `<div class="match-analysis-state"><span class="match-analysis-spinner" aria-hidden="true"></span><h3>${escapeHtml(label)}</h3><p>只加载当前比赛，不会影响其他页面速度。</p></div>`;
+}
+
+function renderMatchAnalysisEmpty(title, detail) {
+  return `<div class="match-analysis-state"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V3"/></svg><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p></div>`;
+}
+
+function renderMatchAdvantagePanel(match, analysis) {
+  if (!analysis) return renderMatchAnalysisLoading("正在读取经济与经验曲线");
+  const timeline = analysis.timeline || {};
+  const times = Array.isArray(timeline.times) ? timeline.times : [];
+  const gold = Array.isArray(timeline.goldAdvantage) ? timeline.goldAdvantage : [];
+  const xp = Array.isArray(timeline.xpAdvantage) ? timeline.xpAdvantage : [];
+  if (!analysis.available || times.length < 2 || (!gold.length && !xp.length)) return renderMatchAnalysisEmpty("这场比赛没有经济经验曲线", "曲线来自录像逐分钟快照，旧比赛需要重新导入原始录像。");
+  return renderAdvantageChart(times, gold, xp);
+}
+
+function renderAdvantageChart(times, gold, xp) {
+  const width = 1000;
+  const height = 430;
+  const padding = { left: 72, right: 24, top: 28, bottom: 52 };
+  const values = [...gold, ...xp].map(Number).filter(Number.isFinite);
+  const rawMax = Math.max(1000, ...values.map((value) => Math.abs(value)));
+  const yMax = Math.ceil(rawMax / 2500) * 2500;
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const count = Math.max(times.length, gold.length, xp.length);
+  const x = (index) => padding.left + (count <= 1 ? 0 : (index / (count - 1)) * plotWidth);
+  const y = (value) => padding.top + ((yMax - Number(value || 0)) / (yMax * 2)) * plotHeight;
+  const points = (series) => series.map((value, index) => `${x(index).toFixed(1)},${y(value).toFixed(1)}`).join(" ");
+  const ticks = [-yMax, -yMax / 2, 0, yMax / 2, yMax];
+  const xStep = Math.max(1, Math.ceil(count / 10));
+  const visibleGold = matchDetailChartSeries.gold && gold.length;
+  const visibleXp = matchDetailChartSeries.xp && xp.length;
+  return `<section class="match-advantage-card">
+    <header><div><span>MATCH MOMENTUM</span><h3>经济与经验走势</h3><p>正值为天辉领先，负值为夜魇领先。</p></div><div class="match-chart-controls" role="group" aria-label="曲线显示">
+      <button class="is-gold ${visibleGold ? "is-active" : ""}" type="button" data-match-chart-series="gold" aria-pressed="${Boolean(visibleGold)}"><i></i>经济</button>
+      <button class="is-xp ${visibleXp ? "is-active" : ""}" type="button" data-match-chart-series="xp" aria-pressed="${Boolean(visibleXp)}"><i></i>经验</button>
+    </div></header>
+    <div class="match-advantage-chart-scroll"><svg class="match-advantage-chart" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="matchChartTitle matchChartDesc">
+      <title id="matchChartTitle">天辉经济与经验领先曲线</title><desc id="matchChartDesc">零线上方代表天辉领先，下方代表夜魇领先。</desc>
+      <rect x="${padding.left}" y="${padding.top}" width="${plotWidth}" height="${plotHeight / 2}" class="chart-radiant-zone" />
+      <rect x="${padding.left}" y="${padding.top + plotHeight / 2}" width="${plotWidth}" height="${plotHeight / 2}" class="chart-dire-zone" />
+      ${ticks.map((tick) => `<g><line x1="${padding.left}" x2="${width - padding.right}" y1="${y(tick)}" y2="${y(tick)}" class="chart-grid-line ${tick === 0 ? "is-zero" : ""}"/><text x="${padding.left - 12}" y="${y(tick) + 5}" text-anchor="end">${tick === 0 ? "0" : formatMatchMetric(tick, { compact: true })}</text></g>`).join("")}
+      ${times.map((time, index) => index % xStep === 0 || index === times.length - 1 ? `<text x="${x(index)}" y="${height - 19}" text-anchor="middle">${Math.round(Number(time || 0) / 60)}:00</text>` : "").join("")}
+      <text x="${padding.left + 18}" y="${padding.top + 28}" class="chart-team-label is-radiant">天辉领先</text>
+      <text x="${padding.left + 18}" y="${height - padding.bottom - 18}" class="chart-team-label is-dire">夜魇领先</text>
+      ${visibleXp ? `<polyline points="${points(xp)}" class="chart-series chart-series-xp"/>` : ""}
+      ${visibleGold ? `<polyline points="${points(gold)}" class="chart-series chart-series-gold"/>` : ""}
+      ${visibleGold ? gold.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="8" class="chart-hit"><title>${Math.round(Number(times[index] || 0) / 60)} 分钟 · 经济 ${Number(value) >= 0 ? "天辉" : "夜魇"}领先 ${formatMatchMetric(Math.abs(value))}</title></circle>`).join("") : ""}
+      ${visibleXp ? xp.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="8" class="chart-hit"><title>${Math.round(Number(times[index] || 0) / 60)} 分钟 · 经验 ${Number(value) >= 0 ? "天辉" : "夜魇"}领先 ${formatMatchMetric(Math.abs(value))}</title></circle>`).join("") : ""}
+    </svg></div>
+    <details class="match-chart-data"><summary>查看逐分钟数据</summary><div><table><thead><tr><th>时间</th><th>经济领先</th><th>经验领先</th></tr></thead><tbody>${times.map((time, index) => `<tr><td>${Math.round(Number(time || 0) / 60)}:00</td><td>${formatMatchMetric(gold[index])}</td><td>${formatMatchMetric(xp[index])}</td></tr>`).join("")}</tbody></table></div></details>
+  </section>`;
+}
+
+function handleMatchDetailPageClick(event) {
+  const back = event.target.closest("[data-match-detail-back]");
+  if (back) {
+    if (window.history.length > 1) window.history.back();
+    else {
+      selectedMatchDetailId = "";
+      updateAppLocation("dashboard", "", { replace: true });
+      switchView("dashboard");
+    }
+    return;
+  }
+  const tab = event.target.closest("[data-match-detail-tab]");
+  if (tab) {
+    activeMatchDetailTab = tab.dataset.matchDetailTab || "summary";
+    renderMatchDetailPage();
+    return;
+  }
+  const series = event.target.closest("[data-match-chart-series]");
+  if (series) {
+    const key = series.dataset.matchChartSeries;
+    matchDetailChartSeries[key] = !matchDetailChartSeries[key];
+    if (!matchDetailChartSeries.gold && !matchDetailChartSeries.xp) matchDetailChartSeries[key] = true;
+    renderMatchDetailPage();
+  }
 }
 
 function handleMatchCardOpen(event) {
@@ -4656,9 +5007,11 @@ function renderCurrentView() {
   const activeView = $(".view.is-active")?.id || "dashboard";
   const renderers = {
     dashboard: renderDashboard,
+    matches: renderMatches,
     playoffs: renderPlayoffs,
     players: renderPlayers,
     playerProfile: renderPlayerProfile,
+    matchDetail: renderMatchDetailPage,
     data: renderDataView,
     overallData: renderOverallData,
     heroes: renderHeroes,
@@ -5723,13 +6076,19 @@ function bindEvents() {
     if (event.target?.classList?.contains("hero-avatar")) {
       event.target.remove();
     }
+    if (event.target?.classList?.contains("match-item-image")
+      || event.target?.classList?.contains("match-ability-image")) {
+      event.target.hidden = true;
+    }
   }, true);
 
   $$("[data-season-option]").forEach((link) => {
     link.addEventListener("click", () => {
-      const activeView = $(".view.is-active")?.id || "dashboard";
+      const currentView = $(".view.is-active")?.id || "dashboard";
+      const activeView = currentView === "matchDetail" ? "dashboard" : currentView;
       const targetUrl = new URL(link.href, window.location.href);
       targetUrl.searchParams.set("view", activeView);
+      if (activeView !== "matchDetail") targetUrl.searchParams.delete("match");
       link.href = `${targetUrl.pathname}${targetUrl.search}`;
     });
   });
@@ -5753,6 +6112,7 @@ function bindEvents() {
     const params = new URLSearchParams(window.location.search);
     const targetView = params.get("view") || "dashboard";
     selectedPlayerProfileId = targetView === "playerProfile" ? (params.get("player") || "") : "";
+    selectedMatchDetailId = targetView === "matchDetail" ? (params.get("match") || "") : "";
     selectedPlayerProfilePosition = "";
     selectedPlayerProfileHeroKey = "";
     selectedPlayerProfileMatchDate = "";
@@ -5763,6 +6123,8 @@ function bindEvents() {
 
   $("#recentMatches").addEventListener("click", handleMatchCardOpen);
   $("#recentMatches").addEventListener("keydown", handleMatchCardKeydown);
+  $("#matches")?.addEventListener("click", handleMatchCardOpen);
+  $("#matches")?.addEventListener("keydown", handleMatchCardKeydown);
   $("#featuredHighlight")?.addEventListener("click", (event) => {
     const switchButton = event.target.closest("[data-dashboard-highlight-index]");
     if (switchButton) {
@@ -5789,11 +6151,8 @@ function bindEvents() {
   });
   $("#previousMatchDate")?.addEventListener("click", () => moveDashboardMatchDate(-1));
   $("#nextMatchDate")?.addEventListener("click", () => moveDashboardMatchDate(1));
-  $("#closeMatchDialog").addEventListener("click", () => $("#matchDetailDialog").close());
   $("#closeHomepageHighlightPreview")?.addEventListener("click", () => closeHomepageHighlightFraming());
-  $("#matchDetailDialog").addEventListener("click", (event) => {
-    if (event.target.id === "matchDetailDialog") event.target.close();
-  });
+  $("#matchDetail")?.addEventListener("click", handleMatchDetailPageClick);
 
   $("#players").addEventListener("click", (event) => {
     const sortButton = event.target.closest("[data-record-sort]");
@@ -7347,7 +7706,10 @@ initializeHomepagePreviewFrameMessaging();
 bindEvents();
 initializeCardInteractions();
 initializePageFieldInteractions();
-switchView(REQUESTED_PLAYER_ID ? "playerProfile" : (REQUESTED_VIEW || sessionStorage.getItem(ACTIVE_VIEW_KEY) || "dashboard"));
+const initialView = REQUESTED_VIEW || sessionStorage.getItem(ACTIVE_VIEW_KEY) || "dashboard";
+switchView(REQUESTED_VIEW === "matchDetail" && REQUESTED_MATCH_ID
+  ? "matchDetail"
+  : (REQUESTED_PLAYER_ID ? "playerProfile" : (initialView === "matchDetail" ? "dashboard" : initialView)));
 // The legacy splash/video and clock code is intentionally retained but no longer initialized.
 initializeDashboardScrollSequence();
 Promise.allSettled([restoreAdminSession(), ensureStateLoaded()]).then((results) => {

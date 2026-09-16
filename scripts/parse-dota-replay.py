@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from gem.combat.aggregator import _CombatAggregator
+from gem.catalog import ability_display, item_display, load_data_json
 from gem.extractors.courier import CourierExtractor
 from gem.extractors.draft import DraftExtractor
 from gem.extractors.intervals import IntervalExtractor
@@ -18,6 +19,12 @@ from gem.extractors.smoke_vision import SmokeExtractor, VisionModifierExtractor
 from gem.extractors.wards import WardsExtractor
 from gem.parser import ReplayParser
 from gem.results.assembly import build_parsed_match
+
+
+try:
+    ABILITY_IDS = load_data_json("ability_ids.json")
+except Exception:
+    ABILITY_IDS = {}
 
 
 def parse_with_metadata(path: Path):
@@ -73,7 +80,59 @@ def parse_with_metadata(path: Path):
         neutral_item_finds=neutral_item_finds,
         interval_ext=interval_ext,
     )
-    return parser, match
+    return parser, match, player_ext
+
+
+def build_ability_timeline(snapshots, player):
+    """Reconstruct the hero level at which each skill point was spent."""
+    previous = {}
+    used_levels = set()
+    result = []
+    upgrade_ids = list(player.ability_upgrades_arr or [])
+
+    for snapshot in snapshots:
+        if snapshot.player_id != player.player_id or not snapshot.ability_levels:
+            continue
+        current = dict(snapshot.ability_levels)
+        increments = []
+        for key, level in current.items():
+            gained = max(0, int(level or 0) - int(previous.get(key, 0) or 0))
+            increments.extend([key] * gained)
+        if increments:
+            hero_level = max(1, int(snapshot.level or 0))
+            available_levels = [level for level in range(1, hero_level + 1) if level not in used_levels]
+            assigned_levels = available_levels[-len(increments):]
+            for ability_key, learned_level in zip(increments, assigned_levels, strict=False):
+                index = len(result)
+                ability_id = int(upgrade_ids[index]) if index < len(upgrade_ids) else 0
+                result.append(
+                    {
+                        "level": learned_level,
+                        "abilityId": ability_id,
+                        "key": ability_key,
+                        "name": ability_display(ability_key),
+                        "talent": ability_key.startswith("special_bonus"),
+                    }
+                )
+                used_levels.add(learned_level)
+        previous = current
+
+    if result:
+        return sorted(result, key=lambda item: item["level"])
+
+    fallback = []
+    for level, ability_id in enumerate(upgrade_ids, start=1):
+        ability_key = str(ABILITY_IDS.get(str(ability_id), ""))
+        fallback.append(
+            {
+                "level": level,
+                "abilityId": int(ability_id or 0),
+                "key": ability_key,
+                "name": ability_display(ability_key) if ability_key else str(ability_id),
+                "talent": ability_key.startswith("special_bonus"),
+            }
+        )
+    return fallback
 
 
 def value_at_game_time(player, seconds: int):
@@ -119,7 +178,7 @@ def main():
         raise SystemExit("Usage: parse-dota-replay.py <replay.dem>")
 
     path = Path(sys.argv[1])
-    parser, match = parse_with_metadata(path)
+    parser, match, player_ext = parse_with_metadata(path)
     start_time = int(getattr(parser.match_details, "starttime", 0) or 0)
     started_at = datetime.fromtimestamp(start_time, timezone.utc) if start_time else None
     local_started_at = started_at.astimezone(timezone(timedelta(hours=8))) if started_at else None
@@ -127,6 +186,19 @@ def main():
 
     players = []
     for player in match.players:
+        ability_build = build_ability_timeline(player_ext.snapshots, player)
+
+        final_items = []
+        for slot, item_name in sorted((player.final_items or {}).items(), key=lambda entry: int(entry[0])):
+            key = str(item_name or "").removeprefix("item_")
+            final_items.append(
+                {
+                    "slot": int(slot),
+                    "key": key,
+                    "name": item_display(key),
+                }
+            )
+
         players.append(
             {
                 "slot": player.player_id,
@@ -152,6 +224,15 @@ def main():
                 "damageTaken": sum(player.damage_taken.values()),
                 "healing": player.hero_healing,
                 "level": player.level,
+                "netWorth": player.net_worth,
+                "abilityBuild": ability_build,
+                "finalItems": final_items,
+                "purchaseTimes": dict(player.purchase_time or {}),
+                "buffs": {
+                    "aghanimsScepter": player.aghanims_scepter,
+                    "aghanimsShard": player.aghanims_shard,
+                    "moonshard": player.moonshard,
+                },
             }
         )
 
@@ -174,6 +255,11 @@ def main():
         "direScore": match.dire_score,
         "durationSeconds": duration,
         "firstBloodTime": match.first_blood_time,
+        "timeline": {
+            "times": list(match.game_times_min or []),
+            "goldAdvantage": list(match.radiant_gold_adv or []),
+            "xpAdvantage": list(match.radiant_xp_adv or []),
+        },
         "players": players,
         "summary": {
             "towers": len(match.towers),
