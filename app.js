@@ -408,6 +408,14 @@ function getPlayerDataStats(playerId) {
   return dataStatsByPlayerId.get(playerId) || createEmptyDataStats();
 }
 
+function hasPlayerRankingData(playerId) {
+  return getPlayerStats(playerId).games > 0;
+}
+
+function hasPlayerPerformanceData(playerId) {
+  return Object.values(getPlayerDataStats(playerId)).some((value) => value !== null && value !== undefined);
+}
+
 function createEmptyPositionStats() {
   return {
     counts: Object.fromEntries(POSITIONS.map((position) => [position, 0])),
@@ -1518,12 +1526,14 @@ function renderPlayers() {
   const body = $("#playersBody");
   renderRecordHeader(body.closest("table"));
 
-  if (!db.players.length) {
-    body.innerHTML = `<tr><td colspan="5" class="muted">暂无选手</td></tr>`;
+  const players = getPlayersWithStats()
+    .filter((player) => hasPlayerRankingData(player.id))
+    .sort(compareRecordPlayers);
+
+  if (!players.length) {
+    body.innerHTML = `<tr><td colspan="5" class="muted">暂无比赛数据</td></tr>`;
     return;
   }
-
-  const players = getPlayersWithStats().sort(compareRecordPlayers);
 
   body.innerHTML = players
     .map((player) => {
@@ -1926,6 +1936,43 @@ function renderPlayerProfileHeroPool(heroes = []) {
   `;
 }
 
+function renderPlayerProfileRecentMatches(playerId, recentForm = []) {
+  if (!recentForm.length) {
+    return `<div class="player-profile-recent-empty">暂无比赛记录</div>`;
+  }
+
+  return `
+    <div class="player-profile-recent-scroll">
+      <table class="player-profile-recent-table">
+        <thead>
+          <tr><th>英雄</th><th>胜负</th><th>时长</th><th>KDA</th><th>GPM</th><th>XPM</th><th>伤害量</th></tr>
+        </thead>
+        <tbody>
+          ${recentForm.map(({ match, isWin }) => {
+            const detail = match.playerDetails?.[playerId] || {};
+            const hero = detail.hero || "英雄未记录";
+            const heroAvatar = renderHeroAvatar(hero) || `<span class="player-profile-recent-hero-placeholder" aria-hidden="true">?</span>`;
+            return `
+              <tr class="${isWin ? "is-win" : "is-loss"}" data-open-match="${escapeHtml(match.id)}" tabindex="0" role="button" aria-label="查看 ${escapeHtml(formatShortMatchDate(match.date))} 第 ${Number(match.matchNo || 1)} 场，${isWin ? "胜利" : "失败"}">
+                <td>
+                  <span class="player-profile-recent-hero">
+                    ${heroAvatar}
+                    <span><strong>${escapeHtml(hero)}</strong><small>${escapeHtml(formatShortMatchDate(match.date))} · 第 ${Number(match.matchNo || 1)} 场</small></span>
+                  </span>
+                </td>
+                <td><span class="player-profile-recent-result"><i aria-hidden="true"></i><strong>${isWin ? "胜利" : "失败"}</strong></span></td>
+                <td class="player-profile-recent-duration">${escapeHtml(getMatchDurationLabel(match))}</td>
+                <td><span class="player-profile-recent-kda"><b>${formatMatchMetric(detail.kills)}</b><em>${formatMatchMetric(detail.deaths)}</em><b>${formatMatchMetric(detail.assists)}</b></span></td>
+                <td>${formatMatchMetric(detail.gpm)}</td>
+                <td>${formatMatchMetric(detail.xpm)}</td>
+                <td>${formatMatchMetric(detail.damage, { compact: true })}</td>
+              </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>`;
+}
+
 function renderPlayerProfileIntro(player, stats, recentForm, rank) {
   return `
     <nav class="player-profile-location" aria-label="选手档案位置">
@@ -1952,11 +1999,9 @@ function renderPlayerProfileIntro(player, stats, recentForm, rank) {
     </header>
 
     <section class="player-profile-summary-grid">
-      <article class="player-profile-module player-profile-form-module">
-        <div class="player-profile-module-heading"><div><span>RECENT FORM</span><h4>近期状态</h4></div><small>最近 ${recentForm.length} 场</small></div>
-        <div class="player-profile-form-sequence">
-          ${recentForm.length ? recentForm.map(({ match, isWin }) => `<button type="button" class="${isWin ? "is-win" : "is-loss"}" data-open-match="${escapeHtml(match.id)}" aria-label="查看 ${escapeHtml(formatShortMatchDate(match.date))} 第 ${Number(match.matchNo || 1)} 场">${isWin ? "胜" : "负"}</button>`).join("") : `<span class="muted">暂无比赛</span>`}
-        </div>
+      <article class="player-profile-module player-profile-recent-module">
+        <div class="player-profile-module-heading"><div><span>LATEST MATCHES</span><h4>近期比赛</h4></div><small>最近 ${recentForm.length} 场</small></div>
+        ${renderPlayerProfileRecentMatches(player.id, recentForm)}
       </article>
       <article class="player-profile-module player-profile-trend-module">
         <div class="player-profile-module-heading"><div><span>RATING TREND</span><h4>评分走势</h4></div></div>
@@ -3158,6 +3203,7 @@ function renderDataTable(viewId, columns, body) {
   renderDataHeader(body.closest("table"), columns, viewId);
 
   const players = db.players
+    .filter((player) => hasPlayerPerformanceData(player.id))
     .map((player) => ({
       ...player,
       dataStats: getPlayerDataStats(player.id)
@@ -3165,7 +3211,7 @@ function renderDataTable(viewId, columns, body) {
     .sort((a, b) => compareDataPlayers(a, b, viewId));
 
   if (!players.length) {
-    body.innerHTML = `<tr><td colspan="${columns.length}" class="muted">暂无选手</td></tr>`;
+    body.innerHTML = `<tr><td colspan="${columns.length}" class="muted">暂无个人数据</td></tr>`;
     return;
   }
 
@@ -3735,14 +3781,14 @@ function renderSelectedMatchDetail() {
       <label>
         参战率
         <span class="input-suffix">
-          <input data-detail-field="participation" type="number" min="0" step="0.001" value="${escapeHtml(detail.participation)}" />
+          <input data-detail-field="participation" type="number" min="0" step="any" value="${escapeHtml(detail.participation)}" />
           <span>%</span>
         </span>
       </label>
       <label>
         输出占比
         <span class="input-suffix">
-          <input data-detail-field="damageShare" type="number" min="0" step="0.001" value="${escapeHtml(detail.damageShare)}" />
+          <input data-detail-field="damageShare" type="number" min="0" step="any" value="${escapeHtml(detail.damageShare)}" />
           <span>%</span>
         </span>
       </label>
