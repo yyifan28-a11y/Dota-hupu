@@ -31,10 +31,10 @@ const WHO_GAME_ATTEMPT_LIMIT = 3;
 const WHO_GAME_CORRECT_SCORE = 100;
 const WHO_GAME_UNUSED_ATTEMPT_SCORE = 20;
 const WHO_GAME_UNSEEN_CLUE_SCORE = 10;
-const WHO_GAME_PUBLICLY_AVAILABLE = false;
+const WHO_GAME_PUBLICLY_AVAILABLE = true;
 // Curated clues that can change as S3 grows must freeze and display their authoring date.
 // Historical one-match facts and S2-only facts do not need this prefix.
-const WHO_GAME_CURATED_AS_OF = "截至 9 月 16 日，";
+const WHO_GAME_CURATED_AS_OF = "截至 9 月 17 日，";
 const TEAM_GENERATION_COOLDOWN_MS = 60 * 1000;
 const REQUIRED_DETAIL_FIELDS = [
   "hero",
@@ -5572,155 +5572,123 @@ function buildCuratedWhoGameQuestion(questionKey = "curated-preview-robot-01") {
 
   const questions = [
     buildQuestion({
-      key: "curated-preview-guanyu-01",
-      answerName: "关羽",
-      description: "历史事件、位置履历、位置反差、关系网络与单场纪录",
-      clues: (ratingPoints) => [
-        {
-          key: "longest-match",
-          label: "S2 · 历史事件",
-          text: "他参加了 S2 最长的 59 分 46 秒比赛。",
-          verification: "5 月 16 日第 2 场，他使用熊战士担任 1 号位，打出 26 / 5 / 5，并赢下这场 59 分 46 秒的比赛。"
-        },
-        {
-          key: "position-coverage",
-          label: "生涯 · 位置履历",
-          text: `${WHO_GAME_CURATED_AS_OF}两季共出场 28 次，只担任过 1、2、3 号位，从未出现在两个辅助位置。`,
-          verification: "1 号位 11 场 7 胜，2 号位 10 场 2 胜，3 号位 7 场 6 胜；4、5 号位均为 0 场。"
-        },
-        {
-          key: "role-winrate-contrast",
-          label: "生涯 · 位置反差",
-          text: `${WHO_GAME_CURATED_AS_OF}他担任 3 号位时取得 7 场 6 胜；担任 2 号位时却只有 10 场 2 胜。`,
-          verification: "3 号位胜率为 85.7%（7 场 6 胜），2 号位胜率为 20.0%（10 场 2 胜）。"
-        },
-        {
-          key: "frequent-teammates",
-          label: "生涯 · 关系网络",
-          text: `${WHO_GAME_CURATED_AS_OF}两季中，他与 xian、小孩、ldxy 分别同队 11 场，并列成为与他同队次数最多的选手。`,
-          verification: "与 xian 同队 11 场、与小孩同队 11 场、与 ldxy 同队 11 场，三人并列第一。"
-        },
-        {
-          key: "s3-economy",
-          label: "S3 · 单场记录",
-          text: "他曾在 S3 使用幻影长矛手担任 1 号位，在一场败局中取得 942 GPM，并完成 768 次补刀。",
-          verification: "9 月 15 日第 2 场，他使用幻影长矛手打出 14 / 5 / 6、942 GPM和768次补刀，但最终落败。",
-          hero: "幻影长矛手"
-        }
+      key: "curated-ldxy-01",
+      answerName: "ldxy",
+      description: "评分低谷、位置履历、连续纪录、极端伤害与英雄纪录",
+      clues: () => [
+        { key: "rating-low-days", label: "S2 · 评分", text: "他在 S2 中，有 10 天评分小于等于 5。", verification: "5 月 10 日至 19 日连续 10 天，他的评分均未超过 5。" },
+        { key: "only-position-five", label: "生涯 · 位置", text: "他只玩过一次 5 号位。", verification: "唯一一次是使用远古冰魄，战绩 2 / 9 / 20，并输掉比赛。" },
+        { key: "streak-record", label: "生涯 · 连续纪录", text: `${WHO_GAME_CURATED_AS_OF}最长的个人连胜或连败纪录中有一个属于他。`, verification: "他保持两季最长个人连败纪录，共 10 连败。" },
+        { key: "loss-high-damage", label: "单场 · 极端伤害", text: "他曾在单局中打出 100901 点英雄伤害，但仍然输掉比赛。", verification: "他使用痛苦女王打出 13 / 10 / 28，并造成 100901 点英雄伤害。" },
+        { key: "single-hero-record", label: "生涯 · 英雄纪录", text: `${WHO_GAME_CURATED_AS_OF}他保持了单个英雄的出场纪录。`, verification: "灰烬之灵共使用 19 次，是目前单人使用同一英雄的最高纪录。" }
+      ]
+    }),
+    buildQuestion({
+      key: "curated-xiaohai-01",
+      answerName: "小孩",
+      description: "跨季胜率、英雄排除、连败、英雄偏好与高经济表现",
+      clues: () => [
+        { key: "season-winrates", label: "跨季 · 胜率", text: `${WHO_GAME_CURATED_AS_OF}他在 S2 和 S3 的胜率都未达到 50%。`, verification: "S2 为 28 胜 31 负，S3 为 3 胜 8 负。" },
+        { key: "hero-used-unused", label: "生涯 · 英雄", text: "他使用过瘟疫法师和食人魔魔法师，但没有使用过钢背兽和干扰者。", verification: "瘟疫法师使用 3 次、食人魔魔法师使用 1 次；钢背兽和干扰者均为 0 次。" },
+        { key: "two-losing-streaks", label: "生涯 · 连败", text: "他经历过两次不少于 5 场的连败。", verification: "两段连败分别为 6 连败和 5 连败。" },
+        { key: "top-heroes-role-contrast", label: "生涯 · 英雄与位置", text: `${WHO_GAME_CURATED_AS_OF}他使用次数最多的两个英雄是孽主和破晓辰星，但 3 号位不是他出场最多的位置。`, verification: "孽主使用 9 次，破晓辰星使用 8 次；他出场最多的是 1 号位，共 28 场，3 号位共 21 场。" },
+        { key: "multiple-900-gpm", label: "单场 · 经济", text: "他曾在不止一场比赛中达到 900 以上 GPM。", verification: "共有 3 场，GPM 分别为 900、942 和 951，均使用美杜莎。" }
+      ]
+    }),
+    buildQuestion({
+      key: "curated-coach-01",
+      answerName: "教练",
+      description: "队友对比、位置集中、评分稳定、超高KDA与绝活英雄",
+      clues: () => [
+        { key: "teammate-damage", label: "单场 · 队友对比", text: "他曾与担任 1 号位的 LDXY、担任 2 号位的小孩同队，并打出了远高于两人的英雄伤害。", verification: "教练使用宙斯造成 51323 点伤害；LDXY 为 31753，小孩为 24375。" },
+        { key: "position-concentration", label: "生涯 · 位置", text: "他五个位置全部打过，但其中四个位置的场次加起来，还没有另一个位置多。", verification: "4 号位共 33 场，其余四个位置合计 12 场。" },
+        { key: "rating-range", label: "S2 · 评分", text: "他在 S2 的评分波动很小，最高评分与最低评分相差不超过 2。", verification: "实际最高评分为 6.0，最低评分为 5.0，相差 1.0。" },
+        { key: "kda-over-thirty", label: "单场 · KDA", text: "他曾在一场比赛中 KDA 超过 30。", verification: "他使用邪影芳灵打出 15 / 0 / 16，按零死亡计法 KDA 为 31。" },
+        { key: "four-character-signature", label: "生涯 · 绝活英雄", text: "他的绝活英雄中文名为四个字。", verification: "答案是森海飞霞，共使用 15 次。" }
+      ]
+    }),
+    buildQuestion({
+      key: "curated-boyang-01",
+      answerName: "博洋",
+      description: "长局低伤、评分回落、位置空白、英雄并列与独特英雄",
+      clues: () => [
+        { key: "long-win-low-damage", label: "单场 · 长局反差", text: "他曾在一场超过 55 分钟的比赛中造成不到 1 万点英雄伤害，却仍然获胜。", verification: "比赛持续 59 分 46 秒；他使用赏金猎人造成 9368 点伤害，战绩 1 / 14 / 32。" },
+        { key: "rating-rise-return", label: "S2 · 评分", text: "他的评分曾在 S2 初期快速上升，但是很快又回到了原点。", verification: "评分从 5.5 升至 7.5，随后又降回 5.5。" },
+        { key: "never-mid", label: "生涯 · 位置", text: `${WHO_GAME_CURATED_AS_OF}他从未担任过 2 号位。`, verification: "1 号位 19 场、3 号位 6 场、4 号位 10 场、5 号位 8 场，2 号位 0 场。" },
+        { key: "four-top-heroes", label: "生涯 · 英雄", text: `${WHO_GAME_CURATED_AS_OF}他有四名英雄的使用次数并列最多。`, verification: "冥魂大帝、裂魂人、水晶室女和钢背兽均使用 5 次。" },
+        { key: "two-player-hero", label: "生涯 · 英雄关系", text: `${WHO_GAME_CURATED_AS_OF}有一个英雄只有他和 D 使用过。`, verification: "这个英雄是魅惑魔女。" }
+      ]
+    }),
+    buildQuestion({
+      key: "curated-xinq-01",
+      answerName: "xinq",
+      description: "英雄池、英雄排除、低评分、连续出勤与英雄谜语",
+      clues: () => [
+        { key: "s2-hero-pool", label: "S2 · 英雄池", text: "他在 S2 中使用过超过 15 个英雄。", verification: "S2 共使用 16 个不同英雄。" },
+        { key: "hero-used-unused", label: "生涯 · 英雄", text: "他使用过斯温、先知和斯拉达，但是没有使用过巫医和破晓辰星。", verification: "斯温、自然先知和斯拉达均有使用记录；巫医和破晓辰星均为 0 次。" },
+        { key: "rating-below-three", label: "S2 · 评分", text: "他的评分曾小于 3。", verification: "S2 最低评分为 1.5。" },
+        { key: "s3-daily-attendance", label: "S3 · 出勤", text: `${WHO_GAME_CURATED_AS_OF}他在 S3 每天都有进行比赛。`, verification: "9 月 14 日、15 日、16 日和 17 日均有出场。" },
+        { key: "electric-signature", label: "生涯 · 英雄谜语", text: "他使用最多的英雄会放电。", verification: "答案是干扰者，两季共使用 6 次。" }
       ]
     }),
     buildQuestion({
       key: "curated-preview-robot-01",
       answerName: "机器人",
-      description: "评分走势、位置履历、连续战绩、绝活表现与英雄池",
+      description: "核心爆发、评分走势、位置首胜、英雄池与绝活表现",
       clues: (ratingPoints) => [
-      {
-        key: "s2-rating-curve",
-        label: "S2 · 评分走势",
-        type: "ratingTrend",
-        points: ratingPoints,
-        text: "赛季中段一度升至 7.5，随后持续回落，赛季末回到 5.0。",
-        verification: "最高评分为 7.5（5 月 16 日、17 日），最低评分为 4.0（5 月 24 日），5 月 27 日最终为 5.0。"
-      },
-      {
-        key: "position-record",
-        label: "生涯 · 位置履历",
-        text: `${WHO_GAME_CURATED_AS_OF}这名选手两季五个位置全部打过；其中 4 号位出场 5 次，一场也没有获胜。`,
-        verification: "1 号位 24 场 13 胜，2 号位 1 场 0 胜，3 号位 14 场 6 胜，4 号位 5 场 0 胜，5 号位 3 场 1 胜。"
-      },
-      {
-        key: "losing-streak",
-        label: "生涯 · 连续战绩",
-        text: "这名选手曾经遭遇过 7 连败。",
-        verification: "这段 7 连败从 5 月 21 日第 4 场开始，持续到 5 月 25 日第 2 场。"
-      },
-      {
-        key: "signature-performance",
-        label: "单场 · 绝活表现",
-        text: "他曾使用绝活英雄打出 3 / 18 / 14 的战绩，饱受好评。",
-        verification: "9 月 16 日第 3 场，他使用帕吉担任 5 号位，打出 3 / 18 / 14，最终落败。"
-      },
-      {
-        key: "hero-pool-size",
-        label: "生涯 · 英雄池",
-        text: `${WHO_GAME_CURATED_AS_OF}他在两个赛季中一共使用过 31 个不同英雄。`,
-        verification: "S2 使用过 29 个不同英雄，S3 使用过 4 个；去除两季重复英雄后，合计为 31 个。"
-      }
+        { key: "carry-twenty-kills", label: "单场 · 核心爆发", text: "他曾在一场比赛中操刀 1 号位拿下超过 20 次击杀，伤害占比超过 40%。", verification: "他使用幽鬼打出 21 / 2 / 10，造成 57929 点英雄伤害，伤害占比 42.2%，并取得胜利。" },
+        { key: "s2-rating-curve", label: "S2 · 评分走势", type: "ratingTrend", points: ratingPoints, text: "他的 S2 评分曲线如下。", verification: "最高评分为 7.5，最低评分为 4.0，S2 最终评分为 5.0。" },
+        { key: "position-first-win", label: "生涯 · 位置首胜", text: `${WHO_GAME_CURATED_AS_OF}他五个位置全部打过，但是其中一个位置在 9 月 17 日才迎来首胜。`, verification: "这个位置是 4 号位。此前五战全败；9 月 17 日第 4 场使用水晶室女打出 6 / 5 / 15，取得首胜。" },
+        { key: "hero-pool-minimum", label: "生涯 · 英雄池", text: `${WHO_GAME_CURATED_AS_OF}他在两个赛季中已经使用过至少 25 个不同英雄。`, verification: "实际共使用 33 个不同英雄。" },
+        { key: "signature-performance", label: "单场 · 绝活表现", text: "他曾使用绝活英雄打出 3 / 18 / 14 的战绩，饱受好评。", verification: "9 月 16 日第 3 场，他使用帕吉担任 5 号位并输掉比赛。" }
+      ]
+    }),
+    buildQuestion({
+      key: "curated-preview-guanyu-01",
+      answerName: "关羽",
+      description: "位置覆盖、位置反差、单场纪录、完美队友与最长比赛",
+      clues: () => [
+        { key: "position-coverage", label: "生涯 · 位置", text: `${WHO_GAME_CURATED_AS_OF}他只担任过 1、2、3 号位。`, verification: "1 号位 13 场、2 号位 12 场、3 号位 7 场；4、5 号位均为 0 场。" },
+        { key: "role-winrate-contrast", label: "生涯 · 位置反差", text: `${WHO_GAME_CURATED_AS_OF}他担任 3 号位的胜率远远高于 2 号位。`, verification: "3 号位 7 场 6 胜，胜率 85.7%；2 号位 12 场 3 胜，胜率 25%。" },
+        { key: "single-match-record", label: "单场 · 纪录", text: `${WHO_GAME_CURATED_AS_OF}他保持着一项单场数据纪录的第一名。`, verification: "他使用齐天大圣取得 30 次击杀，是两季单场最高击杀纪录，而且没有并列。" },
+        { key: "perfect-teammate-record", label: "生涯 · 队友", text: `${WHO_GAME_CURATED_AS_OF}他与另一名选手做队友时取得 7 胜 0 负。`, verification: "这名选手是马忠，两人同队 7 场并且全部获胜。" },
+        { key: "longest-match", label: "S2 · 最长比赛", text: "他参加了 S2 最长的 59 分 46 秒比赛。", verification: "他使用熊战士担任 1 号位，打出 26 / 5 / 5，并赢下比赛。" }
       ]
     }),
     buildQuestion({
       key: "curated-preview-xian-01",
       answerName: "xian",
-      description: "英雄排除、分位置画像、评分走势、辅助表现与关系网络",
-      clues: (ratingPoints) => [
-        {
-          key: "popular-heroes-never-played",
-          label: "生涯 · 英雄排除",
-          text: `${WHO_GAME_CURATED_AS_OF}他从未使用过：孽主、破晓辰星、干扰者、虚空假面、主宰。`,
-          verification: "孽主、破晓辰星、干扰者、虚空假面和主宰的个人使用次数均为 0。"
-        },
-        {
-          key: "position-damage-profile",
-          label: "生涯 · 分位置画像",
-          text: `${WHO_GAME_CURATED_AS_OF}担任 1、2、3、4 号位时，他的平均输出占比都高于全体同位置平均；唯独 5 号位低于平均。`,
-          verification: "1至5号位依次为 27.5% / 31.2% / 24.5% / 17.6% / 12.0%；同位置全体平均为 23.2% / 29.4% / 21.0% / 14.3% / 12.1%。"
-        },
-        {
-          key: "s2-rating-curve",
-          label: "S2 · 评分走势",
-          type: "ratingTrend",
-          points: ratingPoints,
-          text: "S2 评分走势。",
-          verification: "最低评分为 7.5（5 月 6 日），最高评分为 11.0，分别出现在 5 月 12日至14日、18日和26日。"
-        },
-        {
-          key: "support-kills",
-          label: "单场 · 辅助表现",
-          text: "他曾使用辅助位取得 17 次击杀。",
-          verification: "9 月 16 日第 3 场，他使用矮人直升机担任 4 号位，打出 17 / 10 / 28 并获胜。"
-        },
-        {
-          key: "frequent-teammate",
-          label: "生涯 · 关系网络",
-          text: `${WHO_GAME_CURATED_AS_OF}两季中与他同队次数最多的是 ldxy，共同出场 17 次。`,
-          verification: "与 ldxy 同队 17 场，为所有队友中最多；第二名是小孩，共同出场 16 场。"
-        }
+      description: "英雄履历、位置输出、辅助击杀、对手净胜与人头大战",
+      clues: () => [
+        { key: "hero-sample", label: "生涯 · 英雄履历", text: "他曾使用过瘟疫法师、拉比克和水晶室女。", verification: "瘟疫法师使用 2 次，拉比克和水晶室女各使用 1 次。" },
+        { key: "position-damage-profile", label: "生涯 · 分位置画像", text: `${WHO_GAME_CURATED_AS_OF}他担任 1、2、3、4 号位时，平均输出占比都高于全体同位置平均；唯独 5 号位低于平均。`, verification: "1 至 5 号位依次为 27.5% / 31.2% / 24.5% / 17.6% / 12.0%；全体同位置平均为 23.2% / 29.4% / 21.0% / 14.3% / 12.2%。" },
+        { key: "support-kills", label: "单场 · 辅助击杀", text: "他曾使用辅助取得超过 15 次击杀。", verification: "他使用 4 号位矮人直升机打出 17 / 10 / 28 并获胜。" },
+        { key: "teammate-opponent-net-wins", label: "生涯 · 关系", text: `${WHO_GAME_CURATED_AS_OF}A 选手是与他同队最多的选手；但是当他出现在 A 选手对面时，他已经完成了 9 场净胜。`, verification: "A 选手是 LDXY，两人同队 18 场；作为对手交手 27 场，xian 取得 18 胜 9 负，净胜 9 场。" },
+        { key: "highest-kill-match", label: "S2 · 人头大战", text: "他参加了 S2 单场人头最多的比赛。", verification: "5 月 7 日第 2 场比分为 59 比 49，双方合计 108 个人头；他使用森海飞霞打出 15 / 8 / 31。" }
       ]
     }),
     buildQuestion({
-      key: "curated-preview-mazhong-01",
-      answerName: "马忠",
-      description: "评分、密集出勤、英雄履历、历史事件与败局表现",
+      key: "curated-d-01",
+      answerName: "D",
+      description: "独占英雄、评分极差、位置分布、零死亡败局与队友连败",
+      clues: () => [
+        { key: "exclusive-hero-user", label: "生涯 · 独占英雄", text: `${WHO_GAME_CURATED_AS_OF}他是一个出场超过 3 次的英雄的唯一使用者。`, verification: "凯共出场 8 次，使用者只有 D。" },
+        { key: "rating-range", label: "S2 · 评分", text: "他在 S2 中的最高评分与最低评分相差 3.5。", verification: "最高评分为 10.0，最低评分为 6.5。" },
+        { key: "least-played-positions", label: "生涯 · 位置", text: `${WHO_GAME_CURATED_AS_OF}他玩得最少的两个位置是 1 号位和 5 号位，分别出场 4 次和 3 次。`, verification: "1 至 5 号位的出场数依次为 4 / 32 / 15 / 6 / 3。" },
+        { key: "zero-death-loss", label: "单场 · 反常败局", text: "他曾在一场比赛中一次也没有死亡，却仍然输掉比赛。", verification: "他使用德鲁伊担任 1 号位，打出 5 / 0 / 9，但最终落败。" },
+        { key: "teammate-nine-losses", label: "生涯 · 队友连败", text: "他曾与另一名选手作为队友时遭遇 9 连败。", verification: "这名队友是 LDXY，两人曾连续 9 次同队并全部失利。" }
+      ]
+    }),
+    buildQuestion({
+      key: "curated-zhuzhu-01",
+      answerName: "猪猪",
+      description: "阵营胜率、位置空白、评分走势、连续反差与单场纪录",
       clues: (ratingPoints) => [
-        {
-          key: "s2-rating-curve",
-          label: "S2 · 评分走势",
-          type: "ratingTrend",
-          points: ratingPoints,
-          text: "评分从赛季初的 8.0 稳步上升，最高达到 10.5。"
-        },
-        {
-          key: "attendance-window",
-          label: "S2 · 日期出勤",
-          text: "5 月 14 日至 16 日共进行了 13 场比赛，他参加了其中 11 场。"
-        },
-        {
-          key: "hero-sample",
-          label: "生涯 · 英雄履历",
-          text: "他在两个赛季中曾使用过以下五名英雄：",
-          heroes: ["食人魔魔法师", "破晓辰星", "灰烬之灵", "钢背兽", "露娜"]
-        },
-        {
-          key: "longest-match",
-          label: "S2 · 历史事件",
-          text: "这名选手参加过 S2 时长最长的 59 分 46 秒比赛。"
-        },
-        {
-          key: "loss-top-damage",
-          label: "S2 · 单场记录",
-          text: "他曾使用露娜在一场败局中打出 86,353 点英雄伤害，仍为全场第一。",
-          hero: "露娜"
-        }
+        { key: "side-winrates", label: "生涯 · 阵营胜率", text: `${WHO_GAME_CURATED_AS_OF}他在天辉的胜率为 66.7%，在夜魇的胜率为 43.5%。`, verification: "天辉 15 场 10 胜，夜魇 23 场 10 胜。" },
+        { key: "position-coverage", label: "生涯 · 位置", text: `${WHO_GAME_CURATED_AS_OF}他从未担任过 1、2、3 号位。`, verification: "4 号位 7 场、5 号位 31 场，其他位置均为 0 场。" },
+        { key: "s2-rating-curve", label: "S2 · 评分走势", type: "ratingTrend", points: ratingPoints, text: "他的 S2 评分曲线如下。", verification: "曲线展示其完整 S2 评分走势。" },
+        { key: "five-win-kd-streak", label: "S3 · 连续反差", text: "他在 S3 中曾连续五场死亡数都高于击杀数，却五场全部获胜。", verification: "这五场从 9 月 14 日第 2 场持续至 9 月 16 日第 2 场，五场全部获胜。" },
+        { key: "two-s2-records", label: "S2 · 单场纪录", text: "他是 S2 两项单场数据纪录的第一名。", verification: "单场死亡 22 次，独占第一；单场助攻 40 次，并列第一。" }
       ]
     })
   ].filter(Boolean);
@@ -5841,7 +5809,15 @@ function renderWhoGameDailySummary() {
     .slice(0, whoGameDaily?.dailyLimit || 3)
     .map(getWhoGameSessionMetrics);
   const totalScore = sessions.reduce((sum, item) => sum + item.score, 0);
-  const maxScore = (whoGameDaily?.dailyLimit || 3) * 200;
+  const summaryQuestionCount = whoGameDaily?.bankExhausted
+    ? Math.max(1, sessions.length)
+    : (whoGameDaily?.dailyLimit || 2);
+  const maxScore = summaryQuestionCount * 200;
+  const questionNumerals = ["一", "二", "三"];
+  const leaderboard = Array.isArray(whoGameDaily?.leaderboard) ? whoGameDaily.leaderboard : [];
+  const leaderboardEntries = leaderboard;
+  const leaderboardDate = String(whoGameDaily?.playDate || "")
+    .replace(/^\d{4}-(\d{2})-(\d{2})$/, (_, month, day) => `${Number(month)} 月 ${Number(day)} 日`);
   return `
     <section class="who-game-console who-daily-summary">
       <header class="who-summary-heading">
@@ -5850,24 +5826,63 @@ function renderWhoGameDailySummary() {
         <p>你的今日得分为</p>
         <strong>${totalScore}</strong><small> / ${maxScore}</small>
         <div>玩家ID：<b>${escapeHtml(identityPlayerName)}</b></div>
+        ${whoGameDaily?.bankExhausted ? `<p>题库已做完，请等待DDD补充题库。</p>` : ""}
       </header>
       <div class="who-summary-grid">
         ${sessions.map((item) => `
           <article class="who-summary-card ${item.session.status === "won" ? "is-win" : "is-loss"}">
             <div class="who-summary-card-top">
-              <span>第 ${item.session.slot} 题</span>
+              <span>第${questionNumerals[item.session.slot - 1] || item.session.slot}题</span>
               <strong>${item.score}<small>分</small></strong>
             </div>
-            <h4>${item.session.status === "won" ? escapeHtml(item.answerName) : "未猜出"}</h4>
             <dl>
               <div><dt>机会</dt><dd>${item.attemptsUsed} 次</dd></div>
               <div><dt>提示</dt><dd>${item.cluesUsed} 条</dd></div>
-              <div><dt>道具</dt><dd>${item.powerupsUsed} 个</dd></div>
             </dl>
           </article>
         `).join("")}
       </div>
+      <section class="who-daily-leaderboard" aria-label="每日分数榜">
+        <header>
+          <div><span>DAILY SCOREBOARD</span><h4>每日分数榜</h4></div>
+          <small>${escapeHtml(leaderboardDate)}</small>
+        </header>
+        ${leaderboardEntries.length ? `
+          <ol>
+            ${leaderboardEntries.map((entry) => `
+              <li class="${entry.playerId === whoGameIdentityId ? "is-current" : ""} ${entry.separated ? "is-separated" : ""}">
+                <strong>${entry.rank}</strong>
+                <span>${escapeHtml(entry.playerName)}</span>
+                <small>答对 ${entry.correct || 0} 题</small>
+                <b>${entry.score}<em>分</em></b>
+              </li>
+            `).join("")}
+          </ol>
+        ` : `<p class="who-leaderboard-empty">今日暂时还没有已完成的挑战。</p>`}
+      </section>
       ${whoGameDaily?.unlimited ? `<button class="primary-button who-summary-continue" type="button" data-who-action="start">继续测试下一轮</button>` : ""}
+    </section>
+  `;
+}
+
+function renderWhoGameCompactLeaderboard() {
+  const leaderboard = Array.isArray(whoGameDaily?.leaderboard) ? whoGameDaily.leaderboard : [];
+  const entries = leaderboard.slice(0, 3);
+  return `
+    <section class="who-compact-leaderboard" aria-label="今日分数榜">
+      <header><strong>今日分数榜</strong><small>TOP 3</small></header>
+      ${entries.length ? `
+        <ol>
+          ${entries.map((entry) => `
+            <li class="${entry.playerId === whoGameIdentityId ? "is-current" : ""} ${entry.separated ? "is-separated" : ""}">
+              <b>${entry.rank}</b>
+              <span>${escapeHtml(entry.playerName)}</span>
+              <small>答对 ${entry.correct || 0} 题</small>
+              <strong>${entry.score}<small>分</small></strong>
+            </li>
+          `).join("")}
+        </ol>
+      ` : `<p>等待今日首位完赛玩家</p>`}
     </section>
   `;
 }
@@ -6153,6 +6168,8 @@ function renderWhoGameIdentityPicker() {
 function renderWhoGame() {
   const mount = $("#whoGameMount");
   if (!mount) return;
+  const compactLeaderboardMount = $("#whoGameLeaderboardMount");
+  if (compactLeaderboardMount) compactLeaderboardMount.innerHTML = "";
   const seasonLabel = $("#whoGameSeasonLabel");
   if (seasonLabel) seasonLabel.textContent = "S2 + S3 · 联合题库";
   if (!whoGameDb.matches.length) {
@@ -6174,12 +6191,16 @@ function renderWhoGame() {
     return;
   }
   const dailyChallengeComplete = !whoGameDaily.current
-    && whoGameDaily.completed >= (whoGameDaily.dailyLimit || 3);
+    && (whoGameDaily.completed >= (whoGameDaily.dailyLimit || 2)
+      || (whoGameDaily.bankExhausted && whoGameDaily.sessions.length > 0));
   if (whoGameSummaryOpen || (dailyChallengeComplete && !whoGameState.question)) {
     mount.innerHTML = renderWhoGameDailySummary();
     return;
   }
   const question = whoGameState.question;
+  if (compactLeaderboardMount && question) {
+    compactLeaderboardMount.innerHTML = renderWhoGameCompactLeaderboard();
+  }
   const isComplete = ["won", "lost"].includes(whoGameState.status);
   const excludedIds = getWhoGameExcludedIds();
   const canStart = Boolean(whoGameDaily.current || whoGameDaily.remaining > 0);
@@ -6190,7 +6211,8 @@ function renderWhoGame() {
   const attemptsRemaining = Math.max(0, 3 - whoGameState.wrongGuesses.length);
   const canStartNextQuestion = Boolean(whoGameDaily.unlimited || whoGameDaily.remaining > 0);
   const dailyRoundComplete = questionSlot >= (whoGameDaily.dailyLimit || 3);
-  const nextQuestionLabel = dailyRoundComplete ? "查看今日总结" : "开始今日下一题";
+  const shouldShowSummary = dailyRoundComplete || Boolean(whoGameDaily.bankExhausted);
+  const nextQuestionLabel = shouldShowSummary ? "查看今日总结" : "开始今日下一题";
   const feedbackTone = whoGameState.status === "won"
     ? "is-success"
     : (whoGameState.status === "lost" || (whoGameState.wrongGuesses.length && !whoGameState.selectedGuessId) ? "is-error" : "");
@@ -6202,34 +6224,40 @@ function renderWhoGame() {
   const statusMessageHtml = isSelectionPrompt
     ? `他是<span class="who-status-selected-id">${escapeHtml(selectedGuessName)}</span>吗？`
     : escapeHtml(statusMessage);
+  const gameAlertHtml = `
+    <p role="status">${statusMessageHtml}</p>
+    ${isComplete ? "" : `<div class="who-attempts-left"><strong>${attemptsRemaining}</strong><span>次机会</span></div>`}
+    <div class="who-guess-actions ${isComplete ? "is-complete" : ""}">
+      ${isComplete ? "" : `<button class="primary-button" type="button" data-who-action="guess" ${!whoGameState.selectedGuessId ? "disabled" : ""}>做出猜测</button>`}
+      ${isComplete
+        ? `<button class="primary-button who-next-question-button" type="button" data-who-action="${shouldShowSummary ? "summary" : "next"}" ${!shouldShowSummary && !canStartNextQuestion ? "disabled" : ""}>${nextQuestionLabel}</button>`
+        : `<button class="secondary-button" type="button" data-who-action="reveal" ${whoGameState.revealed >= question.clues.length ? "disabled" : ""}>下一条提示</button>`}
+    </div>
+  `;
 
   mount.innerHTML = `
     <section class="who-game-console who-game-simple">
       ${!question ? `
         <div class="who-game-empty">
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9.4 9a3 3 0 1 1 4.8 2.4c-1.35.9-2.2 1.55-2.2 3.1" /><path d="M12 19h.01" /><circle cx="12" cy="12" r="9" /></svg>
-          <h3>${whoGameDaily.unlimited ? "测试模式" : whoGameDaily.remaining === 0 ? "今天的三道题已完成" : whoGameState.status === "empty" ? "题目读取失败" : "准备读取身份档案"}</h3>
-          <p>${escapeHtml(whoGameState.message || (whoGameDaily.unlimited ? "已取消你的每日题目限制。" : whoGameDaily.remaining === 0 ? "明天 00:00 会获得三道新题。" : `今天还可以开始 ${whoGameDaily.remaining} 道题。`))}</p>
+          <h3>${whoGameDaily.unlimited ? "测试模式" : whoGameDaily.bankExhausted ? "题库已做完" : whoGameDaily.remaining === 0 ? `今天的${whoGameDaily.dailyLimit}道题已完成` : whoGameState.status === "empty" ? "题目读取失败" : "准备读取身份档案"}</h3>
+          <p>${escapeHtml(whoGameState.message || (whoGameDaily.unlimited ? "已取消你的每日题目限制。" : whoGameDaily.bankExhausted ? "题库已做完，请等待DDD补充题库。" : whoGameDaily.remaining === 0 ? "明天 00:00 可以继续挑战。" : `今天还可以开始 ${whoGameDaily.remaining} 道题。`))}</p>
           ${canStart ? `<button class="primary-button" type="button" data-who-action="start">${whoGameDaily.current ? "继续当前题目" : whoGameDaily.unlimited ? "继续测试" : `开始今日第 ${whoGameDaily.used + 1} 题`}</button>` : ""}
         </div>
       ` : `
         <div class="who-game-progress">
           <div class="who-question-number"><span>你好</span><strong class="who-question-identity">${escapeHtml(identityPlayerName)}</strong><span>，这是你今日的第</span><strong>${questionSlot}</strong><span>题</span></div>
         </div>
-        <div class="who-game-alert ${feedbackTone} ${isComplete ? "is-complete" : ""}">
-          <p role="status">${statusMessageHtml}</p>
-          ${isComplete ? "" : `<div class="who-attempts-left"><strong>${attemptsRemaining}</strong><span>次机会</span></div>`}
-          <div class="who-guess-actions ${isComplete ? "is-complete" : ""}">
-            ${isComplete ? "" : `<button class="primary-button" type="button" data-who-action="guess" ${!whoGameState.selectedGuessId ? "disabled" : ""}>做出猜测</button>`}
-            ${isComplete
-              ? `<button class="primary-button who-next-question-button" type="button" data-who-action="${dailyRoundComplete ? "summary" : "next"}" ${!dailyRoundComplete && !canStartNextQuestion ? "disabled" : ""}>${nextQuestionLabel}</button>`
-              : `<button class="secondary-button" type="button" data-who-action="reveal" ${whoGameState.revealed >= question.clues.length ? "disabled" : ""}>下一条提示</button>`}
-          </div>
+        <div class="who-game-alert who-game-alert-desktop ${feedbackTone} ${isComplete ? "is-complete" : ""}">
+          ${gameAlertHtml}
         </div>
         <div class="who-game-main">
           <section class="who-simple-clues" aria-label="提示">
             ${question.clues.map((clue, index) => renderWhoGameVisibleClue(clue, index, isComplete || index < whoGameState.revealed, isComplete)).join("")}
           </section>
+          <div class="who-game-alert who-game-alert-mobile ${feedbackTone} ${isComplete ? "is-complete" : ""}">
+            ${gameAlertHtml}
+          </div>
           <aside class="who-game-sidebar">
             ${renderWhoGamePowerups()}
             <div class="who-simple-roster">

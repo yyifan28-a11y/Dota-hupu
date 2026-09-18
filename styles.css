@@ -8044,10 +8044,21 @@ body[data-ui="modern"] .dashboard-highlight {
 
 /* Simplified "Who is it" play surface */
 .view#whoIsIt .who-game-heading {
-  display: block;
+  display: grid;
   width: min(1120px, calc(100% - 36px));
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  gap: 24px;
+  align-items: center;
   margin: 0 auto 26px;
   padding: 8px 0 0;
+}
+
+.view#whoIsIt .who-game-heading:has(#whoGameLeaderboardMount:empty) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#whoGameLeaderboardMount:empty {
+  display: none;
 }
 
 .view#whoIsIt .who-game-heading h2 {
@@ -8190,6 +8201,10 @@ body[data-ui="modern"] .dashboard-highlight {
   background: rgba(8, 31, 37, 0.86);
   padding: 14px 20px;
   box-shadow: 0 12px 34px rgba(0, 7, 10, 0.22);
+}
+
+.who-game-alert-mobile {
+  display: none;
 }
 
 .who-game-alert p {
@@ -8387,8 +8402,9 @@ body[data-ui="modern"] .dashboard-highlight {
 
 .who-summary-card dl {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  margin-top: 16px;
 }
 
 .who-summary-card dl div {
@@ -8414,6 +8430,211 @@ body[data-ui="modern"] .dashboard-highlight {
   display: block;
   min-width: 240px;
   margin: 26px auto 0;
+}
+
+.who-daily-leaderboard {
+  margin-top: 30px;
+  overflow: hidden;
+  border: 1px solid rgba(101, 203, 215, 0.18);
+  border-radius: 14px;
+  background: rgba(3, 19, 24, 0.72);
+}
+
+.who-daily-leaderboard > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+  border-bottom: 1px solid rgba(101, 203, 215, 0.14);
+}
+
+.who-daily-leaderboard > header span {
+  color: #58c7d4;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.who-daily-leaderboard > header h4 {
+  margin: 3px 0 0;
+  color: #edf7f8;
+  font-size: 22px;
+}
+
+.who-daily-leaderboard > header small {
+  color: #769297;
+  font-size: 13px;
+}
+
+.who-daily-leaderboard ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.who-daily-leaderboard li {
+  display: grid;
+  grid-template-columns: 42px minmax(120px, 1fr) minmax(90px, auto) 92px;
+  gap: 12px;
+  align-items: center;
+  min-height: 54px;
+  padding: 0 20px;
+  border-bottom: 1px solid rgba(101, 203, 215, 0.08);
+}
+
+.who-daily-leaderboard li:last-child {
+  border-bottom: 0;
+}
+
+.who-daily-leaderboard li.is-current {
+  background: linear-gradient(90deg, rgba(88, 209, 157, 0.15), rgba(88, 209, 157, 0.03));
+  box-shadow: inset 3px 0 0 #58d19d;
+}
+
+.who-daily-leaderboard li.is-separated {
+  margin-top: 8px;
+  border-top: 1px dashed rgba(101, 203, 215, 0.2);
+}
+
+.who-daily-leaderboard li > strong {
+  color: #6f949a;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 17px;
+}
+
+.who-daily-leaderboard li > span {
+  overflow: hidden;
+  color: #dcebed;
+  font-size: 16px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.who-daily-leaderboard li > small {
+  color: #728e93;
+  text-align: right;
+}
+
+.who-daily-leaderboard li > b {
+  color: #75dbaa;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 20px;
+  text-align: right;
+}
+
+.who-daily-leaderboard li > b em {
+  margin-left: 2px;
+  font-family: inherit;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.who-leaderboard-empty {
+  margin: 0;
+  padding: 28px 20px;
+  color: #728e93;
+  text-align: center;
+}
+
+.who-compact-leaderboard {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid rgba(101, 203, 215, 0.14);
+  border-radius: 9px;
+  background: rgba(4, 21, 26, 0.66);
+}
+
+.who-compact-leaderboard > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(101, 203, 215, 0.1);
+}
+
+.who-compact-leaderboard > header strong {
+  color: #bfd8dc;
+  font-size: 13px;
+}
+
+.who-compact-leaderboard > header small {
+  color: #52747a;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.who-compact-leaderboard ol {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+}
+
+.who-compact-leaderboard li {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  min-height: 29px;
+  padding: 0 10px;
+}
+
+.who-compact-leaderboard li.is-current {
+  background: rgba(88, 209, 157, 0.08);
+}
+
+.who-compact-leaderboard li.is-separated {
+  border-top: 1px dashed rgba(101, 203, 215, 0.2);
+}
+
+.who-compact-leaderboard li > b {
+  color: #55777d;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 11px;
+}
+
+.who-compact-leaderboard li > span {
+  overflow: hidden;
+  color: #a9c0c4;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.who-compact-leaderboard li > small {
+  color: #66858a;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.who-compact-leaderboard li > strong {
+  color: #75dbaa;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 13px;
+}
+
+.who-compact-leaderboard li > strong small {
+  margin-left: 2px;
+  color: #68888d;
+  font-family: inherit;
+  font-size: 9px;
+}
+
+.who-compact-leaderboard > p {
+  flex: 1;
+  margin: 0;
+  padding: 14px;
+  color: #58777c;
+  font-size: 11px;
+  text-align: center;
 }
 
 .who-game-alert .who-guess-actions {
@@ -8753,6 +8974,37 @@ body[data-ui="modern"] .dashboard-highlight {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .who-daily-leaderboard li {
+    grid-template-columns: 28px minmax(0, 1fr) 58px 68px;
+    gap: 8px;
+    padding: 0 12px;
+  }
+
+  .who-daily-leaderboard li > small {
+    display: block;
+    font-size: 10px;
+  }
+
+  .who-daily-leaderboard > header {
+    padding: 16px 14px;
+  }
+
+  .who-compact-leaderboard {
+    width: 100%;
+  }
+
+  .who-compact-leaderboard > header {
+    padding: 0 9px;
+  }
+
+  .who-compact-leaderboard > header small {
+    display: none;
+  }
+
+  .who-compact-leaderboard li {
+    min-width: 0;
+  }
+
   .view#whoIsIt .who-game-heading {
     width: calc(100% - 36px);
     grid-template-columns: minmax(0, 1fr);
@@ -8781,6 +9033,16 @@ body[data-ui="modern"] .dashboard-highlight {
   .who-game-alert {
     grid-template-columns: 1fr 1fr;
     gap: 10px;
+  }
+
+  .who-game-alert-desktop {
+    display: none;
+  }
+
+  .who-game-alert-mobile {
+    display: grid;
+    width: 100%;
+    margin: 0;
   }
 
   .who-game-alert p {
