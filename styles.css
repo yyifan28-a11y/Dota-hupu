@@ -14330,6 +14330,272 @@ body[data-ui="modern"] #admin .admin-history-panel-body {
   gap: 18px;
 }
 
+.admin-who-game-dashboard {
+  display: grid;
+  gap: 18px;
+  padding-top: 18px;
+}
+
+.admin-who-game-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+
+.admin-who-game-toolbar label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-who-game-toolbar input {
+  min-height: 42px;
+}
+
+.admin-who-game-toolbar > span {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-who-game-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.admin-who-game-stats article {
+  display: flex;
+  min-height: 86px;
+  align-items: baseline;
+  gap: 5px;
+  border: 1px solid rgba(112, 210, 221, 0.14);
+  border-radius: 9px;
+  background: rgba(4, 22, 27, 0.68);
+  padding: 18px;
+}
+
+.admin-who-game-stats span {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-who-game-stats strong {
+  color: #76d9b0;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 30px;
+}
+
+.admin-who-game-stats small {
+  color: #7d999e;
+  font-size: 11px;
+}
+
+.admin-who-game-columns {
+  display: grid;
+  grid-template-columns: minmax(340px, 0.85fr) minmax(0, 1.4fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.admin-who-game-columns > section {
+  min-width: 0;
+  border: 1px solid rgba(112, 210, 221, 0.12);
+  border-radius: 10px;
+  background: rgba(4, 19, 23, 0.58);
+  padding: 16px;
+}
+
+.admin-who-game-columns h3 {
+  margin: 0 0 13px;
+  color: #e6f2f4;
+  font-size: 15px;
+}
+
+.admin-who-game-table-wrap {
+  max-height: 620px;
+  overflow: auto;
+}
+
+.admin-who-game-table {
+  min-width: 430px;
+}
+
+.admin-who-game-table th,
+.admin-who-game-table td {
+  padding: 10px 9px;
+  font-size: 12px;
+}
+
+.admin-who-game-table td:first-child b,
+.admin-who-game-table td:nth-child(3) {
+  color: #75dbaa;
+  font-family: "Fira Code", Consolas, monospace;
+}
+
+.admin-who-game-player-list {
+  display: grid;
+  gap: 7px;
+}
+
+.admin-who-game-player {
+  overflow: hidden;
+  border: 1px solid rgba(112, 210, 221, 0.1);
+  border-radius: 8px;
+  background: rgba(3, 17, 21, 0.7);
+}
+
+.admin-who-game-player.has-played {
+  border-color: rgba(112, 210, 221, 0.22);
+}
+
+.admin-who-game-player > summary {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(92px, 0.8fr) 64px 60px;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.admin-who-game-player > summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-who-game-player > summary span {
+  color: #8eaaae;
+  font-size: 12px;
+}
+
+.admin-who-game-player > summary b,
+.admin-who-game-player > summary em {
+  color: #75dbaa;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 12px;
+  font-style: normal;
+  text-align: right;
+}
+
+.admin-who-game-player > summary b small {
+  margin-left: 2px;
+  color: #718f94;
+  font-family: inherit;
+  font-size: 9px;
+}
+
+.admin-who-game-player-detail {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid rgba(112, 210, 221, 0.1);
+  padding: 14px;
+}
+
+.admin-who-game-player-detail > dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.admin-who-game-player-detail dl div {
+  display: grid;
+  gap: 3px;
+}
+
+.admin-who-game-player-detail dt {
+  color: #6e8b90;
+  font-size: 10px;
+}
+
+.admin-who-game-player-detail dd {
+  margin: 0;
+  color: #dbe9eb;
+  font-size: 12px;
+}
+
+.admin-who-game-sessions {
+  display: grid;
+  gap: 7px;
+}
+
+.admin-who-game-sessions article {
+  display: grid;
+  grid-template-columns: minmax(105px, 0.8fr) minmax(90px, 0.7fr) minmax(220px, 1.5fr) 58px;
+  gap: 9px;
+  align-items: center;
+  border-left: 3px solid #69858a;
+  background: rgba(8, 31, 37, 0.72);
+  padding: 9px 10px;
+  color: #8fa9ad;
+  font-size: 11px;
+}
+
+.admin-who-game-sessions article.status-won {
+  border-left-color: #60d39e;
+}
+
+.admin-who-game-sessions article.status-lost {
+  border-left-color: #e36a74;
+}
+
+.admin-who-game-sessions article b {
+  color: #75dbaa;
+  text-align: right;
+}
+
+.admin-who-game-empty {
+  margin: 0;
+  border: 1px dashed rgba(112, 210, 221, 0.15);
+  border-radius: 8px;
+  padding: 22px;
+  color: var(--muted);
+  text-align: center;
+}
+
+@media (max-width: 1050px) {
+  .admin-who-game-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .admin-who-game-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-who-game-toolbar > span {
+    margin-left: 0;
+  }
+
+  .admin-who-game-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-who-game-player > summary {
+    grid-template-columns: minmax(80px, 1fr) minmax(84px, 1fr) 54px;
+  }
+
+  .admin-who-game-player > summary em {
+    display: none;
+  }
+
+  .admin-who-game-player-detail > dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-who-game-sessions article {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .admin-who-game-sessions article span {
+    grid-column: 1 / -1;
+  }
+}
+
 body[data-ui="modern"] #admin .admin-history-toolbar {
   display: flex;
   align-items: center;

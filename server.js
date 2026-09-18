@@ -530,6 +530,12 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (method === "GET" && url.pathname === "/api/admin/who-game") {
+    if (!requireAdmin(request, response)) return;
+    sendJson(response, 200, getWhoGameAdminDashboard(url.searchParams.get("date")));
+    return;
+  }
+
   if (method === "POST" && url.pathname === "/api/who-game/daily/start") {
     const body = await readJson(request);
     sendJson(response, 200, startWhoGameDailySession(body.playerId));
@@ -1966,6 +1972,111 @@ function getWhoGameDailyLeaderboard(playDate) {
     previousScore = entry.score;
     return { ...entry, rank: previousRank };
   });
+}
+
+function getWhoGameAdminDashboard(requestedDate) {
+  const playDate = String(requestedDate || "").trim() || getShanghaiDate();
+  if (!isValidDateString(playDate)) throw createHttpError(400, "日期格式不正确");
+
+  const players = getAllWhoGamePlayers();
+  const playerById = new Map(players.map((player) => [player.id, player]));
+  const questionByKey = new Map(WHO_GAME_QUESTIONS.map((question) => [question.key, question]));
+  const firstDates = new Map(databases.s3.prepare(`
+    SELECT player_id, MIN(play_date) AS first_play_date
+    FROM who_game_daily_sessions
+    GROUP BY player_id
+  `).all().map((row) => [row.player_id, row.first_play_date || ""]));
+  const totalCompleted = new Map(databases.s3.prepare(`
+    SELECT player_id, COUNT(DISTINCT question_key) AS completed_count
+    FROM who_game_daily_sessions
+    WHERE status IN ('won', 'lost')
+    GROUP BY player_id
+  `).all().map((row) => [row.player_id, Number(row.completed_count) || 0]));
+  const powerupCounts = new Map(databases.s3.prepare(`
+    SELECT session_id, COUNT(*) AS use_count
+    FROM who_game_powerup_uses
+    WHERE play_date = ?
+    GROUP BY session_id
+  `).all(playDate).map((row) => [row.session_id, Number(row.use_count) || 0]));
+  const sessionsByPlayer = new Map();
+  databases.s3.prepare(`
+    SELECT id, player_id, slot, question_key, status, revealed, wrong_guesses,
+           created_at, updated_at, completed_at
+    FROM who_game_daily_sessions
+    WHERE play_date = ?
+    ORDER BY player_id ASC, slot ASC
+  `).all(playDate).forEach((row) => {
+    const wrongGuesses = parseJsonArray(row.wrong_guesses);
+    const question = questionByKey.get(row.question_key);
+    const attemptsUsed = row.status === "won"
+      ? Math.min(WHO_GAME_ATTEMPT_LIMIT, wrongGuesses.length + 1)
+      : row.status === "lost" ? WHO_GAME_ATTEMPT_LIMIT : wrongGuesses.length;
+    const session = {
+      id: row.id,
+      slot: Number(row.slot),
+      questionKey: row.question_key,
+      answerName: question?.targetName || "未知题目",
+      status: row.status,
+      attemptsUsed,
+      cluesUsed: Math.min(WHO_GAME_CLUE_COUNT, Math.max(1, Number(row.revealed) || 1)),
+      powerupsUsed: powerupCounts.get(row.id) || 0,
+      score: calculateWhoGameSessionScore(row.status, Number(row.revealed), wrongGuesses),
+      updatedAt: row.updated_at || row.created_at || "",
+      completedAt: row.completed_at || ""
+    };
+    const list = sessionsByPlayer.get(row.player_id) || [];
+    list.push(session);
+    sessionsByPlayer.set(row.player_id, list);
+  });
+
+  const progress = players.map((player) => {
+    const sessions = sessionsByPlayer.get(player.id) || [];
+    const completed = sessions.filter((session) => session.status !== "playing");
+    const current = sessions.find((session) => session.status === "playing") || null;
+    const firstPlayDate = firstDates.get(player.id) || "";
+    const dailyLimit = !firstPlayDate || firstPlayDate === playDate
+      ? WHO_GAME_FIRST_DAY_LIMIT
+      : WHO_GAME_RETURNING_DAY_LIMIT;
+    const score = completed.reduce((sum, session) => sum + session.score, 0);
+    const correct = completed.filter((session) => session.status === "won").length;
+    const lastUpdatedAt = sessions.reduce((latest, session) =>
+      session.updatedAt > latest ? session.updatedAt : latest, "");
+    return {
+      playerId: player.id,
+      playerName: player.name,
+      firstPlayDate,
+      dailyLimit,
+      used: sessions.length,
+      completed: completed.length,
+      correct,
+      score,
+      currentSlot: current?.slot || 0,
+      status: current ? "playing" : completed.length >= dailyLimit ? "complete" : sessions.length ? "between" : "not_started",
+      totalCompleted: totalCompleted.get(player.id) || 0,
+      questionCount: WHO_GAME_QUESTION_KEYS.length,
+      lastUpdatedAt,
+      sessions
+    };
+  }).sort((left, right) =>
+    Number(Boolean(right.used)) - Number(Boolean(left.used))
+    || right.score - left.score
+    || right.totalCompleted - left.totalCompleted
+    || left.playerName.localeCompare(right.playerName, "zh-CN")
+  );
+
+  const activePlayers = progress.filter((player) => player.used > 0);
+  return {
+    playDate,
+    questionCount: WHO_GAME_QUESTION_KEYS.length,
+    leaderboard: getWhoGameDailyLeaderboard(playDate),
+    summary: {
+      playersStarted: activePlayers.length,
+      playersCompleted: activePlayers.filter((player) => player.status === "complete").length,
+      questionsCompleted: activePlayers.reduce((sum, player) => sum + player.completed, 0),
+      totalScore: activePlayers.reduce((sum, player) => sum + player.score, 0)
+    },
+    players: progress
+  };
 }
 
 function getWhoGameDailyStatus(playerId) {

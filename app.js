@@ -146,6 +146,8 @@ let adminPlayoffDraftTeams = null;
 let adminPlayoffSelectedPlayerId = "";
 let adminPlayoffSelectedTeam = "";
 let editingHomepageHighlightId = "";
+let adminWhoGameData = null;
+let adminWhoGameLoading = false;
 let homepageHighlightPreviewOverride = null;
 let homepageHighlightObjectUrl = "";
 let homepageFramingDraft = null;
@@ -4208,12 +4210,122 @@ function getMatchTotalKills(match) {
 }
 
 function renderAdmin() {
+  renderAdminWhoGameDashboard();
   renderAdminHomepageHighlights();
   renderAdminPlayers();
   renderAdminPlayoffTeams();
   renderMatchEntryEditor();
   renderAdminMatches();
   updateAdminUi();
+  if (isAdmin && !adminWhoGameData && !adminWhoGameLoading) void loadAdminWhoGameDashboard();
+}
+
+function getAdminWhoGameStatusLabel(player) {
+  if (player.status === "playing") return `正在第 ${player.currentSlot} 题`;
+  if (player.status === "complete") return "今日已完成";
+  if (player.status === "between") return "等待下一题";
+  return "今日未开始";
+}
+
+function getAdminWhoGameSessionStatusLabel(status) {
+  if (status === "won") return "答对";
+  if (status === "lost") return "未猜出";
+  return "进行中";
+}
+
+function renderAdminWhoGameDashboard() {
+  const overview = $("#adminWhoGameOverview");
+  const leaderboardMount = $("#adminWhoGameLeaderboard");
+  const playersMount = $("#adminWhoGamePlayers");
+  const dateInput = $("#adminWhoGameDate");
+  const summaryLabel = $("#adminWhoGameSummaryLabel");
+  if (!overview || !leaderboardMount || !playersMount) return;
+
+  if (!adminWhoGameData) {
+    overview.innerHTML = `<p class="admin-who-game-empty">进入管理员模式后读取游戏数据。</p>`;
+    leaderboardMount.innerHTML = "";
+    playersMount.innerHTML = "";
+    return;
+  }
+
+  const { playDate, summary = {}, leaderboard = [], players = [] } = adminWhoGameData;
+  if (dateInput && dateInput.value !== playDate) dateInput.value = playDate;
+  if (summaryLabel) summaryLabel.textContent = `${playDate} · ${summary.playersStarted || 0} 人参与`;
+  overview.innerHTML = `
+    <div class="admin-who-game-stats">
+      <article><span>今日参与</span><strong>${summary.playersStarted || 0}</strong><small>人</small></article>
+      <article><span>完成挑战</span><strong>${summary.playersCompleted || 0}</strong><small>人</small></article>
+      <article><span>完成题目</span><strong>${summary.questionsCompleted || 0}</strong><small>题</small></article>
+      <article><span>发放积分</span><strong>${summary.totalScore || 0}</strong><small>分</small></article>
+    </div>
+  `;
+
+  leaderboardMount.innerHTML = leaderboard.length ? `
+    <div class="table-wrap admin-who-game-table-wrap">
+      <table class="admin-who-game-table">
+        <thead><tr><th>排名</th><th>ID</th><th>得分</th><th>答对</th><th>完成</th></tr></thead>
+        <tbody>${leaderboard.map((entry) => `
+          <tr>
+            <td><b>${entry.rank}</b></td>
+            <td><strong>${escapeHtml(entry.playerName)}</strong></td>
+            <td>${entry.score}</td>
+            <td>${entry.correct}</td>
+            <td>${entry.completed}</td>
+          </tr>
+        `).join("")}</tbody>
+      </table>
+    </div>
+  ` : `<p class="admin-who-game-empty">这一天还没有玩家完成题目。</p>`;
+
+  playersMount.innerHTML = `
+    <div class="admin-who-game-player-list">
+      ${players.map((player) => `
+        <details class="admin-who-game-player ${player.used ? "has-played" : ""}">
+          <summary>
+            <strong>${escapeHtml(player.playerName)}</strong>
+            <span>${getAdminWhoGameStatusLabel(player)}</span>
+            <b>${player.score}<small>分</small></b>
+            <em>${player.totalCompleted} / ${player.questionCount}</em>
+          </summary>
+          <div class="admin-who-game-player-detail">
+            <dl>
+              <div><dt>今日题数</dt><dd>${player.used} / ${player.dailyLimit}</dd></div>
+              <div><dt>今日答对</dt><dd>${player.correct} 题</dd></div>
+              <div><dt>首次游玩</dt><dd>${escapeHtml(player.firstPlayDate || "尚未开始")}</dd></div>
+              <div><dt>最后操作</dt><dd>${escapeHtml(formatDateTime(player.lastUpdatedAt))}</dd></div>
+            </dl>
+            ${player.sessions.length ? `<div class="admin-who-game-sessions">
+              ${player.sessions.map((session) => `
+                <article class="status-${session.status}">
+                  <strong>第 ${session.slot} 题 · ${getAdminWhoGameSessionStatusLabel(session.status)}</strong>
+                  <span>答案：${escapeHtml(session.answerName)}</span>
+                  <span>${session.attemptsUsed} 次机会 · ${session.cluesUsed} 个提示 · ${session.powerupsUsed} 个道具</span>
+                  <b>${session.score} 分</b>
+                </article>
+              `).join("")}
+            </div>` : `<p>该日期没有游戏记录。</p>`}
+          </div>
+        </details>
+      `).join("")}
+    </div>
+  `;
+}
+
+async function loadAdminWhoGameDashboard(date = "") {
+  if (!isAdmin || adminWhoGameLoading) return;
+  adminWhoGameLoading = true;
+  const status = $("#adminWhoGameStatus");
+  if (status) status.textContent = "正在读取游戏数据…";
+  try {
+    const query = date ? `?date=${encodeURIComponent(date)}` : "";
+    adminWhoGameData = await adminApi(`/api/admin/who-game${query}`);
+    renderAdminWhoGameDashboard();
+    if (status) status.textContent = `已更新：${formatDateTime(new Date().toISOString())}`;
+  } catch (error) {
+    if (status) status.textContent = error.message;
+  } finally {
+    adminWhoGameLoading = false;
+  }
 }
 
 function getHomepageHighlightPresentation(highlight) {
@@ -8553,6 +8665,16 @@ function bindEvents() {
     }
   });
 
+  $("#adminWhoGameRefresh")?.addEventListener("click", () => {
+    adminWhoGameData = null;
+    void loadAdminWhoGameDashboard($("#adminWhoGameDate")?.value || "");
+  });
+
+  $("#adminWhoGameDate")?.addEventListener("change", (event) => {
+    adminWhoGameData = null;
+    void loadAdminWhoGameDashboard(event.target.value || "");
+  });
+
   $("#adminLogin").addEventListener("click", async () => {
     try {
       const password = $("#adminPasswordInput").value;
@@ -8562,6 +8684,8 @@ function bindEvents() {
       }
       await verifyAdminPassword(password);
       $("#adminPasswordInput").value = "";
+      adminWhoGameData = null;
+      void loadAdminWhoGameDashboard();
       alert("已进入管理员模式。");
     } catch (error) {
       alert(error.message);
@@ -8571,6 +8695,8 @@ function bindEvents() {
   $("#adminLogout").addEventListener("click", () => {
     sessionStorage.removeItem(ADMIN_PASSWORD_KEY);
     isAdmin = false;
+    adminWhoGameData = null;
+    renderAdminWhoGameDashboard();
     updateAdminUi();
     alert("已退出管理员模式。");
   });

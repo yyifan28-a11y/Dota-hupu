@@ -590,7 +590,35 @@
               <button class="secondary-button" id="adminLogout" type="button">退出管理员模式</button>
             </div>
 
-            <details class="panel collapsible-panel admin-only" id="adminHomepageHighlightsPanel" open>
+          <details class="panel collapsible-panel admin-only" id="adminWhoGamePanel">
+              <summary class="collapsible-summary">
+                <span>他是谁管理</span>
+                <small id="adminWhoGameSummaryLabel">每日排名与玩家进度</small>
+              </summary>
+              <div class="admin-who-game-dashboard">
+                <div class="admin-who-game-toolbar">
+                  <label>
+                    查看日期
+                    <input id="adminWhoGameDate" type="date" />
+                  </label>
+                  <button class="secondary-button" id="adminWhoGameRefresh" type="button">刷新</button>
+                  <span id="adminWhoGameStatus" role="status" aria-live="polite">等待读取游戏数据</span>
+                </div>
+                <div id="adminWhoGameOverview"></div>
+                <div class="admin-who-game-columns">
+                  <section>
+                    <h3>当日完整排行榜</h3>
+                    <div id="adminWhoGameLeaderboard"></div>
+                  </section>
+                  <section>
+                    <h3>所有玩家进度</h3>
+                    <div id="adminWhoGamePlayers"></div>
+                  </section>
+                </div>
+              </div>
+            </details>
+
+          <details class="panel collapsible-panel admin-only" id="adminHomepageHighlightsPanel">
               <summary class="collapsible-summary">
                 <span>首页图管理</span>
                 <small id="homepageHighlightSummary" class="admin-highlight-summary">最多展示最近三张</small>
