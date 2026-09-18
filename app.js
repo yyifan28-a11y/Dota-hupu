@@ -5222,23 +5222,31 @@ async function ensureWhoGameDaily() {
   if (!whoGameIdentityId) return null;
   if (whoGameDaily?.player?.id === whoGameIdentityId) return whoGameDaily;
   if (!whoGameDailyPromise) {
-    whoGameDailyPromise = fetch(`/api/who-game/daily?playerId=${encodeURIComponent(whoGameIdentityId)}`)
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 12000);
+    whoGameDailyPromise = fetch(`/api/who-game/daily?playerId=${encodeURIComponent(whoGameIdentityId)}`, {
+      signal: controller.signal
+    })
       .then(async (response) => {
-        const payload = await response.json();
+        const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error || "每日进度读取失败");
         whoGameDaily = payload;
         restoreWhoGameDailySession();
         return payload;
       })
       .catch((error) => {
+        const message = error?.name === "AbortError"
+          ? "今日进度读取超时，请刷新页面重试。"
+          : (error.message || "每日进度读取失败");
         localStorage.removeItem(WHO_GAME_PLAYER_KEY);
         whoGameIdentityId = "";
         whoGameDaily = null;
         whoGameState.status = "identity";
-        whoGameState.message = error.message;
-        throw error;
+        whoGameState.message = message;
+        throw new Error(message);
       })
       .finally(() => {
+        window.clearTimeout(timeoutId);
         whoGameDailyPromise = null;
       });
   }
@@ -6139,6 +6147,7 @@ function renderWhoGameIdentityPicker() {
     <section class="who-game-console">
       <div class="who-identity-picker">
         <h3>请先选择<span class="who-identity-emphasis">你自己的</span>ID，不要乱选不然会出BUG！<br>题库很小会逐渐扩充，不要在群里直接剧透答案！！</h3>
+        ${whoGameState.message ? `<p class="who-identity-error" role="alert">${escapeHtml(whoGameState.message)}</p>` : ""}
         <div class="who-identity-grid" role="listbox" aria-label="选择自己的选手ID">
           ${players.map((player) => `
             <button class="who-identity-option ${whoGameIdentityCandidateId === player.id ? "is-selected" : ""}"
@@ -6286,6 +6295,14 @@ function handleWhoGameClick(event) {
     whoGameIdentityCandidateId = identityButton.dataset.whoIdentity || "";
     whoGameIdentityConfirmOpen = false;
     renderWhoGame();
+    window.requestAnimationFrame(() => {
+      const confirmArea = document.querySelector(".who-identity-confirm");
+      if (!confirmArea) return;
+      confirmArea.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "center"
+      });
+    });
     return;
   }
   const suspectButton = event.target.closest("[data-who-suspect]");
