@@ -6233,7 +6233,7 @@ function renderWhoGame() {
   const statusMessageHtml = isSelectionPrompt
     ? `他是<span class="who-status-selected-id">${escapeHtml(selectedGuessName)}</span>吗？`
     : escapeHtml(statusMessage);
-  const gameAlertHtml = `
+  const gameAlertHtml = question ? `
     <p role="status">${statusMessageHtml}</p>
     ${isComplete ? "" : `<div class="who-attempts-left"><strong>${attemptsRemaining}</strong><span>次机会</span></div>`}
     <div class="who-guess-actions ${isComplete ? "is-complete" : ""}">
@@ -6242,7 +6242,7 @@ function renderWhoGame() {
         ? `<button class="primary-button who-next-question-button" type="button" data-who-action="${shouldShowSummary ? "summary" : "next"}" ${!shouldShowSummary && !canStartNextQuestion ? "disabled" : ""}>${nextQuestionLabel}</button>`
         : `<button class="secondary-button" type="button" data-who-action="reveal" ${whoGameState.revealed >= question.clues.length ? "disabled" : ""}>下一条提示</button>`}
     </div>
-  `;
+  ` : "";
 
   mount.innerHTML = `
     <section class="who-game-console who-game-simple">
