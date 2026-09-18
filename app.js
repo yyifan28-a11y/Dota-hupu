@@ -2165,6 +2165,109 @@ function renderPlayerProfileIntro(player, stats, recentForm, rank, totalMatchCou
   `;
 }
 
+function getPlayerProfileRelationHighlights(playerId) {
+  const teammatePairs = (pairRankStats.teammate || []).filter((pair) => pair.games > 0 && pair.players?.includes(playerId));
+  const opponentPairs = (pairRankStats.opponent || []).filter((pair) => pair.games > 0 && pair.playerId === playerId);
+  const sortByWinrate = (pairs, direction) => [...pairs].sort((a, b) => {
+    const winrateDiff = direction * (b.winrate - a.winrate);
+    return winrateDiff || b.games - a.games || direction * (b.netWins - a.netWins);
+  });
+  const teammateEntries = (pairs) => pairs.slice(0, 3).map((pair) => ({
+    pair,
+    playerId: pair.players.find((id) => id !== playerId)
+  }));
+  const opponentEntries = (pairs) => pairs.slice(0, 3).map((pair) => ({ pair, playerId: pair.opponentId }));
+  return [
+    { key: "best-teammate", label: "最搭队友", tone: "positive", entries: teammateEntries(sortByWinrate(teammatePairs, 1)) },
+    { key: "worst-teammate", label: "最不搭队友", tone: "negative", entries: teammateEntries(sortByWinrate(teammatePairs, -1)) },
+    { key: "feared-opponent", label: "最怕对手", tone: "negative", entries: opponentEntries(sortByWinrate(opponentPairs, -1)) },
+    { key: "favored-opponent", label: "最克制对手", tone: "positive", entries: opponentEntries(sortByWinrate(opponentPairs, 1)) }
+  ];
+}
+
+function renderPlayerProfileRelations(playerId) {
+  const highlights = getPlayerProfileRelationHighlights(playerId);
+  return `
+    <article class="player-profile-module player-profile-relations-module">
+      <div class="player-profile-relation-list">
+        ${highlights.map(({ key, label, tone, entries }) => `
+          <section class="player-profile-relation-group is-${tone}" data-relation-group="${escapeHtml(key)}">
+            <h5>${escapeHtml(label)}</h5>
+            <div class="player-profile-relation-entries">
+              ${entries.length ? entries.map((entry) => {
+                const relatedPlayer = getPlayer(entry.playerId);
+                const pair = entry.pair;
+                return `
+                  <button class="player-profile-relation-person" data-player-profile-id="${escapeHtml(entry.playerId)}" type="button" aria-label="查看 ${escapeHtml(relatedPlayer?.name || "未知选手")} 的个人页面">
+                    <strong>${escapeHtml(relatedPlayer?.name || "未知选手")}</strong>
+                    <small><b>${pair.wins}-${pair.losses}</b><i>${Math.round(pair.winrate * 100)}%</i><em>${pair.games}场</em></small>
+                  </button>`;
+              }).join("") : `<div class="player-profile-relation-empty">暂无数据</div>`}
+            </div>
+          </section>`).join("")}
+      </div>
+    </article>`;
+}
+
+function getPlayerProfileRecords(playerId, matches = getPlayerProfileMatches(playerId)) {
+  const configs = [
+    { key: "kills", label: "最高击杀", format: formatIntegerRecord },
+    { key: "deaths", label: "最高死亡", format: formatIntegerRecord },
+    { key: "assists", label: "最高助攻", format: formatIntegerRecord },
+    { key: "damage", label: "最高输出", format: formatIntegerRecord },
+    { key: "damageShare", label: "输出占比", format: formatPercentRecord },
+    { key: "gpm", label: "最高 GPM", format: formatIntegerRecord },
+    { key: "xpm", label: "最高 XPM", format: formatIntegerRecord },
+    { key: "participation", label: "最高参战率", format: formatPercentRecord },
+    { key: "buildingDamage", label: "建筑伤害", format: formatIntegerRecord },
+    { key: "kda", label: "最佳 KDA", format: formatKdaRecord, value: getDetailKda },
+    { key: "netWorth10", label: "10分钟经济", format: formatIntegerRecord },
+    { key: "damageTaken", label: "承受伤害", format: formatIntegerRecord }
+  ];
+  const records = configs.map((config) => {
+    let best = null;
+    matches.forEach((match) => {
+      const detail = match.playerDetails?.[playerId] || {};
+      const value = config.value ? config.value(detail) : Number(detail[config.key]);
+      if (!Number.isFinite(value) || value < 0) return;
+      if (!best || value > best.rawValue) best = { rawValue: value, match, hero: detail.hero || "" };
+    });
+    return { ...config, value: best ? config.format(best.rawValue) : "—", ...best };
+  });
+  [
+    { key: "duration-longest", label: "最长比赛", direction: "max" },
+    { key: "duration-shortest", label: "最短比赛", direction: "min" }
+  ].forEach((config) => {
+    let best = null;
+    matches.forEach((match) => {
+      const seconds = getMatchDurationSeconds(match);
+      if (!Number.isFinite(seconds)) return;
+      const shouldReplace = !best || (config.direction === "max" ? seconds > best.rawValue : seconds < best.rawValue);
+      if (shouldReplace) best = { rawValue: seconds, match, hero: match.playerDetails?.[playerId]?.hero || "" };
+    });
+    records.push({ ...config, value: best ? formatDurationRecord(best.rawValue) : "—", ...best });
+  });
+  return records;
+}
+
+function renderPlayerProfileRecords(playerId, matches) {
+  const records = getPlayerProfileRecords(playerId, matches);
+  return `
+    <article class="player-profile-module player-profile-records-module">
+      <div class="player-profile-record-grid">
+        ${records.map((record) => {
+          const content = `
+            <span>${escapeHtml(record.label)}</span>
+            <strong>${escapeHtml(record.value)}</strong>
+            <small>${record.match ? renderHeroAvatar(record.hero) : "暂无数据"}</small>`;
+          return record.match
+            ? `<button class="player-profile-record-item" data-open-match="${escapeHtml(record.match.id)}" type="button" aria-label="查看${escapeHtml(record.label)}对应比赛">${content}</button>`
+            : `<div class="player-profile-record-item is-empty">${content}</div>`;
+        }).join("")}
+      </div>
+    </article>`;
+}
+
 function getPlayerProfileTransitionMarkup(playerId) {
   const players = getPlayerProfilePlayers();
   const player = players.find((item) => item.id === playerId);
@@ -2243,6 +2346,10 @@ function renderPlayerProfile() {
 
   detail.innerHTML = `
     ${renderPlayerProfileIntro(player, stats, recentForm, rank, playerMatches.length)}
+    <section class="player-profile-insights-grid">
+      ${renderPlayerProfileRelations(player.id)}
+      ${renderPlayerProfileRecords(player.id, playerMatches)}
+    </section>
     <section class="player-profile-module player-profile-analysis-module">
       <div class="player-profile-analysis-heading">
         <div><span>ROLE · HERO · PERFORMANCE</span><h4>位置与英雄表现</h4></div>
