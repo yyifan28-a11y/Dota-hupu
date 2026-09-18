@@ -29,6 +29,25 @@ const REPLAY_PYTHON = ENV.REPLAY_PYTHON
   || (existsSync(LOCAL_REPLAY_PYTHON) ? LOCAL_REPLAY_PYTHON : (globalThis.process.platform === "win32" ? "python" : "python3"));
 const MAX_REPLAY_UPLOAD_BYTES = Math.max(1, Number(ENV.REPLAY_MAX_BYTES || 200 * 1024 * 1024));
 const MAX_REPLAY_JOBS = Math.max(1, Number(ENV.REPLAY_MAX_JOBS || 3));
+const WHO_GAME_DAILY_LIMIT = 3;
+const WHO_GAME_DAILY_POWERUP_LIMIT = 3;
+const WHO_GAME_ATTEMPT_LIMIT = 3;
+const WHO_GAME_CLUE_COUNT = 5;
+const WHO_GAME_CORRECT_SCORE = 100;
+const WHO_GAME_UNUSED_ATTEMPT_SCORE = 20;
+const WHO_GAME_UNSEEN_CLUE_SCORE = 10;
+const WHO_GAME_QUESTIONS = [
+  { key: "curated-preview-robot-01", targetName: "机器人", signatureHero: "主宰", specialHint: "" },
+  {
+    key: "curated-preview-guanyu-01",
+    targetName: "关羽",
+    signatureHero: "灰烬之灵",
+    specialHint: "体验版作者提示：他的ID取自一位家喻户晓的历史人物。"
+  },
+  { key: "curated-preview-xian-01", targetName: "xian", signatureHero: "虚无之灵", specialHint: "" }
+];
+const WHO_GAME_QUESTION_KEYS = WHO_GAME_QUESTIONS.map((question) => question.key);
+const WHO_GAME_POWERUP_TYPES = ["eliminate", "special", "hero", "scan", "probe"];
 const REPLAY_PARSE_TIMEOUT_MS = Math.max(30_000, Number(ENV.REPLAY_PARSE_TIMEOUT_MS || 5 * 60 * 1000));
 let highlightUploadBusy = false;
 let replayParseBusy = false;
@@ -224,6 +243,45 @@ function initDatabase({ seedDefaults = false } = {}) {
       published_at TEXT DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS who_game_daily_sessions (
+      id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL,
+      play_date TEXT NOT NULL,
+      slot INTEGER NOT NULL CHECK (slot BETWEEN 1 AND 3),
+      question_key TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'playing' CHECK (status IN ('playing', 'won', 'lost')),
+      revealed INTEGER NOT NULL DEFAULT 1,
+      wrong_guesses TEXT NOT NULL DEFAULT '[]',
+      score INTEGER NOT NULL DEFAULT 1000,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT DEFAULT '',
+      UNIQUE (player_id, play_date, slot),
+      UNIQUE (player_id, play_date, question_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS who_game_daily_sessions_player_date
+    ON who_game_daily_sessions (player_id, play_date);
+
+    CREATE TABLE IF NOT EXISTS who_game_powerup_uses (
+      id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL,
+      play_date TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      powerup_type TEXT NOT NULL,
+      result TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      UNIQUE (session_id, powerup_type)
+    );
+
+    CREATE INDEX IF NOT EXISTS who_game_powerup_uses_player_date
+    ON who_game_powerup_uses (player_id, play_date);
+
+    CREATE TABLE IF NOT EXISTS who_game_unlimited_players (
+      player_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL
     );
   `);
 
@@ -453,6 +511,34 @@ function backfillHomepageHighlightLinks() {
 
 async function handleApi(request, response, url) {
   const method = request.method;
+
+  if (method === "GET" && url.pathname === "/api/who-game/state") {
+    sendJson(response, 200, getWhoGameState());
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/who-game/daily") {
+    sendJson(response, 200, getWhoGameDailyStatus(url.searchParams.get("playerId")));
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/who-game/daily/start") {
+    const body = await readJson(request);
+    sendJson(response, 200, startWhoGameDailySession(body.playerId));
+    return;
+  }
+
+  if (method === "PUT" && url.pathname === "/api/who-game/daily/progress") {
+    const body = await readJson(request);
+    sendJson(response, 200, updateWhoGameDailySession(body));
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/who-game/daily/powerup") {
+    const body = await readJson(request);
+    sendJson(response, 200, useWhoGamePowerup(body));
+    return;
+  }
 
   if (method === "GET" && url.pathname === "/api/state") {
     sendJson(response, 200, getState());
@@ -1710,6 +1796,341 @@ function getState() {
     playoffResults: getPlayoffResults(),
     champion: getChampion()
   };
+}
+
+function getWhoGameState() {
+  const playersById = new Map();
+  const matches = [];
+  const ratingSnapshots = [];
+
+  ["s2", "s3"].forEach((season) => {
+    const source = databases[season];
+    source.prepare(`
+      SELECT id, name, rating
+      FROM players
+      ORDER BY created_at ASC
+    `).all().forEach((player) => {
+      const current = playersById.get(player.id) || { ...player, seasons: [] };
+      current.name = player.name || current.name;
+      current.rating = player.rating ?? current.rating;
+      if (!current.seasons.includes(season)) current.seasons.push(season);
+      playersById.set(player.id, current);
+    });
+
+    source.prepare(`
+      SELECT id, date, match_no AS matchNo, match_id AS matchId, winner, score,
+             radiant, dire, positions, player_details AS playerDetails
+      FROM matches
+      ORDER BY created_at DESC
+    `).all().forEach((match) => {
+      matches.push({
+        ...match,
+        id: `${season}:${match.id}`,
+        recordId: match.id,
+        season,
+        seasonLabel: season.toUpperCase(),
+        radiant: parseJsonArray(match.radiant),
+        dire: parseJsonArray(match.dire),
+        positions: parseJsonObject(match.positions),
+        playerDetails: parseJsonObject(match.playerDetails)
+      });
+    });
+
+    source.prepare(`
+      SELECT date, player_id AS playerId, rating
+      FROM rating_snapshots
+      ORDER BY date ASC, player_id ASC
+    `).all().forEach((snapshot) => {
+      ratingSnapshots.push({ ...snapshot, season });
+    });
+  });
+
+  return {
+    seasons: ["s2", "s3"],
+    players: [...playersById.values()],
+    matches,
+    ratingSnapshots
+  };
+}
+
+function getShanghaiDate() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function findWhoGamePlayer(playerId) {
+  const id = String(playerId || "").trim();
+  if (!id) throw createHttpError(400, "请先选择你的选手ID");
+  for (const source of [databases.s3, databases.s2]) {
+    const player = source.prepare("SELECT id, name FROM players WHERE id = ?").get(id);
+    if (player) return player;
+  }
+  throw createHttpError(404, "选手ID不存在");
+}
+
+function getWhoGameQuestionOrder(playerId, playDate) {
+  const [featured, ...remaining] = WHO_GAME_QUESTION_KEYS;
+  const shuffled = remaining.sort((left, right) => {
+    const leftHash = crypto.createHash("sha256").update(`${playDate}:${playerId}:${left}`).digest("hex");
+    const rightHash = crypto.createHash("sha256").update(`${playDate}:${playerId}:${right}`).digest("hex");
+    return leftHash.localeCompare(rightHash);
+  });
+  return [featured, ...shuffled];
+}
+
+function mapWhoGameDailySession(row) {
+  const wrongGuesses = parseJsonArray(row.wrong_guesses);
+  return {
+    id: row.id,
+    slot: Number(row.slot),
+    questionKey: row.question_key,
+    status: row.status,
+    revealed: Number(row.revealed),
+    wrongGuesses,
+    score: calculateWhoGameSessionScore(row.status, Number(row.revealed), wrongGuesses),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at || ""
+  };
+}
+
+function calculateWhoGameSessionScore(status, revealed, wrongGuesses = []) {
+  if (status !== "won") return 0;
+  const wrongGuessCount = Math.min(WHO_GAME_ATTEMPT_LIMIT, Math.max(0, wrongGuesses.length));
+  const cluesUsed = Math.min(WHO_GAME_CLUE_COUNT, Math.max(1, Math.round(Number(revealed) || 1)));
+  const unusedAttempts = Math.max(0, WHO_GAME_ATTEMPT_LIMIT - wrongGuessCount);
+  const unseenClues = Math.max(0, WHO_GAME_CLUE_COUNT - cluesUsed);
+  return WHO_GAME_CORRECT_SCORE
+    + unusedAttempts * WHO_GAME_UNUSED_ATTEMPT_SCORE
+    + unseenClues * WHO_GAME_UNSEEN_CLUE_SCORE;
+}
+
+function isWhoGameUnlimitedPlayer(playerId) {
+  return Boolean(databases.s3.prepare(`
+    SELECT player_id FROM who_game_unlimited_players WHERE player_id = ?
+  `).get(playerId));
+}
+
+function getWhoGameDailyStatus(playerId) {
+  const player = findWhoGamePlayer(playerId);
+  const playDate = getShanghaiDate();
+  const unlimited = isWhoGameUnlimitedPlayer(player.id);
+  const sessions = databases.s3.prepare(`
+    SELECT * FROM who_game_daily_sessions
+    WHERE player_id = ? AND play_date = ?
+    ORDER BY slot ASC
+  `).all(player.id, playDate).map(mapWhoGameDailySession);
+  const powerups = databases.s3.prepare(`
+    SELECT id, session_id AS sessionId, powerup_type AS type, result, created_at AS createdAt
+    FROM who_game_powerup_uses
+    WHERE player_id = ? AND play_date = ?
+    ORDER BY created_at ASC, id ASC
+  `).all(player.id, playDate).map((row) => ({ ...row, result: parseJsonObject(row.result) }));
+  sessions.forEach((session) => {
+    session.powerups = powerups.filter((powerup) => powerup.sessionId === session.id);
+  });
+  const current = sessions.find((session) => session.status === "playing") || null;
+  const usedQuestionKeys = new Set(sessions.map((session) => session.questionKey));
+  const questionOrder = getWhoGameQuestionOrder(player.id, playDate);
+  const nextQuestionKey = questionOrder.find((questionKey) => !usedQuestionKeys.has(questionKey))
+    || (unlimited && !current ? questionOrder[0] : "");
+  return {
+    player,
+    playDate,
+    unlimited,
+    dailyLimit: WHO_GAME_DAILY_LIMIT,
+    used: sessions.length,
+    completed: sessions.filter((session) => session.status !== "playing").length,
+    remaining: unlimited && !current && sessions.length >= WHO_GAME_DAILY_LIMIT
+      ? 1
+      : Math.max(0, WHO_GAME_DAILY_LIMIT - sessions.length),
+    powerupsUsed: powerups.length,
+    powerupsRemaining: Math.max(0, WHO_GAME_DAILY_POWERUP_LIMIT - powerups.length),
+    current,
+    sessions,
+    nextQuestionKey
+  };
+}
+
+function getWhoGameQuestionConfig(questionKey) {
+  const question = WHO_GAME_QUESTIONS.find((item) => item.key === questionKey);
+  if (!question) throw createHttpError(404, "题目配置不存在");
+  return question;
+}
+
+function getAllWhoGamePlayers() {
+  const players = new Map();
+  [databases.s2, databases.s3].forEach((source) => {
+    source.prepare("SELECT id, name FROM players ORDER BY created_at ASC").all().forEach((player) => {
+      players.set(player.id, player);
+    });
+  });
+  return [...players.values()];
+}
+
+function findWhoGamePlayerByName(name) {
+  const player = getAllWhoGamePlayers().find((item) => item.name === name);
+  if (!player) throw createHttpError(404, `题目答案选手「${name}」不存在`);
+  return player;
+}
+
+function getWhoGameSessionExcludedIds(session) {
+  const excluded = new Set(session.wrongGuesses || []);
+  (session.powerups || []).forEach((powerup) => {
+    (powerup.result?.excludedIds || []).forEach((playerId) => excluded.add(playerId));
+  });
+  return excluded;
+}
+
+function useWhoGamePowerup(input = {}) {
+  const daily = getWhoGameDailyStatus(input.playerId);
+  const session = daily.current;
+  if (!session || session.id !== String(input.sessionId || "")) throw createHttpError(409, "当前没有可使用道具的进行中题目");
+  if (daily.powerupsRemaining <= 0) throw createHttpError(429, "今天的三次道具机会已经用完");
+  const type = String(input.type || "");
+  if (!WHO_GAME_POWERUP_TYPES.includes(type)) throw createHttpError(400, "未知道具类型");
+  if (session.powerups.some((powerup) => powerup.type === type)) throw createHttpError(409, "同一道题不能重复使用同一种道具");
+
+  const question = getWhoGameQuestionConfig(session.questionKey);
+  const answer = findWhoGamePlayerByName(question.targetName);
+  const players = getAllWhoGamePlayers();
+  const validIds = new Set(players.map((player) => player.id));
+  const excluded = getWhoGameSessionExcludedIds(session);
+  let result = {};
+
+  if (type === "eliminate") {
+    const candidates = players
+      .filter((player) => player.id !== answer.id && !excluded.has(player.id))
+      .sort((left, right) => {
+        const leftHash = crypto.createHash("sha256").update(`${session.id}:eliminate:${left.id}`).digest("hex");
+        const rightHash = crypto.createHash("sha256").update(`${session.id}:eliminate:${right.id}`).digest("hex");
+        return leftHash.localeCompare(rightHash);
+      });
+    if (candidates.length < 10) throw createHttpError(409, "剩余候选不足，无法再排除十人");
+    result = { excludedIds: candidates.slice(0, 10).map((player) => player.id) };
+  }
+
+  if (type === "special") {
+    if (!question.specialHint) throw createHttpError(409, "这道题尚未配置作者提示");
+    result = { text: question.specialHint };
+  }
+
+  if (type === "hero") {
+    if (!question.signatureHero) throw createHttpError(409, "这道题尚未配置英雄残影");
+    result = { hero: question.signatureHero };
+  }
+
+  if (type === "scan") {
+    const selectedIds = [...new Set((Array.isArray(input.selectedIds) ? input.selectedIds : [])
+      .map((value) => String(value || "").trim())
+      .filter((playerId) => validIds.has(playerId) && !excluded.has(playerId)))];
+    if (selectedIds.length !== 8) throw createHttpError(400, "圈定搜查需要选择恰好8名未排除选手");
+    const inside = selectedIds.includes(answer.id);
+    const excludedIds = inside
+      ? players.map((player) => player.id).filter((playerId) => !selectedIds.includes(playerId) && playerId !== answer.id && !excluded.has(playerId))
+      : selectedIds.filter((playerId) => playerId !== answer.id);
+    result = { selectedIds, inside, excludedIds };
+  }
+
+  if (type === "probe") {
+    const candidateId = String(input.candidateId || "").trim();
+    if (!validIds.has(candidateId) || excluded.has(candidateId)) throw createHttpError(400, "请选择一名尚未排除的选手进行试探");
+    const correct = candidateId === answer.id;
+    result = { candidateId, correct, excludedIds: correct ? [] : [candidateId] };
+  }
+
+  const now = new Date().toISOString();
+  const useId = crypto.randomUUID();
+  databases.s3.prepare(`
+    INSERT INTO who_game_powerup_uses (
+      id, player_id, play_date, session_id, powerup_type, result, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(useId, daily.player.id, daily.playDate, session.id, type, JSON.stringify(result), now);
+
+  if (type === "probe" && result.correct) {
+    const score = calculateWhoGameSessionScore("won", session.revealed, session.wrongGuesses);
+    databases.s3.prepare(`
+      UPDATE who_game_daily_sessions
+      SET status = 'won', score = ?, updated_at = ?, completed_at = ?
+      WHERE id = ? AND status = 'playing'
+    `).run(score, now, now, session.id);
+  }
+
+  return { ...getWhoGameDailyStatus(daily.player.id), powerupResult: { id: useId, type, result } };
+}
+
+function startWhoGameDailySession(playerId) {
+  let status = getWhoGameDailyStatus(playerId);
+  if (status.current) return status;
+  if (status.unlimited && status.used >= WHO_GAME_DAILY_LIMIT) {
+    databases.s3.exec("BEGIN");
+    try {
+      databases.s3.prepare(`
+        DELETE FROM who_game_powerup_uses WHERE player_id = ? AND play_date = ?
+      `).run(status.player.id, status.playDate);
+      databases.s3.prepare(`
+        DELETE FROM who_game_daily_sessions WHERE player_id = ? AND play_date = ?
+      `).run(status.player.id, status.playDate);
+      databases.s3.exec("COMMIT");
+    } catch (error) {
+      databases.s3.exec("ROLLBACK");
+      throw error;
+    }
+    status = getWhoGameDailyStatus(status.player.id);
+  }
+  if (status.used >= WHO_GAME_DAILY_LIMIT || !status.nextQuestionKey) {
+    throw createHttpError(429, "今天的三道题已经完成，明天再来吧");
+  }
+  const now = new Date().toISOString();
+  const usedSlots = new Set(status.sessions.map((session) => session.slot));
+  const slot = [1, 2, 3].find((value) => !usedSlots.has(value));
+  databases.s3.prepare(`
+    INSERT INTO who_game_daily_sessions (
+      id, player_id, play_date, slot, question_key, status, revealed,
+      wrong_guesses, score, created_at, updated_at, completed_at
+    ) VALUES (?, ?, ?, ?, ?, 'playing', 1, '[]', 0, ?, ?, '')
+  `).run(crypto.randomUUID(), status.player.id, status.playDate, slot, status.nextQuestionKey, now, now);
+  return getWhoGameDailyStatus(status.player.id);
+}
+
+function updateWhoGameDailySession(input = {}) {
+  const status = getWhoGameDailyStatus(input.playerId);
+  const sessionId = String(input.sessionId || "").trim();
+  const session = status.sessions.find((item) => item.id === sessionId);
+  if (!session) throw createHttpError(404, "今日题目记录不存在");
+  if (session.status !== "playing") return status;
+
+  const nextStatus = ["playing", "won", "lost"].includes(input.status) ? input.status : "playing";
+  const revealed = Math.max(1, Math.min(12, Math.round(Number(input.revealed) || 1)));
+  const wrongGuesses = Array.isArray(input.wrongGuesses)
+    ? [...new Set(input.wrongGuesses.map((value) => String(value || "").trim()).filter(Boolean))].slice(0, 3)
+    : [];
+  const score = calculateWhoGameSessionScore(nextStatus, revealed, wrongGuesses);
+  const now = new Date().toISOString();
+  databases.s3.prepare(`
+    UPDATE who_game_daily_sessions
+    SET status = ?, revealed = ?, wrong_guesses = ?, score = ?, updated_at = ?,
+        completed_at = CASE WHEN ? IN ('won', 'lost') THEN ? ELSE completed_at END
+    WHERE id = ? AND player_id = ? AND play_date = ?
+  `).run(
+    nextStatus,
+    revealed,
+    JSON.stringify(wrongGuesses),
+    score,
+    now,
+    nextStatus,
+    now,
+    session.id,
+    status.player.id,
+    status.playDate
+  );
+  return getWhoGameDailyStatus(status.player.id);
 }
 
 function getSummary() {

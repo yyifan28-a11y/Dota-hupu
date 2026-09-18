@@ -25,6 +25,16 @@ const ADMIN_PASSWORD_KEY = "dota-admin-password";
 const APP_ENTERED_KEY = "dota-app-entered";
 const ACTIVE_VIEW_KEY = "dota-active-view";
 const TEAM_GENERATION_COOLDOWN_KEY = "dota-team-generation-cooldown";
+const WHO_GAME_RECENT_KEY = "dota-who-game-recent-combined";
+const WHO_GAME_PLAYER_KEY = "dota-who-game-player-id";
+const WHO_GAME_ATTEMPT_LIMIT = 3;
+const WHO_GAME_CORRECT_SCORE = 100;
+const WHO_GAME_UNUSED_ATTEMPT_SCORE = 20;
+const WHO_GAME_UNSEEN_CLUE_SCORE = 10;
+const WHO_GAME_PUBLICLY_AVAILABLE = false;
+// Curated clues that can change as S3 grows must freeze and display their authoring date.
+// Historical one-match facts and S2-only facts do not need this prefix.
+const WHO_GAME_CURATED_AS_OF = "截至 9 月 16 日，";
 const TEAM_GENERATION_COOLDOWN_MS = 60 * 1000;
 const REQUIRED_DETAIL_FIELDS = [
   "hero",
@@ -126,6 +136,7 @@ let playerOrbitModulePromise = null;
 let selectedPlayerProfilePosition = "";
 let selectedPlayerProfileHeroKey = "";
 let selectedPlayerProfileMatchDate = "";
+let playerProfileShowAllMatches = false;
 let selectedMatchDetailId = REQUESTED_MATCH_ID;
 let activeMatchDetailTab = "summary";
 let matchDetailChartSeries = { gold: true, xp: true };
@@ -162,6 +173,30 @@ let pairRankModes = {
 };
 let stateLoadPromise = null;
 let hasLoadedState = false;
+let whoGameState = {
+  question: null,
+  revealed: 1,
+  wrongGuesses: [],
+  selectedGuessId: "",
+  score: 0,
+  status: "idle",
+  message: ""
+};
+let whoGameDb = { players: [], matches: [], ratingSnapshots: [] };
+let whoGamePlayerById = new Map();
+let whoGameModel = null;
+let whoGameLoadPromise = null;
+const whoGameIdentityResetRequested = new URLSearchParams(window.location.search).get("resetWhoIdentity") === "1";
+let whoGameIdentityId = whoGameIdentityResetRequested ? "" : (localStorage.getItem(WHO_GAME_PLAYER_KEY) || "");
+let whoGameIdentityCandidateId = "";
+let whoGameIdentityConfirmOpen = false;
+let whoGameDaily = null;
+let whoGameDailyPromise = null;
+let whoGamePowerupMode = "";
+let whoGamePowerupSelection = [];
+let whoGamePowerupBusy = false;
+let whoGamePowerupOpen = false;
+let whoGameSummaryOpen = false;
 
 const HOMEPAGE_FRAMING_DEVICES = Object.freeze({
   desktop: Object.freeze({ label: "1080P", width: 1920, height: 1080 }),
@@ -802,7 +837,23 @@ function updateAppLocation(viewId, playerId = "", { replace = false, matchId = "
   window.history[replace ? "replaceState" : "pushState"]({}, "", nextUrl);
 }
 
+function scrollAppShellToTop() {
+  const resetScroll = () => {
+    const shell = $(".app-shell");
+    if (shell) shell.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  };
+  resetScroll();
+  window.requestAnimationFrame(resetScroll);
+}
+
 function switchView(viewId) {
+  if (viewId === "whoIsIt" && !WHO_GAME_PUBLICLY_AVAILABLE && !["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+    viewId = "dashboard";
+    if (new URLSearchParams(window.location.search).get("view") === "whoIsIt") {
+      updateAppLocation("dashboard", "", { replace: true });
+    }
+  }
   if (!IS_S2_SEASON && ["playoffs", "champion"].includes(viewId)) {
     viewId = "dashboard";
   }
@@ -834,6 +885,7 @@ function switchView(viewId) {
   if (viewId !== "playerProfile") stopPlayerOrbit();
 
   renderCurrentView();
+  if (viewId === "matchDetail") scrollAppShellToTop();
   sessionStorage.setItem(ACTIVE_VIEW_KEY, viewId);
 }
 
@@ -1138,8 +1190,6 @@ function renderDashboardMatches() {
   const matches = getMatchesByScheduleDesc();
   const matchDates = [...new Set(matches.map((match) => String(match.date || "")).filter(Boolean))].sort();
   const calendarDays = $("#matchCalendarDays");
-  const previousButton = $("#previousMatchDate");
-  const nextButton = $("#nextMatchDate");
   const total = $("#matchCalendarTotal");
   const dateLabel = $("#selectedMatchDateLabel");
   const weekdayLabel = $("#selectedMatchDateWeekday");
@@ -1147,9 +1197,7 @@ function renderDashboardMatches() {
 
   if (!matchDates.length) {
     selectedDashboardMatchDate = "";
-    if (calendarDays) calendarDays.innerHTML = `<span class="match-calendar-empty">暂无比赛日期</span>`;
-    if (previousButton) previousButton.disabled = true;
-    if (nextButton) nextButton.disabled = true;
+    if (calendarDays) calendarDays.innerHTML = `<div class="player-profile-recent-empty">暂无赛季比赛日期</div>`;
     if (total) total.textContent = "0 个比赛日";
     if (dateLabel) dateLabel.textContent = "暂无比赛";
     if (weekdayLabel) weekdayLabel.textContent = "等待录入比赛数据";
@@ -1163,40 +1211,72 @@ function renderDashboardMatches() {
   }
 
   const selectedIndex = matchDates.indexOf(selectedDashboardMatchDate);
-  const visibleDateCount = 7;
-  const windowStart = Math.max(0, Math.min(selectedIndex - 3, matchDates.length - visibleDateCount));
-  const visibleDates = matchDates.slice(windowStart, windowStart + visibleDateCount);
   const matchesByDate = new Map(matchDates.map((date) => [
     date,
     matches.filter((match) => String(match.date || "") === date)
   ]));
+  const calendarMonths = getSeasonCalendarMonths(matches);
+  const seasonStart = matchDates[0];
+  const seasonEnd = matchDates.at(-1);
 
   if (calendarDays) {
-    calendarDays.innerHTML = visibleDates.map((date) => {
-      const dateInfo = getDashboardCalendarDateInfo(date);
-      const count = matchesByDate.get(date)?.length || 0;
-      const isSelected = date === selectedDashboardMatchDate;
-      return `
-        <span class="match-calendar-day-slot" role="listitem">
-          <button class="match-calendar-day${isSelected ? " is-active" : ""}" data-dashboard-match-date="${escapeHtml(date)}" type="button" aria-pressed="${isSelected}" aria-label="${escapeHtml(dateInfo.fullLabel)}，${count} 场比赛">
-            <span>${escapeHtml(dateInfo.weekdayShort)}</span>
-            <strong>${escapeHtml(dateInfo.day)}</strong>
-            <small>${count} 场</small>
-          </button>
-        </span>
-      `;
-    }).join("");
+    calendarDays.innerHTML = calendarMonths
+      .map((month) => renderDashboardMonthCalendar(month, matchesByDate, seasonStart, seasonEnd))
+      .join("");
   }
 
   const selectedMatches = matchesByDate.get(selectedDashboardMatchDate) || [];
   const selectedInfo = getDashboardCalendarDateInfo(selectedDashboardMatchDate);
-  if (previousButton) previousButton.disabled = selectedIndex <= 0;
-  if (nextButton) nextButton.disabled = selectedIndex >= matchDates.length - 1;
   if (total) total.textContent = `${matchDates.length} 个比赛日`;
   if (dateLabel) dateLabel.textContent = selectedInfo.fullLabel;
   if (weekdayLabel) weekdayLabel.textContent = selectedIndex === matchDates.length - 1 ? `${selectedInfo.weekday} · 最近比赛日` : selectedInfo.weekday;
   if (countLabel) countLabel.textContent = `${selectedMatches.length} 场比赛`;
-  renderMatchCards($("#recentMatches"), selectedMatches);
+  renderMatchCards($("#recentMatches"), selectedMatches, { showQualityBadge: false });
+}
+
+function renderDashboardMonthCalendar(monthKey, matchesByDate, seasonStart, seasonEnd) {
+  const parts = String(monthKey).match(/^(\d{4})-(\d{2})$/);
+  if (!parts) return "";
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const firstWeekday = new Date(year, month - 1, 1, 12).getDay();
+  const daysInMonth = new Date(year, month, 0, 12).getDate();
+  const cells = [];
+
+  for (let offset = 0; offset < firstWeekday; offset += 1) {
+    cells.push(`<span class="player-calendar-day is-outside-month" aria-hidden="true"></span>`);
+  }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const count = matchesByDate.get(date)?.length || 0;
+    const isInSeason = Boolean(seasonStart && seasonEnd && date >= seasonStart && date <= seasonEnd);
+    const isSelected = date === selectedDashboardMatchDate;
+    const className = `player-calendar-day${isInSeason ? " is-in-season" : " is-out-of-season"}${count ? " has-matches" : ""}${isSelected ? " is-selected" : ""}`;
+    const matchDots = count
+      ? `<span class="player-calendar-pips" aria-hidden="true">${Array.from({ length: count }, () => "<i></i>").join("")}</span>`
+      : "";
+    const content = `<span>${day}</span>${matchDots}`;
+    if (count) {
+      const dateInfo = getDashboardCalendarDateInfo(date);
+      cells.push(`<button class="${className}" data-dashboard-match-date="${escapeHtml(date)}" type="button" aria-pressed="${isSelected}" aria-label="${escapeHtml(dateInfo.fullLabel)}，${count} 场比赛">${content}</button>`);
+    } else {
+      cells.push(`<span class="${className}" aria-label="${year}年${month}月${day}日，无比赛">${content}</span>`);
+    }
+  }
+
+  while (cells.length % 7) {
+    cells.push(`<span class="player-calendar-day is-outside-month" aria-hidden="true"></span>`);
+  }
+
+  return `
+    <section class="player-calendar-month" aria-label="${year}年${month}月比赛日历">
+      <header><strong>${year}</strong><span>${String(month).padStart(2, "0")} 月</span></header>
+      <div class="player-calendar-weekdays" aria-hidden="true">
+        ${["日", "一", "二", "三", "四", "五", "六"].map((day) => `<span>${day}</span>`).join("")}
+      </div>
+      <div class="player-calendar-grid">${cells.join("")}</div>
+    </section>`;
 }
 
 function getDashboardCalendarDateInfo(value) {
@@ -1211,16 +1291,6 @@ function getDashboardCalendarDateInfo(value) {
     weekdayShort: new Intl.DateTimeFormat("zh-CN", { weekday: "short" }).format(date),
     fullLabel: `${parts[1]}年${Number(parts[2])}月${Number(parts[3])}日`
   };
-}
-
-function moveDashboardMatchDate(offset) {
-  const matchDates = [...new Set(getMatchesByScheduleDesc().map((match) => String(match.date || "")).filter(Boolean))].sort();
-  if (!matchDates.length) return;
-  const currentIndex = Math.max(0, matchDates.indexOf(selectedDashboardMatchDate));
-  const nextIndex = Math.max(0, Math.min(matchDates.length - 1, currentIndex + offset));
-  if (nextIndex === currentIndex) return;
-  selectedDashboardMatchDate = matchDates[nextIndex];
-  renderDashboardMatches();
 }
 
 function getPlayoffTeams() {
@@ -1662,6 +1732,7 @@ function openPlayerProfileById(playerId, options = {}) {
   selectedPlayerProfilePosition = "";
   selectedPlayerProfileHeroKey = "";
   selectedPlayerProfileMatchDate = "";
+  playerProfileShowAllMatches = false;
   updateAppLocation("playerProfile", selectedPlayerProfileId);
   switchView("playerProfile");
   if (options.sharedElement) {
@@ -1808,6 +1879,7 @@ function ensureSelectedPlayerProfileId(players) {
   selectedPlayerProfilePosition = "";
   selectedPlayerProfileHeroKey = "";
   selectedPlayerProfileMatchDate = "";
+  playerProfileShowAllMatches = false;
 }
 
 function getFilteredPlayerProfileStats(playerId) {
@@ -1901,16 +1973,6 @@ function getPlayerProfileMatchDates(playerId) {
     .sort();
 }
 
-function movePlayerProfileMatchDate(offset) {
-  const matchDates = getPlayerProfileMatchDates(selectedPlayerProfileId);
-  if (!matchDates.length) return;
-  const currentIndex = Math.max(0, matchDates.indexOf(selectedPlayerProfileMatchDate));
-  const nextIndex = Math.max(0, Math.min(matchDates.length - 1, currentIndex + offset));
-  if (nextIndex === currentIndex) return;
-  selectedPlayerProfileMatchDate = matchDates[nextIndex];
-  renderPlayerProfile();
-}
-
 function getPlayerProfileRank(playerId, players = getPlayerProfilePlayers()) {
   const index = players.findIndex((player) => player.id === playerId);
   return index >= 0 ? index + 1 : 0;
@@ -1921,6 +1983,60 @@ function getPlayerRecentForm(playerId, limit = 8) {
     const side = match.radiant?.includes(playerId) ? "radiant" : "dire";
     return { match, isWin: match.winner === side };
   });
+}
+
+function getSeasonCalendarMonths(matches = db.matches) {
+  return [...new Set(matches
+    .map((match) => String(match.date || "").match(/^(\d{4})-(\d{2})-(\d{2})$/))
+    .filter(Boolean)
+    .map((parts) => `${parts[1]}-${parts[2]}`))]
+    .sort();
+}
+
+function renderPlayerProfileMonthCalendar(monthKey, playerMatchesByDate, seasonStart, seasonEnd) {
+  const parts = String(monthKey).match(/^(\d{4})-(\d{2})$/);
+  if (!parts) return "";
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const firstWeekday = new Date(year, month - 1, 1, 12).getDay();
+  const daysInMonth = new Date(year, month, 0, 12).getDate();
+  const cells = [];
+
+  for (let offset = 0; offset < firstWeekday; offset += 1) {
+    cells.push(`<span class="player-calendar-day is-outside-month" aria-hidden="true"></span>`);
+  }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const matches = playerMatchesByDate.get(date) || [];
+    const count = matches.length;
+    const isInSeason = Boolean(seasonStart && seasonEnd && date >= seasonStart && date <= seasonEnd);
+    const isSelected = date === selectedPlayerProfileMatchDate;
+    const className = `player-calendar-day${isInSeason ? " is-in-season" : " is-out-of-season"}${count ? " has-matches" : ""}${isSelected ? " is-selected" : ""}`;
+    const matchDots = count
+      ? `<span class="player-calendar-pips" aria-hidden="true">${Array.from({ length: count }, () => "<i></i>").join("")}</span>`
+      : "";
+    const content = `<span>${day}</span>${matchDots}`;
+    if (count) {
+      const dateInfo = getDashboardCalendarDateInfo(date);
+      cells.push(`<button class="${className}" data-player-profile-match-date="${escapeHtml(date)}" type="button" aria-pressed="${isSelected}" aria-label="${escapeHtml(dateInfo.fullLabel)}，${count} 场比赛">${content}</button>`);
+    } else {
+      cells.push(`<span class="${className}" aria-label="${year}年${month}月${day}日，无比赛">${content}</span>`);
+    }
+  }
+
+  while (cells.length % 7) {
+    cells.push(`<span class="player-calendar-day is-outside-month" aria-hidden="true"></span>`);
+  }
+
+  return `
+    <section class="player-calendar-month" aria-label="${year}年${month}月比赛日历">
+      <header><strong>${year}</strong><span>${String(month).padStart(2, "0")} 月</span></header>
+      <div class="player-calendar-weekdays" aria-hidden="true">
+        ${["日", "一", "二", "三", "四", "五", "六"].map((day) => `<span>${day}</span>`).join("")}
+      </div>
+      <div class="player-calendar-grid">${cells.join("")}</div>
+    </section>`;
 }
 
 function renderPlayerRatingSparkline(playerId) {
@@ -2008,7 +2124,7 @@ function renderPlayerProfileRecentMatches(playerId, recentForm = []) {
     </div>`;
 }
 
-function renderPlayerProfileIntro(player, stats, recentForm, rank) {
+function renderPlayerProfileIntro(player, stats, recentForm, rank, totalMatchCount = recentForm.length) {
   return `
     <nav class="player-profile-location" aria-label="选手档案位置">
       <button type="button" data-player-profile-back>
@@ -2035,12 +2151,13 @@ function renderPlayerProfileIntro(player, stats, recentForm, rank) {
 
     <section class="player-profile-summary-grid">
       <article class="player-profile-module player-profile-recent-module">
-        <div class="player-profile-module-heading"><div><span>LATEST MATCHES</span><h4>近期比赛</h4></div><small>最近 ${recentForm.length} 场</small></div>
+        <div class="player-profile-module-heading"><div><span>MATCHES</span><h4>比赛</h4></div><small>${playerProfileShowAllMatches ? `全部 ${totalMatchCount} 场` : `最近 ${recentForm.length} 场`}</small></div>
         ${renderPlayerProfileRecentMatches(player.id, recentForm)}
-      </article>
-      <article class="player-profile-module player-profile-trend-module">
-        <div class="player-profile-module-heading"><div><span>RATING TREND</span><h4>评分走势</h4></div></div>
-        ${renderPlayerRatingSparkline(player.id)}
+        ${totalMatchCount > 8 ? `
+          <button class="player-profile-matches-toggle" data-player-profile-toggle-matches type="button" aria-expanded="${playerProfileShowAllMatches}">
+            <span>${playerProfileShowAllMatches ? "收起至最近 8 场" : `显示全部比赛（${totalMatchCount}）`}</span>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg>
+          </button>` : ""}
       </article>
     </section>
   `;
@@ -2054,7 +2171,8 @@ function getPlayerProfileTransitionMarkup(playerId) {
     player,
     player.stats || createEmptyPlayerStats(),
     getPlayerRecentForm(player.id),
-    getPlayerProfileRank(player.id, players)
+    getPlayerProfileRank(player.id, players),
+    getPlayerProfileMatches(player.id).length
   );
 }
 
@@ -2083,22 +2201,25 @@ function renderPlayerProfile() {
   const filteredStats = getFilteredPlayerProfileStats(player.id);
   const dataStats = filteredStats.dataStats;
   const playerMatches = getPlayerProfileMatches(player.id);
-  const recentForm = getPlayerRecentForm(player.id);
+  const recentForm = getPlayerRecentForm(player.id, playerProfileShowAllMatches ? Number.POSITIVE_INFINITY : 8);
   const rank = getPlayerProfileRank(player.id, players);
   const playerMatchDates = [...new Set(playerMatches.map((match) => String(match.date || "")).filter(Boolean))].sort();
   if (!playerMatchDates.includes(selectedPlayerProfileMatchDate)) {
     selectedPlayerProfileMatchDate = playerMatchDates.at(-1) || "";
   }
-  const selectedMatchDateIndex = playerMatchDates.indexOf(selectedPlayerProfileMatchDate);
-  const visibleDateCount = 7;
-  const dateWindowStart = Math.max(0, Math.min(selectedMatchDateIndex - 3, playerMatchDates.length - visibleDateCount));
-  const visibleMatchDates = playerMatchDates.slice(dateWindowStart, dateWindowStart + visibleDateCount);
   const playerMatchesByDate = new Map(playerMatchDates.map((date) => [
     date,
     playerMatches.filter((match) => String(match.date || "") === date)
   ]));
   const selectedDateMatches = playerMatchesByDate.get(selectedPlayerProfileMatchDate) || [];
   const selectedDateInfo = getDashboardCalendarDateInfo(selectedPlayerProfileMatchDate);
+  const seasonMatchDates = db.matches
+    .map((match) => String(match.date || ""))
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+    .sort();
+  const seasonStart = seasonMatchDates[0] || "";
+  const seasonEnd = seasonMatchDates.at(-1) || "";
+  const calendarMonths = getSeasonCalendarMonths();
   const scopedHeroes = getPlayerProfileHeroUsage(player.id, selectedPlayerProfilePosition);
   const activeHero = scopedHeroes.find((hero) => hero.key === selectedPlayerProfileHeroKey);
   const positionScope = selectedPlayerProfilePosition
@@ -2119,7 +2240,7 @@ function renderPlayerProfile() {
   ];
 
   detail.innerHTML = `
-    ${renderPlayerProfileIntro(player, stats, recentForm, rank)}
+    ${renderPlayerProfileIntro(player, stats, recentForm, rank, playerMatches.length)}
     <section class="player-profile-module player-profile-analysis-module">
       <div class="player-profile-analysis-heading">
         <div><span>ROLE · HERO · PERFORMANCE</span><h4>位置与英雄表现</h4></div>
@@ -2160,45 +2281,34 @@ function renderPlayerProfile() {
 
     <section class="player-profile-module player-profile-match-calendar-module">
       <div class="player-profile-module-heading">
-        <div><span>MATCH LOG</span><h4>比赛日历</h4></div>
-        <small class="player-profile-match-calendar-id" title="${escapeHtml(player.name)}">${escapeHtml(player.name)}</small>
+        <div><span>MATCH CALENDAR</span><h4>比赛日历</h4></div>
       </div>
-      <div class="match-calendar player-profile-match-calendar" aria-label="${escapeHtml(player.name)}的比赛日期选择器">
-        <button class="match-calendar-arrow" data-player-profile-match-date-step="-1" type="button" aria-label="上一个比赛日" ${selectedMatchDateIndex <= 0 ? "disabled" : ""}>
-          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
-        </button>
-        <div class="match-calendar-days" role="list">
-          ${visibleMatchDates.length ? visibleMatchDates.map((date) => {
-            const dateInfo = getDashboardCalendarDateInfo(date);
-            const count = playerMatchesByDate.get(date)?.length || 0;
-            const isSelected = date === selectedPlayerProfileMatchDate;
-            return `
-              <span class="match-calendar-day-slot" role="listitem">
-                <button class="match-calendar-day${isSelected ? " is-active" : ""}" data-player-profile-match-date="${escapeHtml(date)}" type="button" aria-pressed="${isSelected}" aria-label="${escapeHtml(dateInfo.fullLabel)}，${count} 场比赛">
-                  <span>${escapeHtml(dateInfo.weekdayShort)}</span>
-                  <strong>${escapeHtml(dateInfo.day)}</strong>
-                  <small>${count} 场</small>
-                </button>
-              </span>
-            `;
-          }).join("") : `<span class="match-calendar-empty">暂无该选手的比赛日期</span>`}
+      <div class="player-calendar-legend" aria-label="日历图例">
+        <span><i class="has-matches"></i>每个圆点代表一场</span>
+        <span><i class="is-in-season"></i>赛季记录期</span>
+        <span><i class="is-out-of-season"></i>非记录期</span>
+      </div>
+      <div class="player-calendar-layout">
+        <div class="player-calendar-months">
+          ${calendarMonths.length
+            ? calendarMonths.map((month) => renderPlayerProfileMonthCalendar(month, playerMatchesByDate, seasonStart, seasonEnd)).join("")
+            : `<div class="player-profile-recent-empty">暂无赛季比赛日期</div>`}
         </div>
-        <button class="match-calendar-arrow" data-player-profile-match-date-step="1" type="button" aria-label="下一个比赛日" ${selectedMatchDateIndex < 0 || selectedMatchDateIndex >= playerMatchDates.length - 1 ? "disabled" : ""}>
-          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg>
-        </button>
+        <section class="player-calendar-results" aria-label="所选日期比赛">
+          <div class="player-calendar-selection" aria-live="polite">
+            <div>
+              <strong>${escapeHtml(selectedDateInfo.fullLabel)}</strong>
+              <small>${selectedPlayerProfileMatchDate ? `${escapeHtml(selectedDateInfo.weekday)}${selectedPlayerProfileMatchDate === playerMatchDates.at(-1) ? " · 最近比赛日" : ""}` : "等待录入该选手的比赛数据"}</small>
+            </div>
+            <span>${selectedDateMatches.length} 场比赛</span>
+          </div>
+          <div id="playerProfileMatches" class="match-list"></div>
+        </section>
       </div>
-      <div class="match-calendar-meta" aria-live="polite">
-        <div>
-          <strong>${escapeHtml(selectedDateInfo.fullLabel)}</strong>
-          <small>${selectedPlayerProfileMatchDate ? `${escapeHtml(selectedDateInfo.weekday)}${selectedMatchDateIndex === playerMatchDates.length - 1 ? " · 最近比赛日" : ""}` : "等待录入该选手的比赛数据"}</small>
-        </div>
-        <span>${selectedDateMatches.length} 场比赛</span>
-      </div>
-      <div id="playerProfileMatches" class="match-list"></div>
     </section>
   `;
 
-  renderMatchCards($("#playerProfileMatches"), selectedDateMatches);
+  renderMatchCards($("#playerProfileMatches"), selectedDateMatches, { showQualityBadge: false });
 }
 
 function renderPlayerProfilePositions(positionStats = createEmptyPositionStats(), playerStats = createEmptyPlayerStats()) {
@@ -2779,6 +2889,27 @@ function getTeammateCandidates(requiredIds) {
     .map((player) => ({ id: player.id, label: player.name }));
 }
 
+function renderRelationMatchLinks(matches = []) {
+  return `
+    <ol class="teammate-query-matches">
+      ${matches.map((item) => {
+        const match = item.match;
+        const label = `${formatAdminMatchCode(match)}，${item.side === "radiant" ? "天辉" : "夜魇"}，${item.isWin ? "胜" : "负"}`;
+        const href = `?season=${encodeURIComponent(CURRENT_SEASON)}&view=matchDetail&match=${encodeURIComponent(match.id)}`;
+        return `
+          <li>
+            <a class="teammate-query-match-link" href="${escapeHtml(href)}" data-open-match="${escapeHtml(match.id)}" aria-label="查看比赛 ${escapeHtml(label)}">
+              <span>${escapeHtml(formatAdminMatchCode(match))}</span>
+              <span>${item.side === "radiant" ? "天辉" : "夜魇"}</span>
+              <span>${escapeHtml(match.score || "-")}</span>
+              <b class="${item.isWin ? "is-win" : "is-loss"}">${item.isWin ? "胜" : "负"}</b>
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg>
+            </a>
+          </li>`;
+      }).join("")}
+    </ol>`;
+}
+
 function renderTeammateQueryResult(selectedIds) {
   if (selectedIds.length < 2) {
     return `<p class="muted">请选择 A 和 B，后续选手可选。</p>`;
@@ -2797,16 +2928,7 @@ function renderTeammateQueryResult(selectedIds) {
       <span>胜率 ${Math.round(record.winrate * 100)}%</span>
       <span>共 ${record.games} 场</span>
     </div>
-    <ol class="teammate-query-matches">
-      ${record.matches.slice(0, 8).map((item) => `
-        <li>
-          <span>${escapeHtml(formatAdminMatchCode(item.match))}</span>
-          <span>${item.side === "radiant" ? "天辉" : "夜魇"}</span>
-          <span>${escapeHtml(item.match.score || "-")}</span>
-          <b class="${item.isWin ? "is-win" : "is-loss"}">${item.isWin ? "胜" : "负"}</b>
-        </li>
-      `).join("")}
-    </ol>
+    ${renderRelationMatchLinks(record.matches)}
   `;
 }
 
@@ -2828,7 +2950,7 @@ function getTeammateGroupRecord(playerIds) {
     wins,
     losses,
     winrate: matches.length ? wins / matches.length : 0,
-    matches
+    matches: matches.sort((a, b) => compareMatchesByScheduleDesc(a.match, b.match))
   };
 }
 
@@ -2886,16 +3008,7 @@ function renderOpponentQueryResult(playerId, opponentId) {
       <span>胜率 ${Math.round(record.winrate * 100)}%</span>
       <span>共 ${record.games} 场</span>
     </div>
-    <ol class="teammate-query-matches">
-      ${record.matches.slice(0, 8).map((item) => `
-        <li>
-          <span>${escapeHtml(formatAdminMatchCode(item.match))}</span>
-          <span>${item.side === "radiant" ? "天辉" : "夜魇"}</span>
-          <span>${escapeHtml(item.match.score || "-")}</span>
-          <b class="${item.isWin ? "is-win" : "is-loss"}">${item.isWin ? "胜" : "负"}</b>
-        </li>
-      `).join("")}
-    </ol>
+    ${renderRelationMatchLinks(record.matches)}
   `;
 }
 
@@ -2918,7 +3031,7 @@ function getOpponentRecord(playerId, opponentId) {
     wins,
     losses,
     winrate: matches.length ? wins / matches.length : 0,
-    matches
+    matches: matches.sort((a, b) => compareMatchesByScheduleDesc(a.match, b.match))
   };
 }
 
@@ -4665,7 +4778,7 @@ function renderAdminMatches() {
     .join("");
 }
 
-function renderMatchCards(target, matches) {
+function renderMatchCards(target, matches, options = {}) {
   if (!matches.length) {
     renderEmpty(target);
     return;
@@ -4679,7 +4792,7 @@ function renderMatchCards(target, matches) {
       return `
         <article class="match-card match-card-button match-quality-${quality}" data-open-match="${match.id}" tabindex="0" role="button" aria-label="查看 ${escapeHtml(formatShortMatchDate(match.date))} 第 ${Number(match.matchNo || 1)} 场详情">
           <div class="match-card-main">
-            <strong>${escapeHtml(formatShortMatchDate(match.date))} 第 ${Number(match.matchNo || 1)} 场 ${renderMatchQualityBadge(match)}</strong>
+            <strong>${escapeHtml(formatShortMatchDate(match.date))} 第 ${Number(match.matchNo || 1)} 场${options.showQualityBadge === false ? "" : ` ${renderMatchQualityBadge(match)}`}</strong>
             <div class="match-versus">
               <span>${radiantNames}</span>
               <b>VS</b>
@@ -4863,10 +4976,9 @@ function renderMatchTeamScoreboard(team, label, ids, match, analysis) {
           <th>选手</th><th>POS</th><th>等级</th><th>K / D / A</th><th>正 / 反补</th><th>NET</th><th>GPM / XPM</th><th>英雄伤害</th><th>建筑伤害</th><th>承受伤害</th><th>治疗</th><th>物品</th>
         </tr></thead>
         <tbody>${rows.map((id) => {
-          const player = getPlayer(id);
           const row = getMatchDetailRow(match, id, analysis);
           return `<tr>
-            <td><span class="match-scoreboard-player">${renderHeroAvatar(row.hero)}<span><b>${escapeHtml(player?.name || "未知选手")}</b><small>${escapeHtml(row.hero || "英雄未记录")}</small></span></span></td>
+            <td>${renderMatchPlayerProfileLink(id, row.hero)}</td>
             <td>${escapeHtml(row.position || "—")}</td>
             <td>${formatMatchMetric(row.level)}</td>
             <td><span class="match-kda"><i>${formatMatchMetric(row.kills)}</i><em>${formatMatchMetric(row.deaths)}</em><i>${formatMatchMetric(row.assists)}</i></span></td>
@@ -4886,6 +4998,16 @@ function renderMatchTeamScoreboard(team, label, ids, match, analysis) {
   </section>`;
 }
 
+function renderMatchPlayerProfileLink(playerId, heroName) {
+  const player = getPlayer(playerId);
+  const playerName = player?.name || "未知选手";
+  const href = `?season=${encodeURIComponent(CURRENT_SEASON)}&view=playerProfile&player=${encodeURIComponent(playerId)}`;
+  return `<a class="match-scoreboard-player match-scoreboard-player-link" href="${escapeHtml(href)}" data-match-player-profile="${escapeHtml(playerId)}" aria-label="查看 ${escapeHtml(playerName)} 的个人页面">
+    ${renderHeroAvatar(heroName)}
+    <span><b>${escapeHtml(playerName)}</b><small>${escapeHtml(heroName || "英雄未记录")}</small></span>
+  </a>`;
+}
+
 function renderMatchSkillBuild(match, analysis) {
   const allIds = [...match.radiant, ...match.dire];
   const builds = allIds.map((id) => getMatchDetailRow(match, id, analysis).abilityBuild || []);
@@ -4899,10 +5021,9 @@ function renderMatchSkillBuild(match, analysis) {
         <div class="match-skill-scroll"><table class="match-skill-table">
           <thead><tr><th>选手</th>${Array.from({ length: maxLevel }, (_, index) => `<th>${index + 1}</th>`).join("")}</tr></thead>
           <tbody>${ids.map((id) => {
-            const player = getPlayer(id);
             const row = getMatchDetailRow(match, id, analysis);
             const byLevel = new Map((row.abilityBuild || []).map((ability) => [Number(ability.level), ability]));
-            return `<tr><td><span class="match-scoreboard-player">${renderHeroAvatar(row.hero)}<span><b>${escapeHtml(player?.name || "未知选手")}</b><small>${escapeHtml(row.hero || "英雄未记录")}</small></span></span></td>${Array.from({ length: maxLevel }, (_, index) => {
+            return `<tr><td>${renderMatchPlayerProfileLink(id, row.hero)}</td>${Array.from({ length: maxLevel }, (_, index) => {
               const ability = byLevel.get(index + 1);
               if (!ability) return `<td class="is-empty"></td>`;
               const fallback = ability.talent ? "T" : String(ability.name || ability.abilityId || "?").slice(0, 1);
@@ -4972,6 +5093,13 @@ function renderAdvantageChart(times, gold, xp) {
 }
 
 function handleMatchDetailPageClick(event) {
+  const playerProfileLink = event.target.closest("[data-match-player-profile]");
+  if (playerProfileLink) {
+    event.preventDefault();
+    openPlayerProfileById(playerProfileLink.dataset.matchPlayerProfile);
+    return;
+  }
+
   const back = event.target.closest("[data-match-detail-back]");
   if (back) {
     if (window.history.length > 1) window.history.back();
@@ -5065,6 +5193,1143 @@ function renderDialogPlayer(playerId, detail, fallbackPosition) {
   `;
 }
 
+async function ensureWhoGameData() {
+  if (whoGameDb.matches.length) return whoGameDb;
+  if (!whoGameLoadPromise) {
+    whoGameLoadPromise = fetch("/api/who-game/state")
+      .then(async (response) => {
+        if (!response.ok) throw new Error("联合题库加载失败");
+        return response.json();
+      })
+      .then((payload) => {
+        whoGameDb = {
+          players: Array.isArray(payload.players) ? payload.players : [],
+          matches: Array.isArray(payload.matches) ? payload.matches : [],
+          ratingSnapshots: Array.isArray(payload.ratingSnapshots) ? payload.ratingSnapshots : []
+        };
+        whoGamePlayerById = new Map(whoGameDb.players.map((player) => [player.id, player]));
+        whoGameModel = null;
+        return whoGameDb;
+      })
+      .finally(() => {
+        whoGameLoadPromise = null;
+      });
+  }
+  return whoGameLoadPromise;
+}
+
+async function ensureWhoGameDaily() {
+  if (!whoGameIdentityId) return null;
+  if (whoGameDaily?.player?.id === whoGameIdentityId) return whoGameDaily;
+  if (!whoGameDailyPromise) {
+    whoGameDailyPromise = fetch(`/api/who-game/daily?playerId=${encodeURIComponent(whoGameIdentityId)}`)
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "每日进度读取失败");
+        whoGameDaily = payload;
+        restoreWhoGameDailySession();
+        return payload;
+      })
+      .catch((error) => {
+        localStorage.removeItem(WHO_GAME_PLAYER_KEY);
+        whoGameIdentityId = "";
+        whoGameDaily = null;
+        whoGameState.status = "identity";
+        whoGameState.message = error.message;
+        throw error;
+      })
+      .finally(() => {
+        whoGameDailyPromise = null;
+      });
+  }
+  return whoGameDailyPromise;
+}
+
+function restoreWhoGameDailySession() {
+  const session = whoGameDaily?.current;
+  if (!session || whoGameState.question?.key === session.questionKey) return;
+  const question = chooseWhoGameQuestion(session.questionKey);
+  if (!question) return;
+  whoGamePowerupMode = "";
+  whoGamePowerupSelection = [];
+  whoGamePowerupOpen = false;
+  whoGameSummaryOpen = false;
+  whoGameState = {
+    question,
+    revealed: session.revealed || 1,
+    wrongGuesses: session.wrongGuesses || [],
+    selectedGuessId: "",
+    score: session.score ?? 0,
+    status: "playing",
+    message: ""
+  };
+}
+
+function selectWhoGameIdentity(playerId) {
+  const player = getWhoGamePlayer(playerId);
+  if (!player) return;
+  whoGameIdentityId = player.id;
+  whoGameIdentityCandidateId = "";
+  whoGameIdentityConfirmOpen = false;
+  whoGameDaily = null;
+  whoGamePowerupMode = "";
+  whoGamePowerupSelection = [];
+  whoGamePowerupOpen = false;
+  whoGameSummaryOpen = false;
+  whoGameState = {
+    question: null,
+    revealed: 1,
+    wrongGuesses: [],
+    selectedGuessId: "",
+    score: 0,
+    status: "idle",
+    message: ""
+  };
+  localStorage.setItem(WHO_GAME_PLAYER_KEY, player.id);
+  const currentUrl = new URL(window.location.href);
+  if (currentUrl.searchParams.has("resetWhoIdentity")) {
+    currentUrl.searchParams.delete("resetWhoIdentity");
+    window.history.replaceState({}, "", `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+  }
+  renderWhoGame();
+}
+
+function getWhoGamePlayer(id) {
+  return whoGamePlayerById.get(id);
+}
+
+function getWhoGameCompleteMatches() {
+  return whoGameDb.matches.filter((match) => hasBasicMatchInfo(match) && hasCompletePlayerDetails(match));
+}
+
+function getWhoGameRecentKeys() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(WHO_GAME_RECENT_KEY) || "[]");
+    return Array.isArray(saved) ? saved : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberWhoGameQuestion(key) {
+  try {
+    const recent = getWhoGameRecentKeys().filter((item) => item !== key);
+    recent.unshift(key);
+    localStorage.setItem(WHO_GAME_RECENT_KEY, JSON.stringify(recent.slice(0, 40)));
+  } catch {
+    // The game remains playable when browser storage is unavailable.
+  }
+}
+
+function getWhoGameDurationRange(match) {
+  const seconds = getMatchDurationSeconds(match);
+  if (!seconds) return "时长未知";
+  const minutes = Math.floor(seconds / 60);
+  const start = Math.floor(minutes / 10) * 10;
+  return `${start}–${start + 9} 分钟`;
+}
+
+function getWhoGameRank(match, playerId, field, ids = [...(match.radiant || []), ...(match.dire || [])]) {
+  return [...ids]
+    .sort((a, b) => Number(match.playerDetails?.[b]?.[field] || 0) - Number(match.playerDetails?.[a]?.[field] || 0))
+    .findIndex((id) => id === playerId) + 1;
+}
+
+function buildWhoGameModel() {
+  if (whoGameModel) return whoGameModel;
+  const completeMatches = getWhoGameCompleteMatches();
+  const profiles = new Map(whoGameDb.players.map((player) => [player.id, {
+    player,
+    games: 0,
+    wins: 0,
+    positions: Object.fromEntries(POSITIONS.map((position) => [position, 0])),
+    heroes: new Map(),
+    teammates: new Map(),
+    opponents: new Map(),
+    seasonStats: {
+      s2: { games: 0, wins: 0 },
+      s3: { games: 0, wins: 0 }
+    },
+    appearances: [],
+    totals: { kills: 0, deaths: 0, assists: 0, gpm: 0, xpm: 0 }
+  }]));
+
+  completeMatches.forEach((match) => {
+    ["radiant", "dire"].forEach((side) => {
+      const ids = match[side] || [];
+      ids.forEach((playerId) => {
+        const profile = profiles.get(playerId);
+        const detail = match.playerDetails?.[playerId];
+        if (!profile || !detail) return;
+        profile.games += 1;
+        if (match.winner === side) profile.wins += 1;
+        const seasonStats = profile.seasonStats[match.season];
+        if (seasonStats) {
+          seasonStats.games += 1;
+          if (match.winner === side) seasonStats.wins += 1;
+        }
+        profile.appearances.push({ match, side, detail });
+        const position = String(detail.position || match.positions?.[playerId] || "");
+        if (POSITIONS.includes(position)) profile.positions[position] += 1;
+        const hero = getHeroIdentity(detail.hero);
+        if (hero.key) {
+          const usage = profile.heroes.get(hero.key) || { ...hero, count: 0 };
+          usage.count += 1;
+          profile.heroes.set(hero.key, usage);
+        }
+        Object.keys(profile.totals).forEach((field) => {
+          profile.totals[field] += Number(detail[field] || 0);
+        });
+        ids.filter((id) => id !== playerId).forEach((teammateId) => {
+          profile.teammates.set(teammateId, (profile.teammates.get(teammateId) || 0) + 1);
+        });
+        const opponentIds = side === "radiant" ? (match.dire || []) : (match.radiant || []);
+        opponentIds.forEach((opponentId) => {
+          profile.opponents.set(opponentId, (profile.opponents.get(opponentId) || 0) + 1);
+        });
+      });
+    });
+  });
+
+  const eligible = [...profiles.values()].filter((profile) => profile.games >= 3);
+  eligible.forEach((profile) => {
+    profile.winrate = profile.games ? (profile.wins / profile.games) * 100 : 0;
+    profile.mainPosition = POSITIONS
+      .map((position) => ({ position, count: profile.positions[position] }))
+      .sort((a, b) => b.count - a.count)[0];
+    profile.signatureHero = [...profile.heroes.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"))[0];
+    profile.frequentTeammate = [...profile.teammates.entries()]
+      .sort((a, b) => b[1] - a[1])[0];
+    profile.frequentOpponent = [...profile.opponents.entries()]
+      .sort((a, b) => b[1] - a[1])[0];
+    profile.averages = Object.fromEntries(Object.entries(profile.totals).map(([field, total]) => [field, total / profile.games]));
+  });
+
+  whoGameModel = {
+    completeMatches,
+    profiles,
+    eligible,
+    appearances: eligible.flatMap((profile) => profile.appearances.map((appearance) => ({ profile, ...appearance })))
+  };
+  return whoGameModel;
+}
+
+function pickWhoGameItem(items) {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function buildWhoGameSuspects(targetProfile, eligible) {
+  const scored = eligible
+    .filter((profile) => profile.player.id !== targetProfile.player.id)
+    .map((profile) => ({
+      profile,
+      score:
+        (profile.mainPosition.position === targetProfile.mainPosition.position ? 0 : 2.2)
+        + Math.abs(profile.games - targetProfile.games) / 18
+        + Math.abs(profile.winrate - targetProfile.winrate) / 22
+        + Math.abs(profile.averages.gpm - targetProfile.averages.gpm) / 115
+        + Math.random() * 1.4
+    }))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 7)
+    .map((item) => item.profile.player);
+  return [targetProfile.player, ...scored].sort(() => Math.random() - 0.5);
+}
+
+function buildWhoGameFacts(profile, appearance, suspects) {
+  const { match, side, detail } = appearance;
+  const allIds = [...(match.radiant || []), ...(match.dire || [])];
+  const teammates = match[side].filter((id) => id !== profile.player.id);
+  const opponents = side === "radiant" ? (match.dire || []) : (match.radiant || []);
+  const teammate = getWhoGamePlayer(pickWhoGameItem(teammates));
+  const opponent = getWhoGamePlayer(pickWhoGameItem(opponents));
+  const commonTeammate = getWhoGamePlayer(profile.frequentTeammate?.[0]);
+  const commonOpponent = getWhoGamePlayer(profile.frequentOpponent?.[0]);
+  const gameRangeStart = Math.max(1, Math.floor(profile.games / 10) * 10);
+  const winrateStart = Math.floor(profile.winrate / 10) * 10;
+  const suspectProfiles = suspects.map((player) => buildWhoGameModel().profiles.get(player.id)).filter(Boolean);
+  const gpmRank = [...suspectProfiles].sort((a, b) => b.averages.gpm - a.averages.gpm)
+    .findIndex((item) => item.player.id === profile.player.id) + 1;
+  const s2 = profile.seasonStats.s2;
+  const s3 = profile.seasonStats.s3;
+  const anchorGpmDelta = Number(detail.gpm || 0) - profile.averages.gpm;
+  // 动态统计以出题日前一天为截止日，题面只显示月和日。
+  const statisticsCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const dateParts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "numeric",
+    day: "numeric"
+  }).formatToParts(statisticsCutoff);
+  const dateValues = Object.fromEntries(dateParts.map((part) => [part.type, part.value]));
+  const asOf = `截至 ${dateValues.month} 月 ${dateValues.day} 日，`;
+
+  return [
+    { key: "match-result", source: "match", label: "本场档案", strength: 1, text: `锚点比赛来自 ${match.seasonLabel}，这名选手位于${side === "radiant" ? "天辉" : "夜魇"}并${match.winner === side ? "获胜" : "落败"}` },
+    { key: "match-role", source: "match", label: "本场档案", strength: 2, text: `锚点比赛担任 ${detail.position || match.positions?.[profile.player.id] || "-"} 号位，比赛时长处于 ${getWhoGameDurationRange(match)}` },
+    { key: "match-kda", source: "match", label: "本场档案", strength: 3, text: `锚点比赛的 K / D / A 为 ${Number(detail.kills || 0)} / ${Number(detail.deaths || 0)} / ${Number(detail.assists || 0)}` },
+    { key: "match-damage-rank", source: "match", label: "数据追踪", strength: 3, text: `锚点比赛英雄伤害全场第 ${getWhoGameRank(match, profile.player.id, "damage", allIds)}，承伤全场第 ${getWhoGameRank(match, profile.player.id, "damageTaken", allIds)}` },
+    { key: "match-economy-rank", source: "match", label: "数据追踪", strength: 3, text: `锚点比赛 GPM 全场第 ${getWhoGameRank(match, profile.player.id, "gpm", allIds)}，XPM 全场第 ${getWhoGameRank(match, profile.player.id, "xpm", allIds)}` },
+    { key: "match-form", source: "match", label: "反常发挥", strength: 2, text: `${asOf}锚点比赛 GPM ${anchorGpmDelta >= 0 ? "高于" : "低于"}自己的两季生涯平均约 ${Math.abs(Math.round(anchorGpmDelta))} 点` },
+    { key: "match-teammate", source: "relation", label: "关系网络", strength: 4, text: `锚点比赛与「${teammate?.name || "未知选手"}」同队` },
+    { key: "match-opponent", source: "relation", label: "关系网络", strength: 4, text: `锚点比赛的对手中包括「${opponent?.name || "未知选手"}」` },
+    { key: "match-hero", source: "hero", label: "英雄侧写", strength: 5, text: `锚点比赛使用的英雄是 ${detail.hero}`, hero: detail.hero },
+    { key: "career-games", source: "career", label: "生涯画像", strength: 1, text: `${asOf}两季完整比赛共出场 ${gameRangeStart}–${gameRangeStart + 9} 场，胜率处于 ${winrateStart}%–${Math.min(100, winrateStart + 9)}%` },
+    { key: "career-role", source: "career", label: "生涯画像", strength: 2, text: `${asOf}两季最常担任 ${profile.mainPosition.position} 号位，共出现 ${profile.mainPosition.count} 次` },
+    { key: "career-average", source: "career", label: "数据追踪", strength: 3, text: `${asOf}两季场均 ${profile.averages.kills.toFixed(1)} 次击杀、${profile.averages.assists.toFixed(1)} 次助攻` },
+    { key: "career-gpm", source: "career", label: "数据追踪", strength: 3, text: `${asOf}场均 GPM 为 ${Math.round(profile.averages.gpm)}，在本题 8 名嫌疑人中排名第 ${gpmRank}` },
+    { key: "career-pool", source: "hero", label: "英雄侧写", strength: 2, text: `${asOf}两季一共使用过 ${profile.heroes.size} 个不同英雄，最常用英雄出场 ${profile.signatureHero?.count || 0} 次` },
+    { key: "career-teammate", source: "relation", label: "关系网络", strength: 4, text: `${asOf}两季同队次数最多的是「${commonTeammate?.name || "未知选手"}」，共同出场 ${profile.frequentTeammate?.[1] || 0} 次` },
+    { key: "career-opponent", source: "relation", label: "关系网络", strength: 4, text: `${asOf}两季交手次数最多的对手是「${commonOpponent?.name || "未知选手"}」，共交手 ${profile.frequentOpponent?.[1] || 0} 次` },
+    { key: "career-hero", source: "hero", label: "英雄侧写", strength: 5, text: `${asOf}两季最常使用的英雄是 ${profile.signatureHero?.name || "未知"}`, hero: profile.signatureHero?.name || "" },
+    { key: "season-split", source: "cross", label: "跨季追踪", strength: 2, text: s2.games && s3.games ? `${asOf}S2 出场 ${s2.games} 场，S3 出场 ${s3.games} 场` : `${asOf}只在 ${s2.games ? "S2" : "S3"} 有完整比赛记录` },
+    ...(s2.games && s3.games ? [{
+      key: "season-form",
+      source: "cross",
+      label: "跨季追踪",
+      strength: 3,
+      text: `${asOf}胜率从 S2 的 ${Math.round((s2.wins / s2.games) * 100)}% ${s3.wins / s3.games >= s2.wins / s2.games ? "上升" : "下降"}到 S3 的 ${Math.round((s3.wins / s3.games) * 100)}%`
+    }] : [])
+  ];
+}
+
+const WHO_GAME_THEMES = [
+  { name: "全能档案", description: "单场表现与两季生涯交叉验证", preferred: ["match", "career"] },
+  { name: "数据追踪", description: "从排名、经济和个人数据锁定身份", preferred: ["match", "career"] },
+  { name: "关系网络", description: "队友与对手会成为关键证词", preferred: ["relation"] },
+  { name: "英雄侧写", description: "英雄池与锚点英雄共同构成画像", preferred: ["hero"] },
+  { name: "跨季回声", description: "S2 与 S3 的变化藏着身份线索", preferred: ["cross", "career"] }
+];
+
+function selectWhoGameClues(facts, theme) {
+  const selected = [];
+  const take = (candidates) => {
+    const available = candidates.filter((fact) => !selected.some((item) => item.key === fact.key));
+    if (!available.length) return;
+    const weighted = available
+      .map((fact) => ({ fact, score: Math.random() / (theme.preferred.includes(fact.source) ? 2.4 : 1) }))
+      .sort((a, b) => a.score - b.score);
+    selected.push(weighted[0].fact);
+  };
+
+  take(facts.filter((fact) => fact.source === "match" && fact.strength <= 3));
+  take(facts.filter((fact) => fact.source === "match" && fact.strength <= 3));
+  take(facts.filter((fact) => ["career", "cross"].includes(fact.source) && fact.strength <= 3));
+  take(facts.filter((fact) => ["career", "cross"].includes(fact.source) && fact.strength <= 3));
+  while (selected.length < 5) take(facts.filter((fact) => fact.strength <= 4));
+  take(facts.filter((fact) => fact.strength >= 4));
+
+  const opening = selected.slice(0, 5)
+    .map((fact) => ({ fact, order: fact.strength + Math.random() * 1.8 }))
+    .sort((a, b) => a.order - b.order)
+    .map((item) => item.fact);
+  return [...opening, selected[5]];
+}
+
+function chooseWhoGameQuestion(questionKey = "") {
+  const curatedQuestion = buildCuratedWhoGameQuestion(questionKey);
+  if (curatedQuestion) return curatedQuestion;
+  const model = buildWhoGameModel();
+  if (!model.appearances.length) return null;
+  const recent = new Set(getWhoGameRecentKeys());
+  const fresh = model.appearances.filter((item) => !recent.has(`${item.match.id}:${item.profile.player.id}`));
+  const appearance = pickWhoGameItem(fresh.length ? fresh : model.appearances);
+  const suspects = buildWhoGameSuspects(appearance.profile, model.eligible);
+  const theme = pickWhoGameItem(WHO_GAME_THEMES);
+  const facts = buildWhoGameFacts(appearance.profile, appearance, suspects);
+  return {
+    key: `${appearance.match.id}:${appearance.profile.player.id}`,
+    answerId: appearance.profile.player.id,
+    profile: appearance.profile,
+    match: appearance.match,
+    detail: appearance.detail,
+    side: appearance.side,
+    suspects,
+    theme,
+    clues: selectWhoGameClues(facts, theme)
+  };
+}
+
+function buildCuratedWhoGameQuestion(questionKey = "curated-preview-robot-01") {
+  const model = buildWhoGameModel();
+  const buildQuestion = ({ key, answerName, description, clues }) => {
+    const target = whoGameDb.players.find((player) => player.name === answerName);
+    const profile = target ? model.profiles.get(target.id) : null;
+    const suspects = [...whoGameDb.players].sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+    if (!target || !profile || !suspects.some((player) => player.id === target.id)) return null;
+    const ratingPoints = whoGameDb.ratingSnapshots
+      .filter((snapshot) => snapshot.season === "s2" && snapshot.playerId === target.id)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+      .map((snapshot) => ({ date: snapshot.date, rating: Number(snapshot.rating) }));
+    return {
+      key,
+      answerId: target.id,
+      profile,
+      suspects,
+      theme: { name: "每日题库", description },
+      clues: clues(ratingPoints)
+    };
+  };
+
+  const questions = [
+    buildQuestion({
+      key: "curated-preview-guanyu-01",
+      answerName: "关羽",
+      description: "历史事件、位置履历、位置反差、关系网络与单场纪录",
+      clues: (ratingPoints) => [
+        {
+          key: "longest-match",
+          label: "S2 · 历史事件",
+          text: "他参加了 S2 最长的 59 分 46 秒比赛。",
+          verification: "5 月 16 日第 2 场，他使用熊战士担任 1 号位，打出 26 / 5 / 5，并赢下这场 59 分 46 秒的比赛。"
+        },
+        {
+          key: "position-coverage",
+          label: "生涯 · 位置履历",
+          text: `${WHO_GAME_CURATED_AS_OF}两季共出场 28 次，只担任过 1、2、3 号位，从未出现在两个辅助位置。`,
+          verification: "1 号位 11 场 7 胜，2 号位 10 场 2 胜，3 号位 7 场 6 胜；4、5 号位均为 0 场。"
+        },
+        {
+          key: "role-winrate-contrast",
+          label: "生涯 · 位置反差",
+          text: `${WHO_GAME_CURATED_AS_OF}他担任 3 号位时取得 7 场 6 胜；担任 2 号位时却只有 10 场 2 胜。`,
+          verification: "3 号位胜率为 85.7%（7 场 6 胜），2 号位胜率为 20.0%（10 场 2 胜）。"
+        },
+        {
+          key: "frequent-teammates",
+          label: "生涯 · 关系网络",
+          text: `${WHO_GAME_CURATED_AS_OF}两季中，他与 xian、小孩、ldxy 分别同队 11 场，并列成为与他同队次数最多的选手。`,
+          verification: "与 xian 同队 11 场、与小孩同队 11 场、与 ldxy 同队 11 场，三人并列第一。"
+        },
+        {
+          key: "s3-economy",
+          label: "S3 · 单场记录",
+          text: "他曾在 S3 使用幻影长矛手担任 1 号位，在一场败局中取得 942 GPM，并完成 768 次补刀。",
+          verification: "9 月 15 日第 2 场，他使用幻影长矛手打出 14 / 5 / 6、942 GPM和768次补刀，但最终落败。",
+          hero: "幻影长矛手"
+        }
+      ]
+    }),
+    buildQuestion({
+      key: "curated-preview-robot-01",
+      answerName: "机器人",
+      description: "评分走势、位置履历、连续战绩、绝活表现与英雄池",
+      clues: (ratingPoints) => [
+      {
+        key: "s2-rating-curve",
+        label: "S2 · 评分走势",
+        type: "ratingTrend",
+        points: ratingPoints,
+        text: "赛季中段一度升至 7.5，随后持续回落，赛季末回到 5.0。",
+        verification: "最高评分为 7.5（5 月 16 日、17 日），最低评分为 4.0（5 月 24 日），5 月 27 日最终为 5.0。"
+      },
+      {
+        key: "position-record",
+        label: "生涯 · 位置履历",
+        text: `${WHO_GAME_CURATED_AS_OF}这名选手两季五个位置全部打过；其中 4 号位出场 5 次，一场也没有获胜。`,
+        verification: "1 号位 24 场 13 胜，2 号位 1 场 0 胜，3 号位 14 场 6 胜，4 号位 5 场 0 胜，5 号位 3 场 1 胜。"
+      },
+      {
+        key: "losing-streak",
+        label: "生涯 · 连续战绩",
+        text: "这名选手曾经遭遇过 7 连败。",
+        verification: "这段 7 连败从 5 月 21 日第 4 场开始，持续到 5 月 25 日第 2 场。"
+      },
+      {
+        key: "signature-performance",
+        label: "单场 · 绝活表现",
+        text: "他曾使用绝活英雄打出 3 / 18 / 14 的战绩，饱受好评。",
+        verification: "9 月 16 日第 3 场，他使用帕吉担任 5 号位，打出 3 / 18 / 14，最终落败。"
+      },
+      {
+        key: "hero-pool-size",
+        label: "生涯 · 英雄池",
+        text: `${WHO_GAME_CURATED_AS_OF}他在两个赛季中一共使用过 31 个不同英雄。`,
+        verification: "S2 使用过 29 个不同英雄，S3 使用过 4 个；去除两季重复英雄后，合计为 31 个。"
+      }
+      ]
+    }),
+    buildQuestion({
+      key: "curated-preview-xian-01",
+      answerName: "xian",
+      description: "英雄排除、分位置画像、评分走势、辅助表现与关系网络",
+      clues: (ratingPoints) => [
+        {
+          key: "popular-heroes-never-played",
+          label: "生涯 · 英雄排除",
+          text: `${WHO_GAME_CURATED_AS_OF}他从未使用过：孽主、破晓辰星、干扰者、虚空假面、主宰。`,
+          verification: "孽主、破晓辰星、干扰者、虚空假面和主宰的个人使用次数均为 0。"
+        },
+        {
+          key: "position-damage-profile",
+          label: "生涯 · 分位置画像",
+          text: `${WHO_GAME_CURATED_AS_OF}担任 1、2、3、4 号位时，他的平均输出占比都高于全体同位置平均；唯独 5 号位低于平均。`,
+          verification: "1至5号位依次为 27.5% / 31.2% / 24.5% / 17.6% / 12.0%；同位置全体平均为 23.2% / 29.4% / 21.0% / 14.3% / 12.1%。"
+        },
+        {
+          key: "s2-rating-curve",
+          label: "S2 · 评分走势",
+          type: "ratingTrend",
+          points: ratingPoints,
+          text: "S2 评分走势。",
+          verification: "最低评分为 7.5（5 月 6 日），最高评分为 11.0，分别出现在 5 月 12日至14日、18日和26日。"
+        },
+        {
+          key: "support-kills",
+          label: "单场 · 辅助表现",
+          text: "他曾使用辅助位取得 17 次击杀。",
+          verification: "9 月 16 日第 3 场，他使用矮人直升机担任 4 号位，打出 17 / 10 / 28 并获胜。"
+        },
+        {
+          key: "frequent-teammate",
+          label: "生涯 · 关系网络",
+          text: `${WHO_GAME_CURATED_AS_OF}两季中与他同队次数最多的是 ldxy，共同出场 17 次。`,
+          verification: "与 ldxy 同队 17 场，为所有队友中最多；第二名是小孩，共同出场 16 场。"
+        }
+      ]
+    }),
+    buildQuestion({
+      key: "curated-preview-mazhong-01",
+      answerName: "马忠",
+      description: "评分、密集出勤、英雄履历、历史事件与败局表现",
+      clues: (ratingPoints) => [
+        {
+          key: "s2-rating-curve",
+          label: "S2 · 评分走势",
+          type: "ratingTrend",
+          points: ratingPoints,
+          text: "评分从赛季初的 8.0 稳步上升，最高达到 10.5。"
+        },
+        {
+          key: "attendance-window",
+          label: "S2 · 日期出勤",
+          text: "5 月 14 日至 16 日共进行了 13 场比赛，他参加了其中 11 场。"
+        },
+        {
+          key: "hero-sample",
+          label: "生涯 · 英雄履历",
+          text: "他在两个赛季中曾使用过以下五名英雄：",
+          heroes: ["食人魔魔法师", "破晓辰星", "灰烬之灵", "钢背兽", "露娜"]
+        },
+        {
+          key: "longest-match",
+          label: "S2 · 历史事件",
+          text: "这名选手参加过 S2 时长最长的 59 分 46 秒比赛。"
+        },
+        {
+          key: "loss-top-damage",
+          label: "S2 · 单场记录",
+          text: "他曾使用露娜在一场败局中打出 86,353 点英雄伤害，仍为全场第一。",
+          hero: "露娜"
+        }
+      ]
+    })
+  ].filter(Boolean);
+  return questions.find((question) => question.key === questionKey) || null;
+}
+
+async function startWhoGameQuestion() {
+  whoGameSummaryOpen = false;
+  try {
+    await ensureWhoGameData();
+    if (!whoGameIdentityId) throw new Error("请先选择你的选手ID");
+    const response = await fetch("/api/who-game/daily/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ playerId: whoGameIdentityId })
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "今日题目读取失败");
+    whoGameDaily = payload;
+  } catch (error) {
+    whoGameState.status = whoGameIdentityId ? "empty" : "identity";
+    whoGameState.message = error.message;
+    renderWhoGame();
+    return;
+  }
+  const session = whoGameDaily.current;
+  const question = session ? chooseWhoGameQuestion(session.questionKey) : null;
+  whoGamePowerupMode = "";
+  whoGamePowerupSelection = [];
+  whoGamePowerupOpen = false;
+  whoGameState = {
+    question,
+    revealed: session?.revealed || 1,
+    wrongGuesses: session?.wrongGuesses || [],
+    selectedGuessId: "",
+    score: session?.score ?? 0,
+    status: question ? "playing" : "empty",
+    message: question ? "" : "今日题目暂时无法读取。"
+  };
+  if (question) rememberWhoGameQuestion(question.key);
+  renderWhoGame();
+}
+
+async function saveWhoGameProgress() {
+  const session = whoGameDaily?.current;
+  if (!session || !whoGameIdentityId) return;
+  try {
+    const response = await fetch("/api/who-game/daily/progress", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        playerId: whoGameIdentityId,
+        sessionId: session.id,
+        status: whoGameState.status,
+        revealed: whoGameState.revealed,
+        wrongGuesses: whoGameState.wrongGuesses,
+        score: whoGameState.score
+      })
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "进度保存失败");
+    whoGameDaily = payload;
+    renderWhoGame();
+  } catch (error) {
+    whoGameState.message = `${whoGameState.message}（${error.message}）`;
+    renderWhoGame();
+  }
+}
+
+function getWhoGameCurrentSession() {
+  return whoGameDaily?.current || null;
+}
+
+function getWhoGamePowerups() {
+  const session = getWhoGameCurrentSession()
+    || whoGameDaily?.sessions?.find((item) => item.questionKey === whoGameState.question?.key);
+  return session?.powerups || [];
+}
+
+function getWhoGameSuccessMessage(answerName) {
+  return `猜对了，他是${answerName}！\n您真是懂${answerName}大师！`;
+}
+
+function calculateWhoGameScore(status, wrongGuesses = [], cluesUsed = 1, clueCount = 5) {
+  if (status !== "won") return 0;
+  const wrongGuessCount = Math.min(WHO_GAME_ATTEMPT_LIMIT, Math.max(0, wrongGuesses.length));
+  const normalizedCluesUsed = Math.min(clueCount, Math.max(1, Math.round(Number(cluesUsed) || 1)));
+  return WHO_GAME_CORRECT_SCORE
+    + (WHO_GAME_ATTEMPT_LIMIT - wrongGuessCount) * WHO_GAME_UNUSED_ATTEMPT_SCORE
+    + (clueCount - normalizedCluesUsed) * WHO_GAME_UNSEEN_CLUE_SCORE;
+}
+
+function getWhoGameSessionMetrics(session) {
+  const question = chooseWhoGameQuestion(session.questionKey);
+  const clueCount = question?.clues?.length || 5;
+  const wrongGuesses = Array.isArray(session.wrongGuesses) ? session.wrongGuesses : [];
+  const cluesUsed = Math.min(clueCount, Math.max(1, Number(session.revealed) || 1));
+  const attemptsUsed = session.status === "won"
+    ? Math.min(WHO_GAME_ATTEMPT_LIMIT, wrongGuesses.length + 1)
+    : WHO_GAME_ATTEMPT_LIMIT;
+  const calculatedScore = calculateWhoGameScore(session.status, wrongGuesses, cluesUsed, clueCount);
+  return {
+    session,
+    question,
+    answerName: getWhoGamePlayer(question?.answerId)?.name || "未知选手",
+    attemptsUsed,
+    cluesUsed,
+    powerupsUsed: session.powerups?.length || 0,
+    score: Number.isFinite(Number(session.score)) ? Math.max(0, Math.min(200, Number(session.score))) : calculatedScore
+  };
+}
+
+function renderWhoGameDailySummary() {
+  const identityPlayerName = getWhoGamePlayer(whoGameIdentityId)?.name || whoGameDaily?.player?.name || "未知选手";
+  const sessions = [...(whoGameDaily?.sessions || [])]
+    .filter((session) => session.status !== "playing")
+    .sort((left, right) => left.slot - right.slot)
+    .slice(0, whoGameDaily?.dailyLimit || 3)
+    .map(getWhoGameSessionMetrics);
+  const totalScore = sessions.reduce((sum, item) => sum + item.score, 0);
+  const maxScore = (whoGameDaily?.dailyLimit || 3) * 200;
+  return `
+    <section class="who-game-console who-daily-summary">
+      <header class="who-summary-heading">
+        <span>今日挑战完成</span>
+        <h3>你完成了今日的「他是谁」挑战</h3>
+        <p>你的今日得分为</p>
+        <strong>${totalScore}</strong><small> / ${maxScore}</small>
+        <div>玩家ID：<b>${escapeHtml(identityPlayerName)}</b></div>
+      </header>
+      <div class="who-summary-grid">
+        ${sessions.map((item) => `
+          <article class="who-summary-card ${item.session.status === "won" ? "is-win" : "is-loss"}">
+            <div class="who-summary-card-top">
+              <span>第 ${item.session.slot} 题</span>
+              <strong>${item.score}<small>分</small></strong>
+            </div>
+            <h4>${item.session.status === "won" ? escapeHtml(item.answerName) : "未猜出"}</h4>
+            <dl>
+              <div><dt>机会</dt><dd>${item.attemptsUsed} 次</dd></div>
+              <div><dt>提示</dt><dd>${item.cluesUsed} 条</dd></div>
+              <div><dt>道具</dt><dd>${item.powerupsUsed} 个</dd></div>
+            </dl>
+          </article>
+        `).join("")}
+      </div>
+      ${whoGameDaily?.unlimited ? `<button class="primary-button who-summary-continue" type="button" data-who-action="start">继续测试下一轮</button>` : ""}
+    </section>
+  `;
+}
+
+function getWhoGameExcludedIds() {
+  const excluded = new Set(whoGameState.wrongGuesses || []);
+  getWhoGamePowerups().forEach((powerup) => {
+    (powerup.result?.excludedIds || []).forEach((playerId) => excluded.add(playerId));
+  });
+  return excluded;
+}
+
+async function useWhoGamePowerup(type) {
+  const session = getWhoGameCurrentSession();
+  if (!session || whoGameState.status !== "playing" || whoGamePowerupBusy) return;
+  whoGamePowerupBusy = true;
+  renderWhoGame();
+  try {
+    const body = { playerId: whoGameIdentityId, sessionId: session.id, type };
+    if (type === "scan") body.selectedIds = [...whoGamePowerupSelection];
+    if (type === "probe") body.candidateId = whoGamePowerupSelection[0] || "";
+    const response = await fetch("/api/who-game/daily/powerup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "道具使用失败");
+    whoGameDaily = payload;
+    const result = payload.powerupResult?.result || {};
+    if (type === "eliminate") whoGameState.message = "道具生效：10名错误候选已被排除。";
+    if (type === "special") whoGameState.message = "作者提示已经解锁。";
+    if (type === "hero") whoGameState.message = "英雄残影已经显现。";
+    if (type === "scan") whoGameState.message = result.inside ? "搜查结果：目标就在你圈定的8人中。" : "搜查结果：目标不在你圈定的8人中。";
+    if (type === "probe" && result.correct) {
+      whoGameState.status = "won";
+      const answerName = getWhoGamePlayer(result.candidateId)?.name || "这名选手";
+      whoGameState.score = calculateWhoGameScore("won", whoGameState.wrongGuesses, whoGameState.revealed, whoGameState.question.clues.length);
+      whoGameState.message = getWhoGameSuccessMessage(answerName);
+    } else if (type === "probe") {
+      whoGameState.message = `无损试探结果：${getWhoGamePlayer(result.candidateId)?.name || "该选手"}不是答案。`;
+    }
+    whoGamePowerupMode = "";
+    whoGamePowerupSelection = [];
+  } catch (error) {
+    whoGameState.message = error.message;
+  } finally {
+    whoGamePowerupBusy = false;
+    renderWhoGame();
+  }
+}
+
+function renderWhoGamePowerups() {
+  const powerupsEnabled = false;
+  if (!powerupsEnabled) {
+    return `
+      <section class="who-powerup-panel" aria-label="道具">
+        <button class="who-super-powerup-trigger" type="button" disabled>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z" /><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" /></svg>
+          <strong>获取超级道具（暂未上线）</strong>
+        </button>
+      </section>
+    `;
+  }
+  const uses = getWhoGamePowerups();
+  const usedTypes = new Set(uses.map((use) => use.type));
+  const remaining = whoGameDaily?.powerupsRemaining ?? 0;
+  const items = [
+    { type: "eliminate", label: "排除十人", description: "直接移除10名错误候选", icon: '<path d="M5 12h14" />' },
+    { type: "special", label: "作者提示", description: "读取题目作者留下的题外提示", icon: '<path d="M12 3v3M5.6 5.6l2.1 2.1M3 12h3M18 12h3M8 17h8M9.5 21h5" /><path d="M8 13a5 5 0 1 1 8 0c-1.2 1-1.7 1.8-1.8 3h-4.4C9.7 14.8 9.2 14 8 13Z" />' },
+    { type: "hero", label: "英雄残影", description: "查看最常用英雄的模糊头像", icon: '<path d="M4 7h16v10H4z" /><path d="m4 15 4-4 3 3 2-2 7 5" />' },
+    { type: "scan", label: "圈定搜查", description: "圈出8人，确认答案是否在其中", icon: '<circle cx="11" cy="11" r="6" /><path d="m16 16 5 5M8 11h6M11 8v6" />' },
+    { type: "probe", label: "无损试探", description: "免费试猜1人，不消耗猜错机会", icon: '<path d="M12 3 4 7v5c0 5 3.4 8 8 9 4.6-1 8-4 8-9V7l-8-4Z" /><path d="m9 12 2 2 4-5" />' }
+  ];
+
+  return `
+    <section class="who-powerup-panel ${whoGamePowerupOpen ? "is-open" : ""}" aria-label="道具">
+      <button class="who-super-powerup-trigger" type="button" data-who-action="toggle-powerups" aria-expanded="${whoGamePowerupOpen}">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z" /><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" /></svg>
+        <strong>获取超级道具</strong>
+      </button>
+      <small class="who-powerup-daily">每日3次（${remaining}/3）</small>
+      <div class="who-powerup-drawer" ${whoGamePowerupOpen ? "" : "hidden"}>
+        <div class="who-powerup-grid">
+        ${items.map((item) => {
+          const used = usedTypes.has(item.type);
+          const active = whoGamePowerupMode === item.type;
+          return `<button class="who-powerup ${used ? "is-used" : ""} ${active ? "is-active" : ""}" type="button" data-who-powerup="${item.type}" ${used || remaining <= 0 || whoGamePowerupBusy || whoGameState.status !== "playing" ? "disabled" : ""}>
+            <svg aria-hidden="true" viewBox="0 0 24 24">${item.icon}</svg>
+            <strong>${item.label}</strong>
+          </button>`;
+        }).join("")}
+        </div>
+        ${whoGamePowerupMode ? `
+        <div class="who-powerup-mode">
+          <p>${whoGamePowerupMode === "scan" ? `请从未排除的候选中选择8人（${whoGamePowerupSelection.length}/8）` : `请选择1人进行无损试探（${whoGamePowerupSelection.length}/1）`}</p>
+          <div><button class="ghost-button" type="button" data-who-action="cancel-powerup">取消</button><button class="primary-button" type="button" data-who-action="confirm-powerup" ${whoGamePowerupMode === "scan" ? (whoGamePowerupSelection.length === 8 ? "" : "disabled") : (whoGamePowerupSelection.length === 1 ? "" : "disabled")}>使用道具</button></div>
+        </div>
+        ` : ""}
+        ${uses.length ? `<div class="who-powerup-results">${uses.map(renderWhoGamePowerupResult).join("")}</div>` : ""}
+      </div>
+    </section>
+  `;
+}
+
+function renderWhoGameVisibleClue(clue, index, isRevealed = true, showVerification = false) {
+  const heading = isRevealed && clue.type === "ratingTrend"
+    ? `提示 ${index + 1}：他的 S2 评分曲线如下。`
+    : `提示 ${index + 1}`;
+  return `
+    <article class="who-visible-clue ${isRevealed ? "is-revealed" : "is-locked"}">
+      <strong>${heading}</strong>
+      <div class="who-visible-clue-content" ${isRevealed ? "" : 'aria-hidden="true"'}>
+        ${clue.type === "ratingTrend" ? renderWhoGameRatingTrend(clue, false) : `<p>${escapeHtml(clue.text)}</p>`}
+        ${Array.isArray(clue.heroes) ? `
+          <div class="who-clue-heroes" aria-label="曾使用的英雄">
+            ${clue.heroes.map((hero) => `<span><span class="who-clue-hero">${renderHeroAvatar(hero)}</span><small>${escapeHtml(hero)}</small></span>`).join("")}
+          </div>
+        ` : ""}
+        ${clue.hero ? `<span class="who-clue-hero">${renderHeroAvatar(clue.hero)}</span>` : ""}
+      </div>
+      ${showVerification ? `
+        <div class="who-clue-verification">
+          <p>${escapeHtml(clue.verification || clue.text || "该线索已通过题库数据核验。")}</p>
+        </div>
+      ` : ""}
+    </article>
+  `;
+}
+
+function renderWhoGamePowerupResult(use) {
+  const result = use.result || {};
+  if (use.type === "special") return `<article class="is-special"><small>作者提示</small><p>${escapeHtml(result.text || "")}</p></article>`;
+  if (use.type === "hero") return `<article class="is-hero"><small>英雄残影</small><div class="who-blurred-hero" aria-label="高度模糊的英雄头像">${renderHeroAvatar(result.hero || "")}</div></article>`;
+  if (use.type === "eliminate") return `<article><small>排除十人</small><p>已永久排除 ${result.excludedIds?.length || 0} 名错误候选。</p></article>`;
+  if (use.type === "scan") return `<article><small>圈定搜查</small><p>${result.inside ? "目标在圈定的8人之中。" : "目标不在圈定的8人之中。"}</p></article>`;
+  if (use.type === "probe") return `<article><small>无损试探</small><p>${result.correct ? "试探命中正确身份。" : `${escapeHtml(getWhoGamePlayer(result.candidateId)?.name || "该选手")}不是答案。`}</p></article>`;
+  return "";
+}
+
+function revealWhoGameClue() {
+  const question = whoGameState.question;
+  if (!question || whoGameState.status !== "playing" || whoGameState.revealed >= question.clues.length) return;
+  whoGameState.revealed += 1;
+  whoGameState.message = `已解锁第 ${whoGameState.revealed} 条线索。`;
+  renderWhoGame();
+  void saveWhoGameProgress();
+}
+
+function submitWhoGameGuess(playerId) {
+  const question = whoGameState.question;
+  if (!question || whoGameState.status !== "playing") return;
+  if (!playerId) {
+    whoGameState.message = "请先选择一名选手。";
+    renderWhoGame();
+    return;
+  }
+  if (whoGameState.wrongGuesses.includes(playerId)) {
+    whoGameState.message = "这名选手已经猜过了，换一个答案吧。";
+    renderWhoGame();
+    return;
+  }
+  if (playerId === question.answerId) {
+    const answerName = getWhoGamePlayer(playerId)?.name || "这名选手";
+    whoGameState.status = "won";
+    whoGameState.score = calculateWhoGameScore("won", whoGameState.wrongGuesses, whoGameState.revealed, question.clues.length);
+    whoGameState.message = getWhoGameSuccessMessage(answerName);
+    renderWhoGame();
+    void saveWhoGameProgress();
+    return;
+  }
+
+  const guessedPlayerName = getWhoGamePlayer(playerId)?.name || "这名选手";
+  whoGameState.wrongGuesses.push(playerId);
+  whoGameState.selectedGuessId = "";
+  if (whoGameState.wrongGuesses.length >= 3) {
+    whoGameState.status = "lost";
+    whoGameState.score = 0;
+    whoGameState.message = `猜错了，他不是${guessedPlayerName}。`;
+  } else {
+    whoGameState.message = `猜错了，他不是${guessedPlayerName}。`;
+  }
+  renderWhoGame();
+  void saveWhoGameProgress();
+}
+
+function renderWhoGameClue(clue, index) {
+  const isRevealed = index < whoGameState.revealed;
+  return `
+    <li class="who-clue ${isRevealed ? "is-revealed" : "is-locked"}">
+      <span class="who-clue-index">${String(index + 1).padStart(2, "0")}</span>
+      <div>
+        <small>${isRevealed ? escapeHtml(clue.label) : "加密线索"}</small>
+        ${isRevealed && clue.type === "ratingTrend"
+          ? renderWhoGameRatingTrend(clue)
+          : `<p>${isRevealed ? escapeHtml(clue.text) : "继续解锁以读取这条档案"}</p>`}
+        ${isRevealed && Array.isArray(clue.heroes) ? `
+          <div class="who-clue-heroes" aria-label="曾使用的英雄">
+            ${clue.heroes.map((hero) => `<span><span class="who-clue-hero">${renderHeroAvatar(hero)}</span><small>${escapeHtml(hero)}</small></span>`).join("")}
+          </div>
+        ` : ""}
+      </div>
+      ${isRevealed && clue.hero ? `<span class="who-clue-hero">${renderHeroAvatar(clue.hero)}</span>` : ""}
+    </li>
+  `;
+}
+
+function renderWhoGameRatingTrend(clue) {
+  const points = Array.isArray(clue.points) ? clue.points.filter((point) => Number.isFinite(point.rating)) : [];
+  if (points.length < 2) return `<p>评分走势数据不足</p>`;
+  const width = 560;
+  const height = 132;
+  const inset = { top: 12, right: 12, bottom: 12, left: 12 };
+  const values = points.map((point) => point.rating);
+  const min = Math.floor(Math.min(...values) * 2) / 2;
+  const max = Math.ceil(Math.max(...values) * 2) / 2;
+  const range = Math.max(0.5, max - min);
+  const x = (index) => inset.left + (index / (points.length - 1)) * (width - inset.left - inset.right);
+  const y = (value) => inset.top + ((max - value) / range) * (height - inset.top - inset.bottom);
+  const polyline = points.map((point, index) => `${x(index).toFixed(1)},${y(point.rating).toFixed(1)}`).join(" ");
+  const peakIndex = values.indexOf(Math.max(...values));
+
+  return `
+    <figure class="who-rating-trend" aria-label="S2 评分走势曲线，共 ${points.length} 个记录点">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-hidden="true">
+        <polyline class="who-rating-line" points="${polyline}"></polyline>
+        ${points.map((point, index) => `<circle class="who-rating-point ${index === peakIndex ? "is-peak" : ""}" cx="${x(index).toFixed(1)}" cy="${y(point.rating).toFixed(1)}" r="${index === peakIndex ? 3.5 : 2}"></circle>`).join("")}
+      </svg>
+    </figure>
+  `;
+}
+
+function renderWhoGameResult(question) {
+  if (!question || !["won", "lost"].includes(whoGameState.status)) return "";
+  const player = getWhoGamePlayer(question.answerId);
+  const hero = question.detail?.hero || question.clues.find((clue) => clue.hero)?.hero;
+  const summary = `S2 + S3 · 两季 ${question.profile.games} 场 · 本题全部线索均来自真实数据`;
+  return `
+    <section class="who-answer-card ${whoGameState.status === "won" ? "is-win" : "is-loss"}">
+      <div class="who-answer-portrait">${hero ? renderHeroAvatar(hero) : ""}</div>
+      <div>
+        <small>${whoGameState.status === "won" ? "IDENTITY CONFIRMED" : "IDENTITY REVEALED"}</small>
+        <h3>${escapeHtml(player?.name || "未知选手")}</h3>
+        <p>${escapeHtml(summary)}</p>
+      </div>
+    </section>
+  `;
+}
+
+function renderWhoGameIdentityPicker() {
+  const players = [...whoGameDb.players].sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  const candidateName = getWhoGamePlayer(whoGameIdentityCandidateId)?.name || "";
+  return `
+    <section class="who-game-console">
+      <div class="who-identity-picker">
+        <h3>请先选择<span class="who-identity-emphasis">你自己的</span>ID，不要乱选不然会出BUG！<br>题库很小会逐渐扩充，不要在群里直接剧透答案！！</h3>
+        <div class="who-identity-grid" role="listbox" aria-label="选择自己的选手ID">
+          ${players.map((player) => `
+            <button class="who-identity-option ${whoGameIdentityCandidateId === player.id ? "is-selected" : ""}"
+              type="button" role="option" aria-selected="${whoGameIdentityCandidateId === player.id}"
+              data-who-identity="${escapeHtml(player.id)}">${escapeHtml(player.name)}</button>
+          `).join("")}
+        </div>
+        <div class="who-identity-confirm">
+          <button class="primary-button" type="button" data-who-action="open-identity-confirm" ${whoGameIdentityCandidateId ? "" : "disabled"}>进入游戏</button>
+        </div>
+      </div>
+      ${whoGameIdentityConfirmOpen && candidateName ? `
+        <div class="who-identity-confirm-backdrop">
+          <section class="who-identity-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="whoIdentityConfirmTitle">
+            <p id="whoIdentityConfirmTitle">确认你是<span>${escapeHtml(candidateName)}</span>并建立你的游戏档案</p>
+            <div>
+              <button class="secondary-button" type="button" data-who-action="cancel-identity-confirm">取消</button>
+              <button class="primary-button" type="button" data-who-action="confirm-identity">确认</button>
+            </div>
+          </section>
+        </div>
+      ` : ""}
+    </section>
+  `;
+}
+
+function renderWhoGame() {
+  const mount = $("#whoGameMount");
+  if (!mount) return;
+  const seasonLabel = $("#whoGameSeasonLabel");
+  if (seasonLabel) seasonLabel.textContent = "S2 + S3 · 联合题库";
+  if (!whoGameDb.matches.length) {
+    mount.innerHTML = `<div class="who-game-loading"><span></span><p>正在合并 S2 与 S3 身份档案…</p></div>`;
+    ensureWhoGameData().then(renderWhoGame).catch((error) => {
+      whoGameState.status = "empty";
+      whoGameState.message = error.message;
+      mount.innerHTML = `<div class="who-game-empty"><h3>题库加载失败</h3><p>${escapeHtml(error.message)}</p></div>`;
+    });
+    return;
+  }
+  if (!whoGameIdentityId) {
+    mount.innerHTML = renderWhoGameIdentityPicker();
+    return;
+  }
+  if (!whoGameDaily) {
+    mount.innerHTML = `<div class="who-game-loading"><span></span><p>正在读取今日游戏进度…</p></div>`;
+    ensureWhoGameDaily().then(renderWhoGame).catch(renderWhoGame);
+    return;
+  }
+  const dailyChallengeComplete = !whoGameDaily.current
+    && whoGameDaily.completed >= (whoGameDaily.dailyLimit || 3);
+  if (whoGameSummaryOpen || (dailyChallengeComplete && !whoGameState.question)) {
+    mount.innerHTML = renderWhoGameDailySummary();
+    return;
+  }
+  const question = whoGameState.question;
+  const isComplete = ["won", "lost"].includes(whoGameState.status);
+  const excludedIds = getWhoGameExcludedIds();
+  const canStart = Boolean(whoGameDaily.current || whoGameDaily.remaining > 0);
+  const activeSession = getWhoGameCurrentSession()
+    || whoGameDaily.sessions.find((item) => item.questionKey === question?.key);
+  const questionSlot = activeSession?.slot || Math.max(1, Math.min(3, whoGameDaily.used || 1));
+  const identityPlayerName = getWhoGamePlayer(whoGameIdentityId)?.name || "未知选手";
+  const attemptsRemaining = Math.max(0, 3 - whoGameState.wrongGuesses.length);
+  const canStartNextQuestion = Boolean(whoGameDaily.unlimited || whoGameDaily.remaining > 0);
+  const dailyRoundComplete = questionSlot >= (whoGameDaily.dailyLimit || 3);
+  const nextQuestionLabel = dailyRoundComplete ? "查看今日总结" : "开始今日下一题";
+  const feedbackTone = whoGameState.status === "won"
+    ? "is-success"
+    : (whoGameState.status === "lost" || (whoGameState.wrongGuesses.length && !whoGameState.selectedGuessId) ? "is-error" : "");
+  const selectedGuessName = getWhoGamePlayer(whoGameState.selectedGuessId)?.name || "";
+  const isSelectionPrompt = whoGameState.status === "playing" && selectedGuessName;
+  const statusMessage = isSelectionPrompt
+    ? `他是${selectedGuessName}吗？`
+    : (whoGameState.message === "等待作答" ? "等待选择" : (whoGameState.message || "等待选择"));
+  const statusMessageHtml = isSelectionPrompt
+    ? `他是<span class="who-status-selected-id">${escapeHtml(selectedGuessName)}</span>吗？`
+    : escapeHtml(statusMessage);
+
+  mount.innerHTML = `
+    <section class="who-game-console who-game-simple">
+      ${!question ? `
+        <div class="who-game-empty">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9.4 9a3 3 0 1 1 4.8 2.4c-1.35.9-2.2 1.55-2.2 3.1" /><path d="M12 19h.01" /><circle cx="12" cy="12" r="9" /></svg>
+          <h3>${whoGameDaily.unlimited ? "测试模式" : whoGameDaily.remaining === 0 ? "今天的三道题已完成" : whoGameState.status === "empty" ? "题目读取失败" : "准备读取身份档案"}</h3>
+          <p>${escapeHtml(whoGameState.message || (whoGameDaily.unlimited ? "已取消你的每日题目限制。" : whoGameDaily.remaining === 0 ? "明天 00:00 会获得三道新题。" : `今天还可以开始 ${whoGameDaily.remaining} 道题。`))}</p>
+          ${canStart ? `<button class="primary-button" type="button" data-who-action="start">${whoGameDaily.current ? "继续当前题目" : whoGameDaily.unlimited ? "继续测试" : `开始今日第 ${whoGameDaily.used + 1} 题`}</button>` : ""}
+        </div>
+      ` : `
+        <div class="who-game-progress">
+          <div class="who-question-number"><span>你好</span><strong class="who-question-identity">${escapeHtml(identityPlayerName)}</strong><span>，这是你今日的第</span><strong>${questionSlot}</strong><span>题</span></div>
+        </div>
+        <div class="who-game-alert ${feedbackTone} ${isComplete ? "is-complete" : ""}">
+          <p role="status">${statusMessageHtml}</p>
+          ${isComplete ? "" : `<div class="who-attempts-left"><strong>${attemptsRemaining}</strong><span>次机会</span></div>`}
+          <div class="who-guess-actions ${isComplete ? "is-complete" : ""}">
+            ${isComplete ? "" : `<button class="primary-button" type="button" data-who-action="guess" ${!whoGameState.selectedGuessId ? "disabled" : ""}>做出猜测</button>`}
+            ${isComplete
+              ? `<button class="primary-button who-next-question-button" type="button" data-who-action="${dailyRoundComplete ? "summary" : "next"}" ${!dailyRoundComplete && !canStartNextQuestion ? "disabled" : ""}>${nextQuestionLabel}</button>`
+              : `<button class="secondary-button" type="button" data-who-action="reveal" ${whoGameState.revealed >= question.clues.length ? "disabled" : ""}>下一条提示</button>`}
+          </div>
+        </div>
+        <div class="who-game-main">
+          <section class="who-simple-clues" aria-label="提示">
+            ${question.clues.map((clue, index) => renderWhoGameVisibleClue(clue, index, isComplete || index < whoGameState.revealed, isComplete)).join("")}
+          </section>
+          <aside class="who-game-sidebar">
+            ${renderWhoGamePowerups()}
+            <div class="who-simple-roster">
+            <div class="who-suspect-grid" role="listbox" aria-label="选择身份嫌疑人">
+              ${question.suspects.map((player, index) => {
+                const isWrong = whoGameState.wrongGuesses.includes(player.id);
+                const isSelected = whoGameState.selectedGuessId === player.id;
+                const isAnswer = isComplete && player.id === question.answerId;
+                const isEliminated = excludedIds.has(player.id) && !isWrong;
+                const isPowerupSelected = whoGamePowerupSelection.includes(player.id);
+                return `<button class="who-suspect ${isWrong ? "is-wrong" : ""} ${isEliminated ? "is-eliminated" : ""} ${isSelected ? "is-selected" : ""} ${isPowerupSelected ? "is-powerup-selected" : ""} ${isAnswer ? "is-answer" : ""}" type="button" role="option" aria-selected="${isSelected || isPowerupSelected}" data-who-suspect="${escapeHtml(player.id)}" ${isComplete || isWrong || isEliminated ? "disabled" : ""}><span>${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(player.name)}</strong></button>`;
+              }).join("")}
+            </div>
+            </div>
+          </aside>
+        </div>
+        ${renderWhoGameResult(question)}
+      `}
+    </section>
+  `;
+}
+
+function handleWhoGameClick(event) {
+  const identityButton = event.target.closest("[data-who-identity]");
+  if (identityButton) {
+    whoGameIdentityCandidateId = identityButton.dataset.whoIdentity || "";
+    whoGameIdentityConfirmOpen = false;
+    renderWhoGame();
+    return;
+  }
+  const suspectButton = event.target.closest("[data-who-suspect]");
+  if (suspectButton && whoGameState.status === "playing") {
+    const playerId = suspectButton.dataset.whoSuspect || "";
+    if (whoGamePowerupMode === "scan") {
+      if (whoGamePowerupSelection.includes(playerId)) {
+        whoGamePowerupSelection = whoGamePowerupSelection.filter((id) => id !== playerId);
+      } else if (whoGamePowerupSelection.length < 8) {
+        whoGamePowerupSelection.push(playerId);
+      }
+    } else if (whoGamePowerupMode === "probe") {
+      whoGamePowerupSelection = [playerId];
+    } else {
+      whoGameState.selectedGuessId = playerId;
+    }
+    renderWhoGame();
+    return;
+  }
+  const powerupButton = event.target.closest("[data-who-powerup]");
+  if (powerupButton && whoGameState.status === "playing") {
+    const type = powerupButton.dataset.whoPowerup || "";
+    if (["scan", "probe"].includes(type)) {
+      whoGamePowerupMode = type;
+      whoGamePowerupSelection = [];
+      whoGameState.selectedGuessId = "";
+      renderWhoGame();
+    } else {
+      void useWhoGamePowerup(type);
+    }
+    return;
+  }
+  const action = event.target.closest("[data-who-action]")?.dataset.whoAction;
+  if (!action) return;
+  if (action === "open-identity-confirm" && whoGameIdentityCandidateId) {
+    whoGameIdentityConfirmOpen = true;
+    renderWhoGame();
+  }
+  if (action === "cancel-identity-confirm") {
+    whoGameIdentityConfirmOpen = false;
+    renderWhoGame();
+  }
+  if (action === "confirm-identity" && whoGameIdentityCandidateId) selectWhoGameIdentity(whoGameIdentityCandidateId);
+  if (action === "toggle-powerups") {
+    whoGamePowerupOpen = !whoGamePowerupOpen;
+    renderWhoGame();
+  }
+  if (action === "cancel-powerup") {
+    whoGamePowerupMode = "";
+    whoGamePowerupSelection = [];
+    renderWhoGame();
+  }
+  if (action === "confirm-powerup" && whoGamePowerupMode) void useWhoGamePowerup(whoGamePowerupMode);
+  if (action === "summary") {
+    whoGameSummaryOpen = true;
+    renderWhoGame();
+  }
+  if (action === "start" || action === "next") void startWhoGameQuestion();
+  if (action === "reveal") revealWhoGameClue();
+  if (action === "guess") submitWhoGameGuess(whoGameState.selectedGuessId);
+  if (action === "open-match" && whoGameState.question?.match) {
+    const match = whoGameState.question.match;
+    if (match.season === CURRENT_SEASON) {
+      selectedMatchDetailId = match.recordId;
+      updateAppLocation("matchDetail", "", { matchId: selectedMatchDetailId });
+      switchView("matchDetail");
+    } else {
+      window.location.href = `?season=${encodeURIComponent(match.season)}&view=matchDetail&match=${encodeURIComponent(match.recordId)}`;
+    }
+  }
+}
+
 function renderAll() {
   renderCurrentView();
   updateAdminUi();
@@ -5085,6 +6350,7 @@ function renderCurrentView() {
     records: renderRecords,
     relations: renderRelations,
     ratingTrends: renderRatingTrends,
+    whoIsIt: renderWhoGame,
     generator: renderGenerator,
     admin: renderAdmin
   };
@@ -6164,6 +7430,10 @@ function bindEvents() {
     button.addEventListener("click", () => {
       const targetView = button.dataset.view || button.dataset.navDefault;
       if (!targetView) return;
+      if (targetView === "whoIsIt" && !WHO_GAME_PUBLICLY_AVAILABLE && !["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+        alert("快能玩了，别急。");
+        return;
+      }
       if (targetView === "playerProfile") {
         selectedPlayerProfileId = "";
         selectedPlayerProfilePosition = "";
@@ -6216,10 +7486,9 @@ function bindEvents() {
     selectedDashboardMatchDate = dateButton.dataset.dashboardMatchDate || "";
     renderDashboardMatches();
   });
-  $("#previousMatchDate")?.addEventListener("click", () => moveDashboardMatchDate(-1));
-  $("#nextMatchDate")?.addEventListener("click", () => moveDashboardMatchDate(1));
   $("#closeHomepageHighlightPreview")?.addEventListener("click", () => closeHomepageHighlightFraming());
   $("#matchDetail")?.addEventListener("click", handleMatchDetailPageClick);
+  $("#whoIsIt")?.addEventListener("click", handleWhoGameClick);
 
   $("#players").addEventListener("click", (event) => {
     const sortButton = event.target.closest("[data-record-sort]");
@@ -6304,6 +7573,7 @@ function bindEvents() {
       selectedPlayerProfilePosition = "";
       selectedPlayerProfileHeroKey = "";
       selectedPlayerProfileMatchDate = "";
+      playerProfileShowAllMatches = false;
       updateAppLocation("players", "", { replace: true });
       switchView("players");
       window.scrollTo({ top: 0, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
@@ -6323,9 +7593,10 @@ function bindEvents() {
       return;
     }
 
-    const matchDateStepButton = event.target.closest("[data-player-profile-match-date-step]");
-    if (matchDateStepButton) {
-      movePlayerProfileMatchDate(Number(matchDateStepButton.dataset.playerProfileMatchDateStep || 0));
+    const matchesToggle = event.target.closest("[data-player-profile-toggle-matches]");
+    if (matchesToggle) {
+      playerProfileShowAllMatches = !playerProfileShowAllMatches;
+      renderPlayerProfile();
       return;
     }
 
@@ -6359,6 +7630,12 @@ function bindEvents() {
   $("#playerProfile")?.addEventListener("keydown", handleMatchCardKeydown);
 
   $("#relations")?.addEventListener("click", (event) => {
+    const matchLink = event.target.closest("[data-open-match]");
+    if (matchLink) {
+      event.preventDefault();
+      handleMatchCardOpen(event);
+      return;
+    }
     const button = event.target.closest("[data-pair-rank][data-pair-mode]");
     if (!button) return;
     pairRankModes[button.dataset.pairRank] = button.dataset.pairMode;

@@ -1,0 +1,543 @@
+{
+  "version": 1,
+  "updatedAt": "2026-09-18",
+  "temporalPolicies": {
+    "snapshot": "会随 S3 新数据变化，正文必须标出出题日前一天，只显示月和日",
+    "s2_closed": "只依赖已结束的 S2，无需日期",
+    "historical": "描述已发生的单场或曾经事件，无需日期",
+    "mixed_baseline": "单场事实与动态生涯基准比较，必须标出基准日期"
+  },
+  "questions": [
+    {
+      "id": "curated-preview-robot-01",
+      "answer": "机器人",
+      "status": "active",
+      "asOf": "2026-09-17",
+      "clues": [
+        {
+          "order": 1,
+          "type": "rating_trend",
+          "temporalPolicy": "s2_closed",
+          "text": "他的 S2 评分曲线如下。",
+          "verification": "最高评分为 7.5（5 月 16 日、17 日），最低评分为 4.0（5 月 24 日），5 月 27 日最终为 5.0。"
+        },
+        {
+          "order": 2,
+          "type": "position_record",
+          "temporalPolicy": "snapshot",
+          "text": "截至 9 月 16 日，这名选手两季五个位置全部打过；其中 4 号位出场 5 次，一场也没有获胜。",
+          "verification": "1 号位 24 场 13 胜，2 号位 1 场 0 胜，3 号位 14 场 6 胜，4 号位 5 场 0 胜，5 号位 3 场 1 胜。"
+        },
+        {
+          "order": 3,
+          "type": "losing_streak_ever",
+          "temporalPolicy": "historical",
+          "text": "这名选手曾经遭遇过 7 连败。",
+          "verification": "这段 7 连败从 5 月 21 日第 4 场开始，持续到 5 月 25 日第 2 场。"
+        },
+        {
+          "order": 4,
+          "type": "match_signature_performance",
+          "temporalPolicy": "historical",
+          "text": "他曾使用绝活英雄打出 3 / 18 / 14 的战绩，饱受好评。",
+          "verification": "9 月 16 日第 3 场，他使用帕吉担任 5 号位，打出 3 / 18 / 14，最终落败。"
+        },
+        {
+          "order": 5,
+          "type": "hero_pool_size",
+          "temporalPolicy": "snapshot",
+          "text": "截至 9 月 16 日，他在两个赛季中一共使用过 31 个不同英雄。",
+          "verification": "S2 使用过 29 个不同英雄，S3 使用过 4 个；去除两季重复英雄后，合计为 31 个。"
+        }
+      ],
+      "alternateClues": [
+        {
+          "type": "teammate_consecutive_losses",
+          "temporalPolicy": "historical",
+          "usedPreviously": true,
+          "text": "这名选手曾与猪猪连续三场作为队友，并且三场全部失利。"
+        },
+        {
+          "type": "match_kda",
+          "temporalPolicy": "historical",
+          "usedPreviously": true,
+          "text": "这名选手曾使用帕吉担任 5 号位，交出 3 / 18 / 14 的数据。"
+        }
+      ]
+    },
+    {
+      "id": "curated-preview-guanyu-01",
+      "answer": "关羽",
+      "status": "active",
+      "asOf": "2026-09-17",
+      "clues": [
+        {
+          "order": 1,
+          "type": "longest_match",
+          "temporalPolicy": "s2_closed",
+          "text": "他参加了 S2 最长的 59 分 46 秒比赛。",
+          "verification": "5 月 16 日第 2 场，他使用熊战士担任 1 号位，打出 26 / 5 / 5，并赢下这场 59 分 46 秒的比赛。"
+        },
+        {
+          "order": 2,
+          "type": "position_coverage",
+          "temporalPolicy": "snapshot",
+          "text": "截至 9 月 16 日，两季共出场 28 次，只担任过 1、2、3 号位，从未出现在两个辅助位置。",
+          "verification": "1 号位 11 场 7 胜，2 号位 10 场 2 胜，3 号位 7 场 6 胜；4、5 号位均为 0 场。"
+        },
+        {
+          "order": 3,
+          "type": "position_winrate_contrast",
+          "temporalPolicy": "snapshot",
+          "text": "截至 9 月 16 日，他担任 3 号位时取得 7 场 6 胜；担任 2 号位时却只有 10 场 2 胜。",
+          "verification": "3 号位胜率为 85.7%（7 场 6 胜），2 号位胜率为 20.0%（10 场 2 胜）。"
+        },
+        {
+          "order": 4,
+          "type": "frequent_teammate_tie",
+          "temporalPolicy": "snapshot",
+          "text": "截至 9 月 16 日，两季中，他与 xian、小孩、ldxy 分别同队 11 场，并列成为与他同队次数最多的选手。",
+          "verification": "与 xian、小孩、ldxy 分别同队 11 场，三人并列第一。"
+        },
+        {
+          "order": 5,
+          "type": "match_economy",
+          "temporalPolicy": "historical",
+          "text": "他曾在 S3 使用幻影长矛手担任 1 号位，在一场败局中取得 942 GPM，并完成 768 次补刀。",
+          "verification": "9 月 15 日第 2 场，他使用幻影长矛手打出 14 / 5 / 6、942 GPM 和 768 次补刀，但最终落败。"
+        }
+      ],
+      "alternateClues": [
+        {
+          "type": "rating_trend",
+          "temporalPolicy": "s2_closed",
+          "usedPreviously": true,
+          "text": "他的 S2 评分曲线如下。"
+        },
+        {
+          "type": "longest_match_performance",
+          "temporalPolicy": "s2_closed",
+          "usedPreviously": true,
+          "text": "他参加了 S2 最长的 59 分 46 秒比赛，并使用熊战士交出 26 / 5 / 5 后获胜。"
+        }
+      ]
+    },
+    {
+      "id": "curated-preview-xian-01",
+      "answer": "xian",
+      "status": "active",
+      "asOf": "2026-09-17",
+      "clues": [
+        {
+          "order": 1,
+          "type": "popular_heroes_never_played",
+          "temporalPolicy": "snapshot",
+          "text": "截至 9 月 16 日，他从未使用过：孽主、破晓辰星、干扰者、虚空假面、主宰。",
+          "verification": "孽主、破晓辰星、干扰者、虚空假面和主宰的个人使用次数均为 0。"
+        },
+        {
+          "order": 2,
+          "type": "position_damage_profile",
+          "temporalPolicy": "snapshot",
+          "text": "截至 9 月 16 日，担任 1、2、3、4 号位时，他的平均输出占比都高于全体同位置平均；唯独 5 号位低于平均。",
+          "verification": "1至5号位依次为 27.5% / 31.2% / 24.5% / 17.6% / 12.0%；同位置全体平均为 23.2% / 29.4% / 21.0% / 14.3% / 12.1%。"
+        },
+        {
+          "order": 3,
+          "type": "rating_trend",
+          "temporalPolicy": "s2_closed",
+          "text": "他的 S2 评分曲线如下。",
+          "verification": "最低评分为 7.5（5 月 6 日），最高评分为 11.0，分别出现在 5 月 12日至14日、18日和26日。"
+        },
+        {
+          "order": 4,
+          "type": "match_support_kills",
+          "temporalPolicy": "historical",
+          "text": "他曾使用辅助位取得 17 次击杀。",
+          "verification": "9 月 16 日第 3 场，他使用矮人直升机担任 4 号位，打出 17 / 10 / 28 并获胜。"
+        },
+        {
+          "order": 5,
+          "type": "frequent_teammate",
+          "temporalPolicy": "snapshot",
+          "text": "截至 9 月 16 日，两季中与他同队次数最多的是 ldxy，共同出场 17 次。",
+          "verification": "与 ldxy 同队 17 场，为所有队友中最多；第二名是小孩，共同出场 16 场。"
+        }
+      ],
+      "alternateClues": [
+        {
+          "type": "longest_match",
+          "temporalPolicy": "s2_closed",
+          "usedPreviously": true,
+          "text": "这名选手参加过 S2 时长最长的 59 分 46 秒比赛。"
+        },
+        {
+          "type": "hero_sample_used",
+          "temporalPolicy": "historical",
+          "usedPreviously": true,
+          "text": "他在两个赛季中曾使用过：虚无之灵、森海飞霞、帕克、小小、石鳞剑士。"
+        },
+        {
+          "type": "match_support_kills_detailed",
+          "temporalPolicy": "historical",
+          "usedPreviously": true,
+          "text": "他曾使用矮人直升机担任 4 号位，拿到 17 次击杀，超过己方两名核心并获胜。"
+        }
+      ]
+    },
+    {
+      "id": "draft-d-01",
+      "answer": "D",
+      "status": "draft",
+      "asOf": "2026-09-18",
+      "clues": [
+        {
+          "order": 1,
+          "type": "exclusive_hero_user",
+          "temporalPolicy": "snapshot",
+          "text": "截至 9 月 17 日，他是一个出场超过 3 次的英雄的唯一使用者。",
+          "verification": "凯共出场 8 次、魅惑魔女共出场 4 次，两名英雄的使用者都只有 D。"
+        },
+        {
+          "order": 2,
+          "type": "opening_matches_same_hero_losses",
+          "temporalPolicy": "s2_closed",
+          "text": "在 S2 中，他的前两场比赛选择了相同英雄，但是都输了。",
+          "verification": "5 月 5 日的前两场比赛均选择德鲁伊，两场均告负。"
+        },
+        {
+          "order": 3,
+          "type": "rating_range",
+          "temporalPolicy": "s2_closed",
+          "text": "他在 S2 中的最高评分与最低评分相差 3.5。",
+          "verification": "S2 最高评分为 10.0，最低评分为 6.5，极差为 3.5。"
+        },
+        {
+          "order": 4,
+          "type": "two_day_attendance",
+          "temporalPolicy": "s2_closed",
+          "text": "他曾在连续两天里进行了 8 场比赛。",
+          "verification": "5 月 11 日出场 4 次，5 月 12 日出场 4 次，两天合计 8 场。"
+        },
+        {
+          "order": 5,
+          "type": "teammate_consecutive_losses_anonymous",
+          "temporalPolicy": "historical",
+          "text": "他曾与另一名选手作为队友时遭遇 9 连败。",
+          "verification": "这名队友是 ldxy；两人曾连续 9 次同队并全部失利。"
+        }
+      ],
+      "verification": {
+        "exclusiveHeroes": [
+          "凯（8 次）",
+          "魅惑魔女（4 次）"
+        ],
+        "openingHero": "德鲁伊",
+        "ratingMaximum": 10,
+        "ratingMinimum": 6.5,
+        "attendanceDates": "5 月 11 日至 12 日",
+        "streakTeammate": "ldxy"
+      },
+      "alternateClues": []
+    },
+    {
+      "id": "draft-zhuzhu-01",
+      "answer": "猪猪",
+      "status": "draft",
+      "asOf": "2026-09-18",
+      "clues": [
+        {
+          "order": 1,
+          "type": "side_winrate_contrast",
+          "temporalPolicy": "snapshot",
+          "text": "截至 9 月 17 日，他在天辉的胜率为 76.9%，在夜魇的胜率为 42.9%。",
+          "verification": "天辉 13 场 10 胜，胜率 76.9%；夜魇 21 场 9 胜，胜率 42.9%。"
+        },
+        {
+          "order": 2,
+          "type": "positions_never_played",
+          "temporalPolicy": "snapshot",
+          "text": "截至 9 月 17 日，他从未使用过 1、2、3 号位。",
+          "verification": "两季只担任过 4 号位和 5 号位，1、2、3 号位出场数均为 0。"
+        },
+        {
+          "order": 3,
+          "type": "season_record_holder_hidden",
+          "temporalPolicy": "s2_closed",
+          "text": "他是 S2 某单项数据纪录的第一名。",
+          "verification": "他在 5 月 16 日第 2 场死亡 22 次，独占 S2 单场死亡纪录第一。"
+        },
+        {
+          "order": 4,
+          "type": "zero_kill_top_assists_win",
+          "temporalPolicy": "historical",
+          "text": "他曾在一场胜局中没有取得击杀，却以 27 次助攻成为全场助攻最多的选手。",
+          "verification": "5 月 15 日第 2 场，他使用寒冬飞龙打出 0 / 6 / 27，助攻全场第一并获胜。"
+        },
+        {
+          "order": 5,
+          "type": "opening_phase_kill_death_paradox",
+          "temporalPolicy": "historical",
+          "text": "他在 S3 的前六场比赛中，每场死亡数都高于击杀数，却赢下了其中五场。",
+          "verification": "前六场的击杀数均低于死亡数，具体战绩为五胜一负。"
+        }
+      ],
+      "verification": {
+        "radiantRecord": "13 场 10 胜",
+        "direRecord": "21 场 9 胜",
+        "positionsPlayed": [
+          4,
+          5
+        ],
+        "s2Record": "单场死亡 22 次，S2 独占第一",
+        "zeroKillMatch": "S2 使用寒冬飞龙，0 / 6 / 27，获胜且助攻全场第一",
+        "s3OpeningSix": "六场全部死亡数高于击杀数，战绩五胜一负"
+      },
+      "alternateClues": []
+    },
+    {
+      "id": "curated-preview-mazhong-01",
+      "answer": "马忠",
+      "status": "backup",
+      "asOf": "2026-09-17",
+      "clues": [
+        {
+          "order": 1,
+          "type": "rating_trend",
+          "temporalPolicy": "s2_closed",
+          "text": "他的 S2 评分曲线如下。",
+          "verification": "S2 评分从 8.0 起步，最高升至 10.5，最后一次记录为 9.5。"
+        },
+        {
+          "order": 2,
+          "type": "attendance_window",
+          "temporalPolicy": "s2_closed",
+          "text": "S2 的 5 月 14 日至 16 日共进行了 13 场比赛，他参加了其中 11 场。",
+          "verification": "5 月 14 日至 16 日总计 13 场，他仅缺席 2 场，实际参加 11 场。"
+        },
+        {
+          "order": 3,
+          "type": "hero_sample_used",
+          "temporalPolicy": "historical",
+          "text": "他曾使用过：食人魔魔法师、破晓辰星、灰烬之灵、钢背兽、露娜。",
+          "verification": "比赛记录中可以分别查到这五名英雄的使用场次。"
+        },
+        {
+          "order": 4,
+          "type": "longest_match",
+          "temporalPolicy": "s2_closed",
+          "text": "他参加过 S2 时长最长的 59 分 46 秒比赛。",
+          "verification": "5 月 16 日第 2 场，他使用灰烬之灵打出 10 / 7 / 28，并赢下这场 59 分 46 秒的比赛。"
+        },
+        {
+          "order": 5,
+          "type": "match_top_damage_loss",
+          "temporalPolicy": "s2_closed",
+          "text": "他曾使用露娜在一场败局中打出 86,353 点英雄伤害，仍为全场第一。",
+          "verification": "5 月 14 日第 4 场，他使用露娜打出 18 / 9 / 12 和 86,353 点英雄伤害，伤害全场第一但最终落败。"
+        }
+      ],
+      "alternateClues": []
+    }
+  ],
+  "clueCatalog": [
+    {
+      "type": "rating_trend",
+      "status": "recommended",
+      "temporalPolicy": "s2_closed",
+      "description": "仅显示 S2 评分曲线和节点，不显示评分数值或日期。"
+    },
+    {
+      "type": "longest_match",
+      "status": "recommended",
+      "temporalPolicy": "s2_closed",
+      "description": "参加过 S2 最长比赛，可只给时长，也可搭配该场表现。"
+    },
+    {
+      "type": "attendance_window",
+      "status": "recommended",
+      "temporalPolicy": "s2_closed",
+      "description": "某个固定 S2 日期区间的出勤场次。"
+    },
+    {
+      "type": "two_day_attendance",
+      "status": "recommended",
+      "temporalPolicy": "s2_closed",
+      "description": "连续两个自然日内参加的总场次。"
+    },
+    {
+      "type": "exclusive_hero_user",
+      "status": "recommended",
+      "temporalPolicy": "snapshot",
+      "description": "某位选手是达到指定出场次数英雄的唯一使用者。"
+    },
+    {
+      "type": "opening_matches_same_hero_losses",
+      "status": "recommended",
+      "temporalPolicy": "s2_closed",
+      "description": "赛季最初若干场选择同一英雄以及对应比赛结果。"
+    },
+    {
+      "type": "rating_range",
+      "status": "recommended",
+      "temporalPolicy": "s2_closed",
+      "description": "赛季最高评分与最低评分的差值。"
+    },
+    {
+      "type": "hero_sample_used",
+      "status": "recommended",
+      "temporalPolicy": "historical",
+      "description": "列出选手曾使用过的五名英雄。"
+    },
+    {
+      "type": "popular_heroes_never_played",
+      "status": "recommended",
+      "temporalPolicy": "snapshot",
+      "description": "列出五名目标从未使用过的英雄，题面不解释英雄的选择依据。"
+    },
+    {
+      "type": "position_coverage",
+      "status": "recommended",
+      "temporalPolicy": "snapshot",
+      "description": "打过或从未打过哪些位置。"
+    },
+    {
+      "type": "position_record",
+      "status": "recommended",
+      "temporalPolicy": "snapshot",
+      "description": "某位置出场次数与胜负，例如五次三号位但零胜。"
+    },
+    {
+      "type": "position_winrate_contrast",
+      "status": "recommended",
+      "temporalPolicy": "snapshot",
+      "description": "两个位置之间的明显胜率反差。"
+    },
+    {
+      "type": "side_winrate_contrast",
+      "status": "recommended",
+      "temporalPolicy": "snapshot",
+      "description": "天辉与夜魇胜率之间的明显差异。"
+    },
+    {
+      "type": "position_damage_profile",
+      "status": "recommended",
+      "temporalPolicy": "snapshot",
+      "description": "各位置输出占比与全体同位置平均的比较。"
+    },
+    {
+      "type": "losing_streak_ever",
+      "status": "recommended",
+      "temporalPolicy": "historical",
+      "description": "曾经出现过的连续失利事件。"
+    },
+    {
+      "type": "teammate_consecutive_losses",
+      "status": "recommended",
+      "temporalPolicy": "historical",
+      "description": "与某位队友连续多场同队并全部失利。"
+    },
+    {
+      "type": "frequent_teammate",
+      "status": "recommended",
+      "temporalPolicy": "snapshot",
+      "description": "当前同队最多的选手及共同场次。"
+    },
+    {
+      "type": "frequent_opponent",
+      "status": "conditional",
+      "temporalPolicy": "snapshot",
+      "description": "当前交手最多的对手及交手场次。"
+    },
+    {
+      "type": "hero_pool_size",
+      "status": "recommended",
+      "temporalPolicy": "snapshot",
+      "description": "当前累计使用的不同英雄数量。"
+    },
+    {
+      "type": "match_kda",
+      "status": "recommended",
+      "temporalPolicy": "historical",
+      "description": "某场固定比赛的 K / D / A，可配合位置但不使用‘锚点比赛’表述。"
+    },
+    {
+      "type": "match_role_kills",
+      "status": "recommended",
+      "temporalPolicy": "historical",
+      "description": "曾以某位置取得异常高或低的击杀、死亡、助攻。"
+    },
+    {
+      "type": "zero_kill_top_assists_win",
+      "status": "recommended",
+      "temporalPolicy": "historical",
+      "description": "没有取得击杀但助攻领先全场并获胜的单场反差。"
+    },
+    {
+      "type": "season_record_holder_hidden",
+      "status": "recommended",
+      "temporalPolicy": "s2_closed",
+      "description": "只说明目标是某项 S2 单场数据纪录第一，不提前公开具体项目。"
+    },
+    {
+      "type": "opening_phase_kill_death_paradox",
+      "status": "recommended",
+      "temporalPolicy": "historical",
+      "description": "固定赛季开局若干场的击杀、死亡规律与胜负反差。"
+    },
+    {
+      "type": "match_10_min_economy",
+      "status": "recommended",
+      "temporalPolicy": "historical",
+      "description": "S3 某场比赛的十分钟经济。"
+    },
+    {
+      "type": "match_10_min_deaths",
+      "status": "recommended",
+      "temporalPolicy": "historical",
+      "description": "S3 某场比赛十分钟内的死亡次数。"
+    },
+    {
+      "type": "match_damage_rank",
+      "status": "conditional",
+      "temporalPolicy": "historical",
+      "description": "某场比赛的英雄伤害、承伤或建筑伤害排名。"
+    },
+    {
+      "type": "match_economy_rank",
+      "status": "conditional",
+      "temporalPolicy": "historical",
+      "description": "某场比赛的 GPM、XPM、补刀或经济排名。"
+    },
+    {
+      "type": "career_average",
+      "status": "conditional",
+      "temporalPolicy": "snapshot",
+      "description": "场均击杀、助攻、GPM 等生涯统计；只有筛选力足够时使用。"
+    },
+    {
+      "type": "season_split",
+      "status": "conditional",
+      "temporalPolicy": "snapshot",
+      "description": "S2 与 S3 的出场数或胜率变化。"
+    },
+    {
+      "type": "match_vs_career_baseline",
+      "status": "conditional",
+      "temporalPolicy": "mixed_baseline",
+      "description": "某场表现与个人两季平均对比，必须冻结平均值的统计日期。"
+    },
+    {
+      "type": "side_and_result_only",
+      "status": "disabled",
+      "temporalPolicy": "historical",
+      "description": "仅提供赛季、天辉/夜魇和胜负，筛选力过低，不再单独使用。"
+    },
+    {
+      "type": "anchor_match_wording",
+      "status": "disabled",
+      "temporalPolicy": "historical",
+      "description": "不再使用‘锚点比赛’表述，统一改写为‘他曾在一场比赛中……’。"
+    }
+  ]
+}

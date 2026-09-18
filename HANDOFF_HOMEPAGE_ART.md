@@ -84,3 +84,37 @@ v2：前倾躯干，抬头，一只手向前，另一只向后，近距离广角
 如果要求修改姿态，复用 .blend 或脚本，另存版本，避免覆盖唯一已有成品。直接展示成品图，不要只给背景或下载链接。
 如果用户要上线，则另行核实部署目标和持久化磁盘，不得假设此前已部署。
 本地网站按 AGENTS.md 检查 3000 服务，需要启动时用隐藏窗口。
+
+## 新艺术任务：白给的斧王（091703）
+
+记录时间：2026-09-18。当前状态：v1 候选已完成并展示前待用户审阅；不是用户确认的定稿，也未上传、未发布、未修改首页代码。
+
+比赛与选手信息：
+
+- 比赛：2026-09-17 第三场（09-17-03 / 用户简称 091703），外部比赛 ID 9003243930。
+- 比赛记录 ID：acbbd4e3-3c71-48fb-b0e3-df76a9bbe2e5。
+- 选手：白给，ID 4e555b3c-cb83-461f-ba68-ffadbaf9f821。
+- 英雄：斧王 / Axe；K/D/A 26 / 5 / 12，3 号位，夜魇获胜。
+
+制作方向与已完成内容：
+
+- 使用 Valve 官方斧王 Workshop FBX、默认武器和贴图，不对英雄本体做 AI 重画。
+- 动作为淘汰之刃下劈前的蓄力：躯干扭转、右臂高举武器、左臂向前下方压住重心；镜头给英雄右侧主体与左侧暗区。
+- 背景由内置 imagegen 单独生成，只含暗红战场烟尘、远景残旗、火星和黑色渐隐；没有让生成模型修改英雄层。
+- 已检查桌面、超宽屏和手机裁切。桌面/超宽屏左侧保留大块暗区；手机以约 78% 横向焦点可同时保留脸、斧刃和抬臂动作。
+- 100% 细节检查时，官方脸型、眼睛、发型、盔甲、武器和可见手部结构清楚，没有发现额外/缺失肢体或明显透明边缘。
+- 网站版 1920×1080 WebP 约 145 KB，低于当前 10 MB 上传限制，不会带来可感知的首页加载压力。
+
+关键文件（相对项目根目录）：
+
+- output/highlights/axe-baigei-2026-09-17-03-art-v1-master.png：2560×1440 高质量合成母版，约 4.97 MB。
+- output/highlights/axe-baigei-2026-09-17-03-art-v1.webp：1920×1080 网站上传版，约 145 KB。
+- output/highlights/axe-baigei-2026-09-17-03-model-v3.png：官方模型透明渲染层。
+- output/highlights/axe-baigei-2026-09-17-03-scene-v3.blend：当前可继续修改的 Blender 场景，贴图已打包。
+- output/highlights/axe-battlefield-bg-v1.png：单独保存的暗红战场背景层。
+- output/highlights/axe-baigei-2026-09-17-03-check-desktop.webp、check-ultrawide.webp、check-mobile.webp、check-detail.webp：裁切和细节检查图。
+- tmp/axe-official/render_pose_v3.py：当前姿态、镜头、材质与灯光脚本。
+- tmp/axe-official/compose_axe_v1.mjs：背景、模型、前景烟尘与火星合成脚本。
+- tmp/axe-official/source/axe_econ.fbx：Valve 官方带骨骼模型；官方页面 https://www.dota2.com/workshop/requirements/axe 。
+
+如果用户要求调整，优先从 scene-v3.blend 或 render_pose_v3.py 继续，并另存 v2/v4 等新版本。当前最值得根据反馈调整的项目是动作张力、斧头在左侧暗区中的占比，以及背景红光强度；不要整体 AI 重画斧王。
