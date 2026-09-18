@@ -6067,9 +6067,10 @@ function submitWhoGameGuess(playerId) {
   whoGameState.wrongGuesses.push(playerId);
   whoGameState.selectedGuessId = "";
   if (whoGameState.wrongGuesses.length >= 3) {
+    const answerName = getWhoGamePlayer(question.answerId)?.name || "这名选手";
     whoGameState.status = "lost";
     whoGameState.score = 0;
-    whoGameState.message = `猜错了，他不是${guessedPlayerName}。`;
+    whoGameState.message = `猜错了，他不是${guessedPlayerName}。他是${answerName}！`;
   } else {
     whoGameState.message = `猜错了，他不是${guessedPlayerName}。`;
   }
