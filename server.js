@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { open, readFile, writeFile, unlink } from "node:fs/promises";
-import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -12,6 +12,7 @@ import * as XLSX from "xlsx";
 import sharp from "sharp";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
+const DOTA_ABILITY_IDS = loadDotaAbilityIds();
 const ENV = globalThis.process?.env || {};
 const PORT = Number(ENV.PORT || 3000);
 const ADMIN_PASSWORD = ENV.ADMIN_PASSWORD || "admin123";
@@ -32,30 +33,26 @@ const MAX_REPLAY_JOBS = Math.max(1, Number(ENV.REPLAY_MAX_JOBS || 3));
 const WHO_GAME_FIRST_DAY_LIMIT = 3;
 const WHO_GAME_RETURNING_DAY_LIMIT = 2;
 const WHO_GAME_DAILY_POWERUP_LIMIT = 3;
+const WHO_GAME_POWERUP_UNLOCK_PHRASE = "板神板神，勇猛超神";
 const WHO_GAME_ATTEMPT_LIMIT = 3;
 const WHO_GAME_CLUE_COUNT = 5;
 const WHO_GAME_CORRECT_SCORE = 100;
 const WHO_GAME_UNUSED_ATTEMPT_SCORE = 20;
 const WHO_GAME_UNSEEN_CLUE_SCORE = 10;
 const WHO_GAME_QUESTIONS = [
-  { key: "curated-ldxy-01", targetName: "ldxy", signatureHero: "灰烬之灵", specialHint: "" },
-  { key: "curated-xiaohai-01", targetName: "小孩", signatureHero: "孽主", specialHint: "" },
-  { key: "curated-coach-01", targetName: "教练", signatureHero: "森海飞霞", specialHint: "" },
-  { key: "curated-boyang-01", targetName: "博洋", signatureHero: "冥魂大帝", specialHint: "" },
-  { key: "curated-xinq-01", targetName: "xinq", signatureHero: "干扰者", specialHint: "" },
-  { key: "curated-preview-robot-01", targetName: "机器人", signatureHero: "帕吉", specialHint: "" },
-  {
-    key: "curated-preview-guanyu-01",
-    targetName: "关羽",
-    signatureHero: "灰烬之灵",
-    specialHint: "体验版作者提示：他的ID取自一位家喻户晓的历史人物。"
-  },
-  { key: "curated-preview-xian-01", targetName: "xian", signatureHero: "虚无之灵", specialHint: "" },
-  { key: "curated-d-01", targetName: "D", signatureHero: "凯", specialHint: "" },
-  { key: "curated-zhuzhu-01", targetName: "猪猪", signatureHero: "祸乱之源", specialHint: "" }
+  { key: "curated-ldxy-01", targetName: "ldxy" },
+  { key: "curated-xiaohai-01", targetName: "小孩" },
+  { key: "curated-coach-01", targetName: "教练" },
+  { key: "curated-boyang-01", targetName: "博洋" },
+  { key: "curated-xinq-01", targetName: "xinq" },
+  { key: "curated-preview-robot-01", targetName: "机器人" },
+  { key: "curated-preview-guanyu-01", targetName: "关羽" },
+  { key: "curated-preview-xian-01", targetName: "xian" },
+  { key: "curated-d-01", targetName: "D" },
+  { key: "curated-zhuzhu-01", targetName: "猪猪" }
 ];
 const WHO_GAME_QUESTION_KEYS = WHO_GAME_QUESTIONS.map((question) => question.key);
-const WHO_GAME_POWERUP_TYPES = ["eliminate", "special", "hero", "scan", "probe"];
+const WHO_GAME_POWERUP_TYPES = ["eliminate", "attempts", "extraClue"];
 const REPLAY_PARSE_TIMEOUT_MS = Math.max(30_000, Number(ENV.REPLAY_PARSE_TIMEOUT_MS || 5 * 60 * 1000));
 let highlightUploadBusy = false;
 let replayParseBusy = false;
@@ -241,6 +238,7 @@ function initDatabase({ seedDefaults = false } = {}) {
       match_id TEXT DEFAULT '',
       player_name TEXT NOT NULL,
       hero TEXT NOT NULL,
+      caption TEXT NOT NULL DEFAULT '',
       image TEXT NOT NULL,
       object_position TEXT NOT NULL DEFAULT '50% 47%',
       framing TEXT NOT NULL DEFAULT '{}',
@@ -287,6 +285,13 @@ function initDatabase({ seedDefaults = false } = {}) {
     CREATE INDEX IF NOT EXISTS who_game_powerup_uses_player_date
     ON who_game_powerup_uses (player_id, play_date);
 
+    CREATE TABLE IF NOT EXISTS who_game_powerup_unlocks (
+      player_id TEXT NOT NULL,
+      play_date TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (player_id, play_date)
+    );
+
     CREATE TABLE IF NOT EXISTS who_game_unlimited_players (
       player_id TEXT PRIMARY KEY,
       created_at TEXT NOT NULL
@@ -302,6 +307,7 @@ function initDatabase({ seedDefaults = false } = {}) {
   addColumnIfMissing("homepage_highlights", "match_record_id", "TEXT DEFAULT ''");
   addColumnIfMissing("homepage_highlights", "player_id", "TEXT DEFAULT ''");
   addColumnIfMissing("homepage_highlights", "framing", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing("homepage_highlights", "caption", "TEXT NOT NULL DEFAULT ''");
 
   const playerColumns = getColumns("players");
   if (playerColumns.includes("mmr")) {
@@ -476,9 +482,9 @@ function seedHomepageHighlights() {
 
   const insert = db.prepare(`
     INSERT INTO homepage_highlights (
-      id, match_record_id, player_id, date, match_no, match_id, player_name, hero, image, object_position,
+      id, match_record_id, player_id, date, match_no, match_id, player_name, hero, caption, image, object_position,
       framing, layout, status, sort_order, fallback, published_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?)
   `);
   const now = new Date().toISOString();
   defaultHomepageHighlights.forEach((highlight, index) => {
@@ -493,6 +499,7 @@ function seedHomepageHighlights() {
       highlight.matchId,
       highlight.playerName,
       highlight.hero,
+      highlight.caption || "",
       highlight.image,
       highlight.objectPosition,
       JSON.stringify(normalizeHomepageHighlightFraming(highlight.framing, highlight.objectPosition)),
@@ -554,6 +561,12 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (method === "POST" && url.pathname === "/api/who-game/daily/powerup-unlock") {
+    const body = await readJson(request);
+    sendJson(response, 200, unlockWhoGamePowerups(body));
+    return;
+  }
+
   if (method === "GET" && url.pathname === "/api/state") {
     sendJson(response, 200, getState());
     return;
@@ -576,12 +589,12 @@ async function handleApi(request, response, url) {
       FROM match_analyses
       WHERE match_id = ?
     `).get(id);
-    sendJson(response, 200, row ? {
+    sendJson(response, 200, row ? normalizeReplayAnalysis({
       parser: row.parser,
       parserVersion: row.parserVersion,
       updatedAt: row.updatedAt,
       ...parseJsonObject(row.analysis)
-    } : { available: false, players: {}, timeline: {} });
+    }) : { available: false, players: {}, timeline: {} });
     return;
   }
 
@@ -717,9 +730,9 @@ async function handleApi(request, response, url) {
     const id = crypto.randomUUID();
     sharedHomepageDatabase.prepare(`
       INSERT INTO homepage_highlights (
-        id, match_record_id, player_id, date, match_no, match_id, player_name, hero, image, object_position,
+        id, match_record_id, player_id, date, match_no, match_id, player_name, hero, caption, image, object_position,
         framing, layout, status, sort_order, fallback, published_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 0, ?, '', ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 0, ?, '', ?, ?)
     `).run(
       id,
       highlight.matchRecordId,
@@ -729,6 +742,7 @@ async function handleApi(request, response, url) {
       highlight.matchId,
       highlight.playerName,
       highlight.hero,
+      highlight.caption,
       highlight.image,
       highlight.objectPosition,
       JSON.stringify(highlight.framing),
@@ -763,7 +777,7 @@ async function handleApi(request, response, url) {
       }
       sharedHomepageDatabase.prepare(`
         UPDATE homepage_highlights
-        SET match_record_id = ?, player_id = ?, date = ?, match_no = ?, match_id = ?, player_name = ?, hero = ?, image = ?,
+        SET match_record_id = ?, player_id = ?, date = ?, match_no = ?, match_id = ?, player_name = ?, hero = ?, caption = ?, image = ?,
             object_position = ?, framing = ?, layout = ?, status = ?, sort_order = ?, fallback = ?,
             published_at = ?, updated_at = ?
         WHERE id = ?
@@ -775,6 +789,7 @@ async function handleApi(request, response, url) {
         highlight.matchId,
         highlight.playerName,
         highlight.hero,
+        highlight.caption,
         highlight.image,
         highlight.objectPosition,
         JSON.stringify(highlight.framing),
@@ -1550,7 +1565,7 @@ function getHomepageHighlights({ publishedOnly = false } = {}) {
   const where = publishedOnly ? "WHERE status = 'published'" : "";
   const limit = publishedOnly ? "LIMIT 3" : "";
   return sharedHomepageDatabase.prepare(`
-    SELECT id, match_record_id, player_id, date, match_no, match_id, player_name, hero, image, object_position,
+    SELECT id, match_record_id, player_id, date, match_no, match_id, player_name, hero, caption, image, object_position,
            framing, layout, status, sort_order, fallback, published_at, created_at, updated_at
     FROM homepage_highlights
     ${where}
@@ -1604,6 +1619,7 @@ function mapHomepageHighlight(row) {
     matchId: row.match_id || "",
     playerName: row.player_name,
     hero: row.hero,
+    caption: row.caption || "",
     image: row.image,
     objectPosition,
     framing: normalizeHomepageHighlightFraming(parseJsonObject(row.framing), objectPosition),
@@ -1628,6 +1644,7 @@ function normalizeHomepageHighlight(input = {}) {
   const date = String(linkedMatch?.date || input.date || "").trim();
   const playerName = String(linkedPlayer?.name || input.playerName || "").trim().slice(0, 80);
   const hero = String(linkedPlayer?.detail?.hero || input.hero || "").trim().slice(0, 80);
+  const caption = String(input.caption || "").trim().slice(0, 160);
   const image = String(input.image || "").trim().replaceAll("\\", "/");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw createHttpError(400, "请选择有效的比赛日期");
   if (!playerName) throw createHttpError(400, "选手昵称不能为空");
@@ -1667,6 +1684,7 @@ function normalizeHomepageHighlight(input = {}) {
     matchId: String(linkedMatch?.match_id || input.matchId || "").trim().slice(0, 80),
     playerName,
     hero,
+    caption,
     image,
     objectPosition: `${framing.desktop.x}% ${framing.desktop.y}%`,
     framing,
@@ -1730,9 +1748,9 @@ function enforceHomepageHighlightLimit(now = new Date().toISOString()) {
 function replaceHomepageHighlights(highlights) {
   const insert = sharedHomepageDatabase.prepare(`
     INSERT INTO homepage_highlights (
-      id, match_record_id, player_id, date, match_no, match_id, player_name, hero, image, object_position,
+      id, match_record_id, player_id, date, match_no, match_id, player_name, hero, caption, image, object_position,
       framing, layout, status, sort_order, fallback, published_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const now = new Date().toISOString();
   sharedHomepageDatabase.exec("DELETE FROM homepage_highlights");
@@ -1748,6 +1766,7 @@ function replaceHomepageHighlights(highlights) {
       highlight.matchId,
       highlight.playerName,
       highlight.hero,
+      highlight.caption,
       highlight.image,
       highlight.objectPosition,
       JSON.stringify(highlight.framing),
@@ -1998,6 +2017,14 @@ function getWhoGameAdminDashboard(requestedDate) {
     WHERE play_date = ?
     GROUP BY session_id
   `).all(playDate).map((row) => [row.session_id, Number(row.use_count) || 0]));
+  const attemptBonuses = new Map(databases.s3.prepare(`
+    SELECT session_id, result
+    FROM who_game_powerup_uses
+    WHERE play_date = ? AND powerup_type = 'attempts'
+  `).all(playDate).map((row) => [
+    row.session_id,
+    Math.max(0, Number(parseJsonObject(row.result).bonus) || 0)
+  ]));
   const sessionsByPlayer = new Map();
   databases.s3.prepare(`
     SELECT id, player_id, slot, question_key, status, revealed, wrong_guesses,
@@ -2008,9 +2035,10 @@ function getWhoGameAdminDashboard(requestedDate) {
   `).all(playDate).forEach((row) => {
     const wrongGuesses = parseJsonArray(row.wrong_guesses);
     const question = questionByKey.get(row.question_key);
+    const attemptLimit = WHO_GAME_ATTEMPT_LIMIT + (attemptBonuses.get(row.id) || 0);
     const attemptsUsed = row.status === "won"
-      ? Math.min(WHO_GAME_ATTEMPT_LIMIT, wrongGuesses.length + 1)
-      : row.status === "lost" ? WHO_GAME_ATTEMPT_LIMIT : wrongGuesses.length;
+      ? Math.min(attemptLimit, wrongGuesses.length + 1)
+      : row.status === "lost" ? attemptLimit : wrongGuesses.length;
     const session = {
       id: row.id,
       slot: Number(row.slot),
@@ -2094,6 +2122,11 @@ function getWhoGameDailyStatus(playerId) {
     WHERE player_id = ? AND play_date = ?
     ORDER BY created_at ASC, id ASC
   `).all(player.id, playDate).map((row) => ({ ...row, result: parseJsonObject(row.result) }));
+  const powerupsUnlocked = Boolean(databases.s3.prepare(`
+    SELECT player_id
+    FROM who_game_powerup_unlocks
+    WHERE player_id = ? AND play_date = ?
+  `).get(player.id, playDate));
   sessions.forEach((session) => {
     session.powerups = powerups.filter((powerup) => powerup.sessionId === session.id);
   });
@@ -2132,6 +2165,7 @@ function getWhoGameDailyStatus(playerId) {
     completedQuestionCount: completedQuestionKeys.size,
     questionCount: WHO_GAME_QUESTION_KEYS.length,
     leaderboard: getWhoGameDailyLeaderboard(playDate),
+    powerupsUnlocked,
     powerupsUsed: powerups.length,
     powerupsRemaining: Math.max(0, WHO_GAME_DAILY_POWERUP_LIMIT - powerups.length),
     current,
@@ -2170,19 +2204,68 @@ function getWhoGameSessionExcludedIds(session) {
   return excluded;
 }
 
+function unlockWhoGamePowerups(input = {}) {
+  const player = findWhoGamePlayer(input.playerId);
+  const phrase = String(input.phrase || "").trim();
+  if (phrase !== WHO_GAME_POWERUP_UNLOCK_PHRASE) throw createHttpError(400, "输入内容不正确，请再试一次");
+  const playDate = getShanghaiDate();
+  databases.s3.prepare(`
+    INSERT OR IGNORE INTO who_game_powerup_unlocks (player_id, play_date, created_at)
+    VALUES (?, ?, ?)
+  `).run(player.id, playDate, new Date().toISOString());
+  return getWhoGameDailyStatus(player.id);
+}
+
+function getWhoGameSessionAttemptLimit(session) {
+  const bonus = (session?.powerups || [])
+    .filter((powerup) => powerup.type === "attempts")
+    .reduce((sum, powerup) => sum + Math.max(0, Number(powerup.result?.bonus) || 0), 0);
+  return WHO_GAME_ATTEMPT_LIMIT + bonus;
+}
+
+function buildWhoGameExtraClue(question) {
+  const state = getWhoGameState();
+  const answer = state.players.find((player) => player.name === question.targetName);
+  if (!answer) throw createHttpError(404, "题目答案选手不存在");
+  const appearances = state.matches
+    .map((match) => ({ match, detail: match.playerDetails?.[answer.id] }))
+    .filter(({ detail }) => detail && String(detail.hero || "").trim())
+    .sort((left, right) =>
+      left.match.season.localeCompare(right.match.season)
+      || left.match.date.localeCompare(right.match.date)
+      || Number(left.match.matchNo || 0) - Number(right.match.matchNo || 0)
+      || left.match.id.localeCompare(right.match.id)
+    );
+  const selected = appearances[0];
+  if (!selected) throw createHttpError(409, "这道题暂时没有可生成的比赛提示");
+  const hero = String(selected.detail.hero).trim();
+  const kills = Math.max(0, Number(selected.detail.kills) || 0);
+  const deaths = Math.max(0, Number(selected.detail.deaths) || 0);
+  const assists = Math.max(0, Number(selected.detail.assists) || 0);
+  return {
+    hero,
+    kills,
+    deaths,
+    assists,
+    text: `他曾在一场比赛中使用${hero}砍下 ${kills}/${deaths}/${assists}。`
+  };
+}
+
 function useWhoGamePowerup(input = {}) {
   const daily = getWhoGameDailyStatus(input.playerId);
   const session = daily.current;
   if (!session || session.id !== String(input.sessionId || "")) throw createHttpError(409, "当前没有可使用道具的进行中题目");
+  if (!daily.powerupsUnlocked) throw createHttpError(403, "请先输入指定内容，解锁今日超级道具");
   if (daily.powerupsRemaining <= 0) throw createHttpError(429, "今天的三次道具机会已经用完");
   const type = String(input.type || "");
   if (!WHO_GAME_POWERUP_TYPES.includes(type)) throw createHttpError(400, "未知道具类型");
-  if (session.powerups.some((powerup) => powerup.type === type)) throw createHttpError(409, "同一道题不能重复使用同一种道具");
+  if (daily.sessions.some((item) => item.powerups.some((powerup) => powerup.type === type))) {
+    throw createHttpError(409, "同一种道具每天只能使用一次");
+  }
 
   const question = getWhoGameQuestionConfig(session.questionKey);
   const answer = findWhoGamePlayerByName(question.targetName);
   const players = getAllWhoGamePlayers();
-  const validIds = new Set(players.map((player) => player.id));
   const excluded = getWhoGameSessionExcludedIds(session);
   let result = {};
 
@@ -2194,37 +2277,16 @@ function useWhoGamePowerup(input = {}) {
         const rightHash = crypto.createHash("sha256").update(`${session.id}:eliminate:${right.id}`).digest("hex");
         return leftHash.localeCompare(rightHash);
       });
-    if (candidates.length < 10) throw createHttpError(409, "剩余候选不足，无法再排除十人");
-    result = { excludedIds: candidates.slice(0, 10).map((player) => player.id) };
+    if (candidates.length < 5) throw createHttpError(409, "剩余候选不足，无法再排除五人");
+    result = { excludedIds: candidates.slice(0, 5).map((player) => player.id) };
   }
 
-  if (type === "special") {
-    if (!question.specialHint) throw createHttpError(409, "这道题尚未配置作者提示");
-    result = { text: question.specialHint };
+  if (type === "attempts") {
+    result = { bonus: 2 };
   }
 
-  if (type === "hero") {
-    if (!question.signatureHero) throw createHttpError(409, "这道题尚未配置英雄残影");
-    result = { hero: question.signatureHero };
-  }
-
-  if (type === "scan") {
-    const selectedIds = [...new Set((Array.isArray(input.selectedIds) ? input.selectedIds : [])
-      .map((value) => String(value || "").trim())
-      .filter((playerId) => validIds.has(playerId) && !excluded.has(playerId)))];
-    if (selectedIds.length !== 8) throw createHttpError(400, "圈定搜查需要选择恰好8名未排除选手");
-    const inside = selectedIds.includes(answer.id);
-    const excludedIds = inside
-      ? players.map((player) => player.id).filter((playerId) => !selectedIds.includes(playerId) && playerId !== answer.id && !excluded.has(playerId))
-      : selectedIds.filter((playerId) => playerId !== answer.id);
-    result = { selectedIds, inside, excludedIds };
-  }
-
-  if (type === "probe") {
-    const candidateId = String(input.candidateId || "").trim();
-    if (!validIds.has(candidateId) || excluded.has(candidateId)) throw createHttpError(400, "请选择一名尚未排除的选手进行试探");
-    const correct = candidateId === answer.id;
-    result = { candidateId, correct, excludedIds: correct ? [] : [candidateId] };
+  if (type === "extraClue") {
+    result = buildWhoGameExtraClue(question);
   }
 
   const now = new Date().toISOString();
@@ -2234,15 +2296,6 @@ function useWhoGamePowerup(input = {}) {
       id, player_id, play_date, session_id, powerup_type, result, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(useId, daily.player.id, daily.playDate, session.id, type, JSON.stringify(result), now);
-
-  if (type === "probe" && result.correct) {
-    const score = calculateWhoGameSessionScore("won", session.revealed, session.wrongGuesses);
-    databases.s3.prepare(`
-      UPDATE who_game_daily_sessions
-      SET status = 'won', score = ?, updated_at = ?, completed_at = ?
-      WHERE id = ? AND status = 'playing'
-    `).run(score, now, now, session.id);
-  }
 
   return { ...getWhoGameDailyStatus(daily.player.id), powerupResult: { id: useId, type, result } };
 }
@@ -2293,8 +2346,9 @@ function updateWhoGameDailySession(input = {}) {
 
   const nextStatus = ["playing", "won", "lost"].includes(input.status) ? input.status : "playing";
   const revealed = Math.max(1, Math.min(12, Math.round(Number(input.revealed) || 1)));
+  const attemptLimit = getWhoGameSessionAttemptLimit(session);
   const wrongGuesses = Array.isArray(input.wrongGuesses)
-    ? [...new Set(input.wrongGuesses.map((value) => String(value || "").trim()).filter(Boolean))].slice(0, 3)
+    ? [...new Set(input.wrongGuesses.map((value) => String(value || "").trim()).filter(Boolean))].slice(0, attemptLimit)
     : [];
   const score = calculateWhoGameSessionScore(nextStatus, revealed, wrongGuesses);
   const now = new Date().toISOString();
@@ -3272,6 +3326,39 @@ function parseJsonObject(value) {
   } catch {
     return {};
   }
+}
+
+function loadDotaAbilityIds() {
+  try {
+    return JSON.parse(readFileSync(join(__dirname, "assets", "dota-ability-ids.json"), "utf8"));
+  } catch (error) {
+    console.warn(`Dota ability ID catalog unavailable: ${error.message}`);
+    return {};
+  }
+}
+
+function isDotaTalentKey(key) {
+  const value = String(key || "");
+  return value.startsWith("special_bonus_") && value !== "special_bonus_attributes";
+}
+
+function normalizeReplayAnalysis(analysis = {}) {
+  const players = analysis.players && typeof analysis.players === "object" ? analysis.players : {};
+  Object.values(players).forEach((player) => {
+    if (!Array.isArray(player?.abilityBuild)) return;
+    player.abilityBuild = player.abilityBuild.filter((ability) => Number(ability?.abilityId) > 0).map((ability) => {
+      const catalogKey = DOTA_ABILITY_IDS[String(Number(ability.abilityId))] || "";
+      const key = catalogKey || String(ability?.key || "");
+      const talent = isDotaTalentKey(key);
+      return {
+        ...ability,
+        key,
+        name: talent ? "天赋" : (catalogKey && catalogKey !== ability?.key ? "" : ability?.name),
+        talent
+      };
+    });
+  });
+  return { ...analysis, players };
 }
 
 async function readJson(request) {

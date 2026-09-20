@@ -21,10 +21,15 @@ from gem.parser import ReplayParser
 from gem.results.assembly import build_parsed_match
 
 
+ABILITY_IDS_PATH = Path(__file__).resolve().parents[1] / "assets" / "dota-ability-ids.json"
+
 try:
-    ABILITY_IDS = load_data_json("ability_ids.json")
+    ABILITY_IDS = json.loads(ABILITY_IDS_PATH.read_text(encoding="utf-8"))
 except Exception:
-    ABILITY_IDS = {}
+    try:
+        ABILITY_IDS = load_data_json("ability_ids.json")
+    except Exception:
+        ABILITY_IDS = {}
 
 
 def parse_with_metadata(path: Path):
@@ -83,6 +88,29 @@ def parse_with_metadata(path: Path):
     return parser, match, player_ext
 
 
+def ability_key_from_id(ability_id):
+    return str(ABILITY_IDS.get(str(int(ability_id or 0)), ""))
+
+
+def is_talent_key(ability_key):
+    return ability_key.startswith("special_bonus_") and ability_key != "special_bonus_attributes"
+
+
+def select_learned_increments(increments, upgrade_ids, start_index, capacity):
+    """Discard innate/facet abilities that appear in snapshots without spending a point."""
+    remaining = list(increments)
+    selected = []
+    for offset in range(capacity):
+        upgrade_index = start_index + offset
+        expected_key = ability_key_from_id(upgrade_ids[upgrade_index]) if upgrade_index < len(upgrade_ids) else ""
+        if expected_key and expected_key in remaining:
+            remaining.remove(expected_key)
+            selected.append(expected_key)
+    if len(selected) < capacity:
+        selected.extend(remaining[-(capacity - len(selected)):])
+    return selected[:capacity]
+
+
 def build_ability_timeline(snapshots, player):
     """Reconstruct the hero level at which each skill point was spent."""
     previous = {}
@@ -101,17 +129,21 @@ def build_ability_timeline(snapshots, player):
         if increments:
             hero_level = max(1, int(snapshot.level or 0))
             available_levels = [level for level in range(1, hero_level + 1) if level not in used_levels]
-            assigned_levels = available_levels[-len(increments):]
-            for ability_key, learned_level in zip(increments, assigned_levels, strict=False):
+            remaining_upgrades = max(0, len(upgrade_ids) - len(result))
+            point_count = min(len(increments), len(available_levels), remaining_upgrades)
+            learned_increments = select_learned_increments(increments, upgrade_ids, len(result), point_count)
+            assigned_levels = available_levels[-len(learned_increments):]
+            for snapshot_key, learned_level in zip(learned_increments, assigned_levels, strict=False):
                 index = len(result)
                 ability_id = int(upgrade_ids[index]) if index < len(upgrade_ids) else 0
+                ability_key = ability_key_from_id(ability_id) or snapshot_key
                 result.append(
                     {
                         "level": learned_level,
                         "abilityId": ability_id,
                         "key": ability_key,
                         "name": ability_display(ability_key),
-                        "talent": ability_key.startswith("special_bonus"),
+                        "talent": is_talent_key(ability_key),
                     }
                 )
                 used_levels.add(learned_level)
@@ -122,14 +154,16 @@ def build_ability_timeline(snapshots, player):
 
     fallback = []
     for level, ability_id in enumerate(upgrade_ids, start=1):
-        ability_key = str(ABILITY_IDS.get(str(ability_id), ""))
+        if not int(ability_id or 0):
+            continue
+        ability_key = ability_key_from_id(ability_id)
         fallback.append(
             {
                 "level": level,
                 "abilityId": int(ability_id or 0),
                 "key": ability_key,
                 "name": ability_display(ability_key) if ability_key else str(ability_id),
-                "talent": ability_key.startswith("special_bonus"),
+                "talent": is_talent_key(ability_key),
             }
         )
     return fallback

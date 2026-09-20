@@ -198,6 +198,7 @@ let whoGamePowerupMode = "";
 let whoGamePowerupSelection = [];
 let whoGamePowerupBusy = false;
 let whoGamePowerupOpen = false;
+let whoGamePowerupUnlockOpen = false;
 let whoGameSummaryOpen = false;
 
 const HOMEPAGE_FRAMING_DEVICES = Object.freeze({
@@ -1111,6 +1112,7 @@ function renderDashboardHighlight() {
               <dd>${kills} / ${deaths} / ${assists}</dd>
             </div>
           </dl>
+          ${highlight.caption ? `<p class="dashboard-highlight-caption">“${escapeHtml(highlight.caption)}”</p>` : ""}
         </div>
       </div>
     </article>
@@ -4522,6 +4524,7 @@ function renderAdminHomepageHighlightCard(highlight, index, groupLength) {
           <span class="${presentation.hasMatch || presentation.hasSharedMatch ? "is-linked" : "is-unlinked"}">${presentation.hasMatch ? "已关联本赛季" : presentation.hasSharedMatch ? "已关联另一赛季" : "未匹配比赛"}</span>
         </div>
         <p>${presentation.kills} / ${presentation.deaths} / ${presentation.assists}<code>${framing.desktop.x}% ${framing.desktop.y}% · ${Math.round(framing.desktop.scale * 100)}%</code></p>
+        ${highlight.caption ? `<blockquote class="admin-highlight-caption">“${escapeHtml(highlight.caption)}”</blockquote>` : ""}
         <div class="admin-highlight-card-actions">
           <button class="ghost-button compact-button" data-preview-highlight="${escapeHtml(highlight.id)}" type="button">取景</button>
           <button class="ghost-button compact-button" data-edit-highlight="${escapeHtml(highlight.id)}" type="button">编辑</button>
@@ -4622,6 +4625,7 @@ function resetHomepageHighlightForm(highlight = null) {
     ? "已保留当前图片；选择新文件可替换。"
     : "选择 PNG、JPG 或 WebP 图片，最大 10 MB。";
   $("#homepageHighlightLayout").value = highlight?.layout === "image-left" ? "image-left" : "image-right";
+  $("#homepageHighlightCaption").value = highlight?.caption || "";
   writeHomepageFramingInput(normalizeHomepageFramingForClient(highlight || {}));
   $("#saveHomepageHighlight").textContent = editingHomepageHighlightId ? "保存修改" : "保存草稿";
   form.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -4689,6 +4693,7 @@ function getHomepageFramingPreviewHighlight() {
     matchId: String(match?.matchId || ""),
     playerName: player?.name || "选手",
     hero: String(detail.hero || "英雄"),
+    caption: $("#homepageHighlightCaption")?.value.trim() || "",
     image,
     layout: $("#homepageHighlightLayout")?.value === "image-left" ? "image-left" : "image-right",
     objectPosition: `${homepageFramingDraft.desktop.x}% ${homepageFramingDraft.desktop.y}%`,
@@ -5152,6 +5157,43 @@ function abilityImageUrl(key) {
   return `https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/abilities/${encodeURIComponent(String(key || ""))}.png`;
 }
 
+function isTalentAbilityKey(key) {
+  const value = String(key || "");
+  return value.startsWith("special_bonus_") && value !== "special_bonus_attributes";
+}
+
+function normalizeMatchAbilityBuild(build) {
+  const entries = Array.isArray(build)
+    ? build
+      .map((ability) => ({ ...ability, level: Number(ability.level) }))
+      .filter((ability) => Number.isFinite(ability.level) && Number(ability.abilityId) > 0 && ability.key !== "dota_base_ability")
+    : [];
+  if (!entries.length) return entries;
+
+  const first = entries.find((ability) => ability.level === 1);
+  if (first?.abilityId && first.key) {
+    const replacementCounts = new Map();
+    entries.forEach((ability) => {
+      if (ability === first || Number(ability.abilityId) !== Number(first.abilityId) || !ability.key || ability.key === first.key) return;
+      if (String(ability.key).startsWith("special_bonus_")) return;
+      const candidate = replacementCounts.get(ability.key) || { count: 0, ability };
+      candidate.count += 1;
+      replacementCounts.set(ability.key, candidate);
+    });
+    const replacement = [...replacementCounts.values()].sort((a, b) => b.count - a.count)[0]?.ability;
+    if (replacement) {
+      first.key = replacement.key;
+      first.name = replacement.name;
+      first.talent = false;
+    }
+  }
+
+  return entries.map((ability) => ({
+    ...ability,
+    talent: Boolean(ability.talent) || isTalentAbilityKey(ability.key)
+  }));
+}
+
 function renderMatchItems(row) {
   const items = Array.isArray(row.finalItems) ? row.finalItems.filter((item) => Number(item.slot) < 9) : [];
   if (!items.length) return `<span class="match-detail-no-items">—</span>`;
@@ -5229,10 +5271,15 @@ function renderMatchPlayerProfileLink(playerId, heroName) {
 
 function renderMatchSkillBuild(match, analysis) {
   const allIds = [...match.radiant, ...match.dire];
-  const builds = allIds.map((id) => getMatchDetailRow(match, id, analysis).abilityBuild || []);
+  const buildsByPlayer = new Map(allIds.map((id) => [id, normalizeMatchAbilityBuild(getMatchDetailRow(match, id, analysis).abilityBuild)]));
+  const builds = [...buildsByPlayer.values()];
   if (!analysis) return renderMatchAnalysisLoading("正在读取技能加点数据");
   if (!analysis.available || !builds.some((build) => build.length)) return renderMatchAnalysisEmpty("这场比赛没有技能加点时间线", "旧比赛需要重新导入原始录像，才能生成每级技能路线。");
-  const maxLevel = Math.max(25, ...allIds.map((id) => Number(getMatchDetailRow(match, id, analysis).level || 0)), ...builds.map((build) => build.length));
+  const maxLevel = Math.max(
+    25,
+    ...allIds.map((id) => Number(getMatchDetailRow(match, id, analysis).level || 0)),
+    ...builds.flatMap((build) => build.map((ability) => Number(ability.level) || 0))
+  );
   return `<div class="match-skill-stack">
     ${[["radiant", "天辉", match.radiant], ["dire", "夜魇", match.dire]].map(([team, label, ids]) => `
       <section class="match-skill-board match-team-${team}">
@@ -5241,12 +5288,18 @@ function renderMatchSkillBuild(match, analysis) {
           <thead><tr><th>选手</th>${Array.from({ length: maxLevel }, (_, index) => `<th>${index + 1}</th>`).join("")}</tr></thead>
           <tbody>${ids.map((id) => {
             const row = getMatchDetailRow(match, id, analysis);
-            const byLevel = new Map((row.abilityBuild || []).map((ability) => [Number(ability.level), ability]));
+            const byLevel = new Map((buildsByPlayer.get(id) || []).map((ability) => [Number(ability.level), ability]));
             return `<tr><td>${renderMatchPlayerProfileLink(id, row.hero)}</td>${Array.from({ length: maxLevel }, (_, index) => {
               const ability = byLevel.get(index + 1);
               if (!ability) return `<td class="is-empty"></td>`;
-              const fallback = ability.talent ? "T" : String(ability.name || ability.abilityId || "?").slice(0, 1);
-              return `<td><span class="match-ability" title="${escapeHtml(ability.name || `技能 ${ability.abilityId}`)}"><span>${escapeHtml(fallback)}</span>${ability.key ? `<img class="match-ability-image" src="${abilityImageUrl(ability.key)}" alt="${escapeHtml(ability.name || ability.key)}" loading="lazy" />` : ""}</span></td>`;
+              const isTalent = Boolean(ability.talent) || isTalentAbilityKey(ability.key);
+              const isAttribute = ability.key === "special_bonus_attributes";
+              if (isTalent || isAttribute) return `<td class="is-empty"></td>`;
+              const fallback = String(ability.name || ability.abilityId || "?").slice(0, 1);
+              const image = ability.key
+                ? `<img class="match-ability-image" src="${abilityImageUrl(ability.key)}" alt="${escapeHtml(ability.name || ability.key)}" loading="lazy" />`
+                : "";
+              return `<td><span class="match-ability" title="${escapeHtml(ability.name || `技能 ${ability.abilityId}`)}"><span>${escapeHtml(fallback)}</span>${image}</span></td>`;
             }).join("")}</tr>`;
           }).join("")}</tbody>
         </table></div>
@@ -5480,6 +5533,7 @@ function restoreWhoGameDailySession() {
   whoGamePowerupMode = "";
   whoGamePowerupSelection = [];
   whoGamePowerupOpen = false;
+  whoGamePowerupUnlockOpen = false;
   whoGameSummaryOpen = false;
   whoGameState = {
     question,
@@ -5995,6 +6049,18 @@ function getWhoGamePowerups() {
   return session?.powerups || [];
 }
 
+function getWhoGameDailyPowerups() {
+  return (whoGameDaily?.sessions || []).flatMap((session) => session.powerups || []);
+}
+
+function getWhoGameAttemptLimit(session = null) {
+  const powerups = session?.powerups || getWhoGamePowerups();
+  const bonus = powerups
+    .filter((powerup) => powerup.type === "attempts")
+    .reduce((sum, powerup) => sum + Math.max(0, Number(powerup.result?.bonus) || 0), 0);
+  return WHO_GAME_ATTEMPT_LIMIT + bonus;
+}
+
 function getWhoGameSuccessMessage(answerName) {
   return `猜对了，他是${answerName}！\n您真是懂${answerName}大师！`;
 }
@@ -6013,9 +6079,10 @@ function getWhoGameSessionMetrics(session) {
   const clueCount = question?.clues?.length || 5;
   const wrongGuesses = Array.isArray(session.wrongGuesses) ? session.wrongGuesses : [];
   const cluesUsed = Math.min(clueCount, Math.max(1, Number(session.revealed) || 1));
+  const attemptLimit = getWhoGameAttemptLimit(session);
   const attemptsUsed = session.status === "won"
-    ? Math.min(WHO_GAME_ATTEMPT_LIMIT, wrongGuesses.length + 1)
-    : WHO_GAME_ATTEMPT_LIMIT;
+    ? Math.min(attemptLimit, wrongGuesses.length + 1)
+    : attemptLimit;
   const calculatedScore = calculateWhoGameScore(session.status, wrongGuesses, cluesUsed, clueCount);
   return {
     session,
@@ -6129,8 +6196,6 @@ async function useWhoGamePowerup(type) {
   renderWhoGame();
   try {
     const body = { playerId: whoGameIdentityId, sessionId: session.id, type };
-    if (type === "scan") body.selectedIds = [...whoGamePowerupSelection];
-    if (type === "probe") body.candidateId = whoGamePowerupSelection[0] || "";
     const response = await fetch("/api/who-game/daily/powerup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -6140,18 +6205,9 @@ async function useWhoGamePowerup(type) {
     if (!response.ok) throw new Error(payload.error || "道具使用失败");
     whoGameDaily = payload;
     const result = payload.powerupResult?.result || {};
-    if (type === "eliminate") whoGameState.message = "道具生效：10名错误候选已被排除。";
-    if (type === "special") whoGameState.message = "作者提示已经解锁。";
-    if (type === "hero") whoGameState.message = "英雄残影已经显现。";
-    if (type === "scan") whoGameState.message = result.inside ? "搜查结果：目标就在你圈定的8人中。" : "搜查结果：目标不在你圈定的8人中。";
-    if (type === "probe" && result.correct) {
-      whoGameState.status = "won";
-      const answerName = getWhoGamePlayer(result.candidateId)?.name || "这名选手";
-      whoGameState.score = calculateWhoGameScore("won", whoGameState.wrongGuesses, whoGameState.revealed, whoGameState.question.clues.length);
-      whoGameState.message = getWhoGameSuccessMessage(answerName);
-    } else if (type === "probe") {
-      whoGameState.message = `无损试探结果：${getWhoGamePlayer(result.candidateId)?.name || "该选手"}不是答案。`;
-    }
+    if (type === "eliminate") whoGameState.message = "道具生效：5名错误候选已被排除。";
+    if (type === "attempts") whoGameState.message = "道具生效：本题增加2次猜测机会。";
+    if (type === "extraClue") whoGameState.message = "额外提示已经生成。";
     whoGamePowerupMode = "";
     whoGamePowerupSelection = [];
   } catch (error) {
@@ -6162,55 +6218,76 @@ async function useWhoGamePowerup(type) {
   }
 }
 
-function renderWhoGamePowerups() {
-  const powerupsEnabled = false;
-  if (!powerupsEnabled) {
-    return `
-      <section class="who-powerup-panel" aria-label="道具">
-        <button class="who-super-powerup-trigger" type="button" disabled>
-          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z" /><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" /></svg>
-          <strong>获取超级道具（暂未上线）</strong>
-        </button>
-      </section>
-    `;
+async function unlockWhoGamePowerups() {
+  const input = document.querySelector("#whoPowerupUnlockInput");
+  const submit = document.querySelector('[data-who-action="confirm-powerup-unlock"]');
+  const errorMount = document.querySelector("#whoPowerupUnlockError");
+  if (!input || !submit || !whoGameIdentityId) return;
+  const phrase = input.value;
+  submit.disabled = true;
+  submit.textContent = "正在确认…";
+  if (errorMount) errorMount.textContent = "";
+  try {
+    const response = await fetch("/api/who-game/daily/powerup-unlock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ playerId: whoGameIdentityId, phrase })
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "超级道具解锁失败");
+    whoGameDaily = payload;
+    whoGamePowerupUnlockOpen = false;
+    renderWhoGame();
+  } catch (error) {
+    submit.disabled = false;
+    submit.textContent = "确认解锁";
+    if (errorMount) errorMount.textContent = error.message;
+    input.focus();
+    input.select();
   }
-  const uses = getWhoGamePowerups();
-  const usedTypes = new Set(uses.map((use) => use.type));
+}
+
+function renderWhoGamePowerups() {
+  const usedTypes = new Set(getWhoGameDailyPowerups().map((use) => use.type));
   const remaining = whoGameDaily?.powerupsRemaining ?? 0;
+  const unlocked = Boolean(whoGameDaily?.powerupsUnlocked);
   const items = [
-    { type: "eliminate", label: "排除十人", description: "直接移除10名错误候选", icon: '<path d="M5 12h14" />' },
-    { type: "special", label: "作者提示", description: "读取题目作者留下的题外提示", icon: '<path d="M12 3v3M5.6 5.6l2.1 2.1M3 12h3M18 12h3M8 17h8M9.5 21h5" /><path d="M8 13a5 5 0 1 1 8 0c-1.2 1-1.7 1.8-1.8 3h-4.4C9.7 14.8 9.2 14 8 13Z" />' },
-    { type: "hero", label: "英雄残影", description: "查看最常用英雄的模糊头像", icon: '<path d="M4 7h16v10H4z" /><path d="m4 15 4-4 3 3 2-2 7 5" />' },
-    { type: "scan", label: "圈定搜查", description: "圈出8人，确认答案是否在其中", icon: '<circle cx="11" cy="11" r="6" /><path d="m16 16 5 5M8 11h6M11 8v6" />' },
-    { type: "probe", label: "无损试探", description: "免费试猜1人，不消耗猜错机会", icon: '<path d="M12 3 4 7v5c0 5 3.4 8 8 9 4.6-1 8-4 8-9V7l-8-4Z" /><path d="m9 12 2 2 4-5" />' }
+    { type: "eliminate", label: "排除5个人选", usedLabel: "已去除5个人选", description: "直接移除5名错误候选", icon: '<path d="M5 12h14" />' },
+    { type: "attempts", label: "本题增加2次机会", usedLabel: "已经增加2次机会", description: "本题增加2次猜测机会", icon: '<path d="M12 5v14M5 12h14" />' },
+    { type: "extraClue", label: "系统生成额外提示", usedLabel: "已生成额外提示", description: "生成一条真实比赛英雄战绩", icon: '<path d="M12 3v3M5.6 5.6l2.1 2.1M3 12h3M18 12h3M8 17h8M9.5 21h5" /><path d="M8 13a5 5 0 1 1 8 0c-1.2 1-1.7 1.8-1.8 3h-4.4C9.7 14.8 9.2 14 8 13Z" />' }
   ];
 
   return `
-    <section class="who-powerup-panel ${whoGamePowerupOpen ? "is-open" : ""}" aria-label="道具">
-      <button class="who-super-powerup-trigger" type="button" data-who-action="toggle-powerups" aria-expanded="${whoGamePowerupOpen}">
-        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z" /><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" /></svg>
-        <strong>获取超级道具</strong>
-      </button>
-      <small class="who-powerup-daily">每日3次（${remaining}/3）</small>
-      <div class="who-powerup-drawer" ${whoGamePowerupOpen ? "" : "hidden"}>
-        <div class="who-powerup-grid">
+    <section class="who-powerup-panel who-powerup-quick-panel" aria-label="超级道具">
+      ${unlocked ? `<div class="who-powerup-quickbar">
         ${items.map((item) => {
           const used = usedTypes.has(item.type);
-          const active = whoGamePowerupMode === item.type;
-          return `<button class="who-powerup ${used ? "is-used" : ""} ${active ? "is-active" : ""}" type="button" data-who-powerup="${item.type}" ${used || remaining <= 0 || whoGamePowerupBusy || whoGameState.status !== "playing" ? "disabled" : ""}>
+          return `<button class="who-powerup-quick ${used ? "is-used" : ""}" type="button" data-who-powerup="${item.type}" title="${escapeHtml(item.description)}" ${used || remaining <= 0 || whoGamePowerupBusy || whoGameState.status !== "playing" ? "disabled" : ""}>
             <svg aria-hidden="true" viewBox="0 0 24 24">${item.icon}</svg>
-            <strong>${item.label}</strong>
+            <strong>${used ? item.usedLabel : item.label}</strong>
+            <small>（${used ? 0 : 1}/1）</small>
           </button>`;
         }).join("")}
+      </div>` : `
+        <button class="who-super-powerup-trigger" type="button" data-who-action="open-powerup-unlock">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z" /><path d="m18.5 14 .8 2.2 2.2.8-2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" /></svg>
+          <strong>激活今日道具</strong>
+        </button>
+      `}
+      ${whoGamePowerupUnlockOpen && !unlocked ? `
+        <div class="who-identity-confirm-backdrop who-powerup-unlock-backdrop">
+          <section class="who-identity-confirm-modal who-powerup-unlock-modal" role="dialog" aria-modal="true" aria-labelledby="whoPowerupUnlockTitle">
+            <p id="whoPowerupUnlockTitle">输入以下内容以获得今日的三发超级道具</p>
+            <strong class="who-powerup-unlock-phrase">板神板神，勇猛超神</strong>
+            <input id="whoPowerupUnlockInput" type="text" autocomplete="off" spellcheck="false" placeholder="请照着输入上面的内容" aria-label="超级道具解锁内容" />
+            <small id="whoPowerupUnlockError" class="who-powerup-unlock-error" role="status"></small>
+            <div class="who-powerup-unlock-actions">
+              <button class="secondary-button" type="button" data-who-action="cancel-powerup-unlock">取消</button>
+              <button class="primary-button" type="button" data-who-action="confirm-powerup-unlock">确认解锁</button>
+            </div>
+          </section>
         </div>
-        ${whoGamePowerupMode ? `
-        <div class="who-powerup-mode">
-          <p>${whoGamePowerupMode === "scan" ? `请从未排除的候选中选择8人（${whoGamePowerupSelection.length}/8）` : `请选择1人进行无损试探（${whoGamePowerupSelection.length}/1）`}</p>
-          <div><button class="ghost-button" type="button" data-who-action="cancel-powerup">取消</button><button class="primary-button" type="button" data-who-action="confirm-powerup" ${whoGamePowerupMode === "scan" ? (whoGamePowerupSelection.length === 8 ? "" : "disabled") : (whoGamePowerupSelection.length === 1 ? "" : "disabled")}>使用道具</button></div>
-        </div>
-        ` : ""}
-        ${uses.length ? `<div class="who-powerup-results">${uses.map(renderWhoGamePowerupResult).join("")}</div>` : ""}
-      </div>
+      ` : ""}
     </section>
   `;
 }
@@ -6240,14 +6317,17 @@ function renderWhoGameVisibleClue(clue, index, isRevealed = true, showVerificati
   `;
 }
 
-function renderWhoGamePowerupResult(use) {
-  const result = use.result || {};
-  if (use.type === "special") return `<article class="is-special"><small>作者提示</small><p>${escapeHtml(result.text || "")}</p></article>`;
-  if (use.type === "hero") return `<article class="is-hero"><small>英雄残影</small><div class="who-blurred-hero" aria-label="高度模糊的英雄头像">${renderHeroAvatar(result.hero || "")}</div></article>`;
-  if (use.type === "eliminate") return `<article><small>排除十人</small><p>已永久排除 ${result.excludedIds?.length || 0} 名错误候选。</p></article>`;
-  if (use.type === "scan") return `<article><small>圈定搜查</small><p>${result.inside ? "目标在圈定的8人之中。" : "目标不在圈定的8人之中。"}</p></article>`;
-  if (use.type === "probe") return `<article><small>无损试探</small><p>${result.correct ? "试探命中正确身份。" : `${escapeHtml(getWhoGamePlayer(result.candidateId)?.name || "该选手")}不是答案。`}</p></article>`;
-  return "";
+function renderWhoGameExtraPowerupClue() {
+  const use = getWhoGamePowerups().find((powerup) => powerup.type === "extraClue");
+  if (!use?.result?.text) return "";
+  return `
+    <article class="who-visible-clue who-extra-powerup-clue is-revealed">
+      <strong>额外提示</strong>
+      <div class="who-visible-clue-content">
+        <p>${escapeHtml(use.result.text)}</p>
+      </div>
+    </article>
+  `;
 }
 
 function revealWhoGameClue() {
@@ -6285,7 +6365,7 @@ function submitWhoGameGuess(playerId) {
   const guessedPlayerName = getWhoGamePlayer(playerId)?.name || "这名选手";
   whoGameState.wrongGuesses.push(playerId);
   whoGameState.selectedGuessId = "";
-  if (whoGameState.wrongGuesses.length >= 3) {
+  if (whoGameState.wrongGuesses.length >= getWhoGameAttemptLimit()) {
     const answerName = getWhoGamePlayer(question.answerId)?.name || "这名选手";
     whoGameState.status = "lost";
     whoGameState.score = 0;
@@ -6437,7 +6517,7 @@ function renderWhoGame() {
     || whoGameDaily.sessions.find((item) => item.questionKey === question?.key);
   const questionSlot = activeSession?.slot || Math.max(1, Math.min(3, whoGameDaily.used || 1));
   const identityPlayerName = getWhoGamePlayer(whoGameIdentityId)?.name || "未知选手";
-  const attemptsRemaining = Math.max(0, 3 - whoGameState.wrongGuesses.length);
+  const attemptsRemaining = Math.max(0, getWhoGameAttemptLimit(activeSession) - whoGameState.wrongGuesses.length);
   const canStartNextQuestion = Boolean(whoGameDaily.unlimited || whoGameDaily.remaining > 0);
   const dailyRoundComplete = questionSlot >= (whoGameDaily.dailyLimit || 3);
   const shouldShowSummary = dailyRoundComplete || Boolean(whoGameDaily.bankExhausted);
@@ -6483,6 +6563,7 @@ function renderWhoGame() {
         <div class="who-game-main">
           <section class="who-simple-clues" aria-label="提示">
             ${question.clues.map((clue, index) => renderWhoGameVisibleClue(clue, index, isComplete || index < whoGameState.revealed, isComplete)).join("")}
+            ${renderWhoGameExtraPowerupClue()}
           </section>
           <div class="who-game-alert who-game-alert-mobile ${feedbackTone} ${isComplete ? "is-complete" : ""}">
             ${gameAlertHtml}
@@ -6528,31 +6609,20 @@ function handleWhoGameClick(event) {
   const suspectButton = event.target.closest("[data-who-suspect]");
   if (suspectButton && whoGameState.status === "playing") {
     const playerId = suspectButton.dataset.whoSuspect || "";
-    if (whoGamePowerupMode === "scan") {
-      if (whoGamePowerupSelection.includes(playerId)) {
-        whoGamePowerupSelection = whoGamePowerupSelection.filter((id) => id !== playerId);
-      } else if (whoGamePowerupSelection.length < 8) {
-        whoGamePowerupSelection.push(playerId);
-      }
-    } else if (whoGamePowerupMode === "probe") {
-      whoGamePowerupSelection = [playerId];
-    } else {
-      whoGameState.selectedGuessId = playerId;
-    }
+    whoGameState.selectedGuessId = playerId;
     renderWhoGame();
     return;
   }
   const powerupButton = event.target.closest("[data-who-powerup]");
   if (powerupButton && whoGameState.status === "playing") {
-    const type = powerupButton.dataset.whoPowerup || "";
-    if (["scan", "probe"].includes(type)) {
-      whoGamePowerupMode = type;
-      whoGamePowerupSelection = [];
-      whoGameState.selectedGuessId = "";
+    if (!whoGameDaily?.powerupsUnlocked) {
+      whoGamePowerupUnlockOpen = true;
       renderWhoGame();
-    } else {
-      void useWhoGamePowerup(type);
+      window.requestAnimationFrame(() => document.querySelector("#whoPowerupUnlockInput")?.focus());
+      return;
     }
+    const type = powerupButton.dataset.whoPowerup || "";
+    void useWhoGamePowerup(type);
     return;
   }
   const action = event.target.closest("[data-who-action]")?.dataset.whoAction;
@@ -6566,16 +6636,16 @@ function handleWhoGameClick(event) {
     renderWhoGame();
   }
   if (action === "confirm-identity" && whoGameIdentityCandidateId) selectWhoGameIdentity(whoGameIdentityCandidateId);
-  if (action === "toggle-powerups") {
-    whoGamePowerupOpen = !whoGamePowerupOpen;
+  if (action === "open-powerup-unlock") {
+    whoGamePowerupUnlockOpen = true;
+    renderWhoGame();
+    window.requestAnimationFrame(() => document.querySelector("#whoPowerupUnlockInput")?.focus());
+  }
+  if (action === "cancel-powerup-unlock") {
+    whoGamePowerupUnlockOpen = false;
     renderWhoGame();
   }
-  if (action === "cancel-powerup") {
-    whoGamePowerupMode = "";
-    whoGamePowerupSelection = [];
-    renderWhoGame();
-  }
-  if (action === "confirm-powerup" && whoGamePowerupMode) void useWhoGamePowerup(whoGamePowerupMode);
+  if (action === "confirm-powerup-unlock") void unlockWhoGamePowerups();
   if (action === "summary") {
     whoGameSummaryOpen = true;
     renderWhoGame();
@@ -7754,6 +7824,11 @@ function bindEvents() {
   $("#closeHomepageHighlightPreview")?.addEventListener("click", () => closeHomepageHighlightFraming());
   $("#matchDetail")?.addEventListener("click", handleMatchDetailPageClick);
   $("#whoIsIt")?.addEventListener("click", handleWhoGameClick);
+  $("#whoIsIt")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.target?.id !== "whoPowerupUnlockInput") return;
+    event.preventDefault();
+    void unlockWhoGamePowerups();
+  });
 
   $("#players").addEventListener("click", (event) => {
     const sortButton = event.target.closest("[data-record-sort]");
@@ -8119,7 +8194,7 @@ function bindEvents() {
     const form = event.currentTarget;
     if (form.dataset.saving === "true") return;
     const id = editingHomepageHighlightId;
-    const controls = [...form.querySelectorAll("input, select, button")];
+    const controls = [...form.querySelectorAll("input, select, textarea, button")];
     const previousDisabled = controls.map((control) => control.disabled);
     const status = $("#homepageHighlightUploadStatus");
     const file = $("#homepageHighlightFile").files[0];
@@ -8146,6 +8221,7 @@ function bindEvents() {
         body: JSON.stringify({
           matchRecordId: $("#homepageHighlightMatchRecordId").value,
           playerId: $("#homepageHighlightPlayerId").value,
+          caption: $("#homepageHighlightCaption").value.trim(),
           image: $("#homepageHighlightImage").value.trim(),
           layout: $("#homepageHighlightLayout").value,
           objectPosition: $("#homepageHighlightObjectPosition").value.trim(),

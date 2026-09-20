@@ -8384,6 +8384,53 @@ body[data-ui="modern"] .dashboard-highlight {
   min-height: 48px;
 }
 
+.who-powerup-unlock-modal {
+  width: min(520px, 100%);
+}
+
+.who-powerup-unlock-phrase {
+  display: block;
+  margin-top: 16px;
+  color: #ffbd73;
+  font-family: "Alimama ShuHeiTi Bold", "Alimama ShuHeiTi", "Microsoft YaHei", sans-serif;
+  font-size: clamp(26px, 5vw, 36px);
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  line-height: 1.35;
+  text-shadow: 0 0 24px rgba(255, 151, 78, 0.2);
+}
+
+.who-powerup-unlock-modal input {
+  width: 100%;
+  min-height: 52px;
+  margin-top: 22px;
+  border: 1px solid rgba(114, 210, 221, 0.34);
+  border-radius: 9px;
+  outline: none;
+  background: rgba(1, 15, 19, 0.72);
+  padding: 0 16px;
+  color: #edf9fa;
+  font: 700 16px/1.4 "Microsoft YaHei", sans-serif;
+  text-align: center;
+}
+
+.who-powerup-unlock-modal input:focus {
+  border-color: #66d3df;
+  box-shadow: 0 0 0 3px rgba(102, 211, 223, 0.12);
+}
+
+.who-powerup-unlock-error {
+  display: block;
+  min-height: 20px;
+  margin-top: 8px;
+  color: #ff9299;
+  font-size: 12px;
+}
+
+.who-identity-confirm-modal > .who-powerup-unlock-actions {
+  margin-top: 10px;
+}
+
 .who-game-console.who-game-simple {
   overflow: visible;
   border-color: rgba(108, 211, 223, 0.1);
@@ -8988,6 +9035,68 @@ body[data-ui="modern"] .dashboard-highlight {
   border: 0;
   background: transparent;
   padding: 0;
+}
+
+.who-game-simple .who-powerup-quickbar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.who-game-simple .who-powerup-quick {
+  display: grid;
+  min-width: 0;
+  min-height: 68px;
+  cursor: pointer;
+  place-items: center;
+  gap: 2px;
+  border: 1px solid rgba(236, 152, 92, 0.3);
+  border-radius: 10px;
+  background: linear-gradient(145deg, rgba(88, 44, 23, 0.54), rgba(27, 24, 31, 0.92));
+  padding: 8px 4px;
+  color: #f5dfce;
+  text-align: center;
+  transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease, opacity 160ms ease;
+}
+
+.who-game-simple .who-powerup-quick:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: rgba(255, 187, 127, 0.75);
+  background: linear-gradient(145deg, rgba(113, 57, 27, 0.7), rgba(41, 30, 45, 0.96));
+}
+
+.who-game-simple .who-powerup-quick svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: #f1a46d;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.who-game-simple .who-powerup-quick strong {
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.who-game-simple .who-powerup-quick small {
+  color: #d9a17c;
+  font: 800 10px/1 "Fira Code", Consolas, monospace;
+}
+
+.who-game-simple .who-powerup-quick.is-locked::after {
+  content: "待解锁";
+  color: #816a61;
+  font-size: 8px;
+}
+
+.who-game-simple .who-powerup-quick.is-used,
+.who-game-simple .who-powerup-quick:disabled {
+  cursor: default;
+  opacity: 0.42;
 }
 
 .who-super-powerup-trigger {
@@ -10223,7 +10332,8 @@ body.homepage-preview-edit-text[data-ui="modern"] .dashboard-highlight-content :
   .dashboard-highlight-date,
   .dashboard-highlight-title p,
   .dashboard-highlight-title h3,
-  .dashboard-highlight-stats
+  .dashboard-highlight-stats,
+  .dashboard-highlight-caption
 ) {
   outline: 1px dashed rgba(105, 224, 239, 0.68);
   outline-offset: 5px;
@@ -10331,6 +10441,22 @@ body[data-ui="modern"] .dashboard-highlight-stats dd {
   font-size: 15px;
   font-variant-numeric: tabular-nums;
   font-weight: 800;
+}
+
+body[data-ui="modern"] .dashboard-highlight-caption {
+  display: -webkit-box;
+  max-width: min(34ch, 100%);
+  overflow: hidden;
+  margin: 15px 0 0;
+  color: rgba(224, 241, 243, 0.76);
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  font-size: clamp(13px, 1.25vw, 17px);
+  font-weight: 300;
+  letter-spacing: 0.015em;
+  line-height: 1.55;
+  text-wrap: balance;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 body[data-ui="modern"] .dashboard-highlight-footer {
@@ -15019,6 +15145,7 @@ body[data-ui="modern"] #overallData .page-heading {
 .admin-highlight-card-title .is-unlinked { background: rgba(231, 159, 72, 0.1); color: #eeb36b; }
 .admin-highlight-card-body p { display: flex; align-items: center; justify-content: space-between; margin: 0; color: var(--text); font-family: "Fira Code", Consolas, monospace; font-weight: 700; }
 .admin-highlight-card-body code { color: var(--muted); font-size: 11px; font-weight: 400; }
+.admin-highlight-card-body .admin-highlight-caption { display: -webkit-box; overflow: hidden; margin: -4px 0 0; color: #91a8ac; font-size: 12px; font-weight: 300; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .admin-highlight-card-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .admin-highlight-empty { grid-column: 1 / -1; margin: 0; border: 1px dashed rgba(128, 218, 230, 0.13); border-radius: 9px; color: var(--muted); padding: 20px; text-align: center; }
 .homepage-highlight-preview-dialog { width: min(1660px, calc(100vw - 28px)); max-width: none; max-height: calc(100vh - 24px); overflow: auto; border: 1px solid rgba(128, 218, 230, 0.22); border-radius: 14px; background: #030d12; color: var(--text); padding: 0; box-shadow: 0 30px 90px rgba(0, 0, 0, 0.72); }
