@@ -8701,10 +8701,22 @@ body[data-ui="modern"] .dashboard-highlight {
   font-weight: 800;
 }
 
-.who-summary-continue {
+.who-summary-continue,
+.who-summary-catchup {
   display: block;
   min-width: 240px;
   margin: 26px auto 0;
+}
+
+.who-summary-catchup {
+  border-color: rgba(112, 210, 221, 0.42);
+}
+
+.who-summary-catchup-note {
+  margin: 18px 0 0;
+  color: #78969b;
+  text-align: center;
+  font-size: 13px;
 }
 
 .who-daily-leaderboard {
@@ -8984,6 +8996,75 @@ body[data-ui="modern"] .dashboard-highlight {
 
 .who-visible-clue-content > .who-clue-hero {
   margin-top: 12px;
+}
+
+.who-image-clue {
+  width: min(100%, 360px);
+  margin: 14px 0 0;
+  overflow: hidden;
+  border: 1px solid rgba(112, 210, 221, 0.2);
+  border-radius: 6px;
+  background: rgba(2, 14, 18, 0.7);
+}
+
+.who-image-clue img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 360 / 203;
+  object-fit: cover;
+  image-rendering: pixelated;
+}
+
+.who-calendar-snapshot {
+  margin: 0;
+}
+
+.who-calendar-snapshot figcaption {
+  margin-bottom: 12px;
+  color: #e2edef;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.who-calendar-snapshot-days {
+  display: grid;
+  grid-template-columns: repeat(var(--who-calendar-columns, 5), minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid rgba(112, 210, 221, 0.16);
+  border-radius: 6px;
+}
+
+.who-calendar-snapshot-day {
+  min-height: 68px;
+  border-right: 1px solid rgba(112, 210, 221, 0.12);
+  padding: 12px;
+}
+
+.who-calendar-snapshot-day:last-child {
+  border-right: 0;
+}
+
+.who-calendar-snapshot-day > strong {
+  display: block;
+  margin-bottom: 9px;
+  color: #e2edef;
+  font-size: 18px;
+}
+
+.who-calendar-snapshot-day > i {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-width: 32px;
+}
+
+.who-calendar-snapshot-day b {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #65d8bb;
+  box-shadow: 0 0 8px rgba(101, 216, 187, 0.32);
 }
 
 .who-visible-clue .who-rating-trend {

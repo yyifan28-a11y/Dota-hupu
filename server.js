@@ -30,7 +30,7 @@ const REPLAY_PYTHON = ENV.REPLAY_PYTHON
   || (existsSync(LOCAL_REPLAY_PYTHON) ? LOCAL_REPLAY_PYTHON : (globalThis.process.platform === "win32" ? "python" : "python3"));
 const MAX_REPLAY_UPLOAD_BYTES = Math.max(1, Number(ENV.REPLAY_MAX_BYTES || 200 * 1024 * 1024));
 const MAX_REPLAY_JOBS = Math.max(1, Number(ENV.REPLAY_MAX_JOBS || 3));
-const WHO_GAME_FIRST_DAY_LIMIT = 3;
+const WHO_GAME_FIRST_DAY_LIMIT = 2;
 const WHO_GAME_RETURNING_DAY_LIMIT = 2;
 const WHO_GAME_DAILY_POWERUP_LIMIT = 3;
 const WHO_GAME_POWERUP_UNLOCK_PHRASE = "板神板神，勇猛超神";
@@ -39,7 +39,8 @@ const WHO_GAME_CLUE_COUNT = 5;
 const WHO_GAME_CORRECT_SCORE = 100;
 const WHO_GAME_UNUSED_ATTEMPT_SCORE = 20;
 const WHO_GAME_UNSEEN_CLUE_SCORE = 10;
-const WHO_GAME_QUESTIONS = [
+const WHO_GAME_CURRENT_BATCH_START_DATE = "2026-09-25";
+const WHO_GAME_LEGACY_QUESTIONS = [
   { key: "curated-ldxy-01", targetName: "ldxy" },
   { key: "curated-xiaohai-01", targetName: "小孩" },
   { key: "curated-coach-01", targetName: "教练" },
@@ -51,6 +52,24 @@ const WHO_GAME_QUESTIONS = [
   { key: "curated-d-01", targetName: "D" },
   { key: "curated-zhuzhu-01", targetName: "猪猪" }
 ];
+const WHO_GAME_CURRENT_QUESTIONS = [
+  { key: "curated-haoge-01", targetName: "郝哥" },
+  { key: "curated-mazhong-01", targetName: "马忠" },
+  { key: "curated-daishu-01", targetName: "呆叔" },
+  { key: "curated-haoran-01", targetName: "浩然" },
+  { key: "curated-baigei-01", targetName: "白给" },
+  { key: "curated-kunkun-01", targetName: "坤坤" },
+  { key: "curated-jizhe-01", targetName: "记者" },
+  { key: "curated-cac-01", targetName: "cac" },
+  { key: "curated-zhenrong-01", targetName: "阵容" },
+  { key: "curated-ldxy-02", targetName: "ldxy" },
+  { key: "curated-laoban-01", targetName: "老板" }
+];
+const WHO_GAME_QUESTIONS = [...WHO_GAME_LEGACY_QUESTIONS, ...WHO_GAME_CURRENT_QUESTIONS];
+const WHO_GAME_LEGACY_QUESTION_KEYS = WHO_GAME_LEGACY_QUESTIONS.map((question) => question.key);
+const WHO_GAME_CURRENT_QUESTION_KEYS = WHO_GAME_CURRENT_QUESTIONS.map((question) => question.key);
+const WHO_GAME_LEGACY_QUESTION_KEY_SET = new Set(WHO_GAME_LEGACY_QUESTION_KEYS);
+const WHO_GAME_CURRENT_QUESTION_KEY_SET = new Set(WHO_GAME_CURRENT_QUESTION_KEYS);
 const WHO_GAME_QUESTION_KEYS = WHO_GAME_QUESTIONS.map((question) => question.key);
 const WHO_GAME_POWERUP_TYPES = ["eliminate", "attempts", "extraClue"];
 const REPLAY_PARSE_TIMEOUT_MS = Math.max(30_000, Number(ENV.REPLAY_PARSE_TIMEOUT_MS || 5 * 60 * 1000));
@@ -546,6 +565,12 @@ async function handleApi(request, response, url) {
   if (method === "POST" && url.pathname === "/api/who-game/daily/start") {
     const body = await readJson(request);
     sendJson(response, 200, startWhoGameDailySession(body.playerId));
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/who-game/catchup/start") {
+    const body = await readJson(request);
+    sendJson(response, 200, startWhoGameCatchupSession(body.playerId));
     return;
   }
 
@@ -1897,6 +1922,23 @@ function getShanghaiDate() {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+function getWhoGameBatchConfig(playDate = getShanghaiDate()) {
+  const currentBatchActive = String(playDate || "") >= WHO_GAME_CURRENT_BATCH_START_DATE;
+  return {
+    currentBatchActive,
+    currentQuestions: currentBatchActive ? WHO_GAME_CURRENT_QUESTIONS : WHO_GAME_LEGACY_QUESTIONS,
+    legacyQuestions: currentBatchActive ? WHO_GAME_LEGACY_QUESTIONS : [],
+    currentQuestionKeys: currentBatchActive ? WHO_GAME_CURRENT_QUESTION_KEYS : WHO_GAME_LEGACY_QUESTION_KEYS,
+    legacyQuestionKeys: currentBatchActive ? WHO_GAME_LEGACY_QUESTION_KEYS : [],
+    currentQuestionKeySet: currentBatchActive ? WHO_GAME_CURRENT_QUESTION_KEY_SET : WHO_GAME_LEGACY_QUESTION_KEY_SET,
+    legacyQuestionKeySet: currentBatchActive ? WHO_GAME_LEGACY_QUESTION_KEY_SET : new Set()
+  };
+}
+
+function getWhoGameSessionMode(questionKey, playDate) {
+  return getWhoGameBatchConfig(playDate).legacyQuestionKeySet.has(questionKey) ? "catchup" : "daily";
+}
+
 function findWhoGamePlayer(playerId) {
   const id = String(playerId || "").trim();
   if (!id) throw createHttpError(400, "请先选择你的选手ID");
@@ -1907,8 +1949,8 @@ function findWhoGamePlayer(playerId) {
   throw createHttpError(404, "选手ID不存在");
 }
 
-function getWhoGameQuestionOrder(playerId, playDate) {
-  return [...WHO_GAME_QUESTION_KEYS].sort((left, right) => {
+function getWhoGameQuestionOrder(playerId, playDate, questionKeys = WHO_GAME_QUESTION_KEYS) {
+  return [...questionKeys].sort((left, right) => {
     const leftHash = crypto.createHash("sha256").update(`${playDate}:${playerId}:${left}`).digest("hex");
     const rightHash = crypto.createHash("sha256").update(`${playDate}:${playerId}:${right}`).digest("hex");
     return leftHash.localeCompare(rightHash);
@@ -1917,10 +1959,12 @@ function getWhoGameQuestionOrder(playerId, playDate) {
 
 function mapWhoGameDailySession(row) {
   const wrongGuesses = parseJsonArray(row.wrong_guesses);
+  const mode = getWhoGameSessionMode(row.question_key, row.play_date);
   return {
     id: row.id,
     slot: Number(row.slot),
     questionKey: row.question_key,
+    mode,
     status: row.status,
     revealed: Number(row.revealed),
     wrongGuesses,
@@ -1949,13 +1993,14 @@ function isWhoGameUnlimitedPlayer(playerId) {
 }
 
 function getWhoGameDailyLeaderboard(playDate) {
+  const batch = getWhoGameBatchConfig(playDate);
   const players = new Map(getAllWhoGamePlayers().map((player) => [player.id, player]));
   const rows = databases.s3.prepare(`
-    SELECT player_id, status, revealed, wrong_guesses, updated_at
+    SELECT player_id, question_key, status, revealed, wrong_guesses, updated_at
     FROM who_game_daily_sessions
     WHERE play_date = ? AND status IN ('won', 'lost')
     ORDER BY updated_at ASC, id ASC
-  `).all(playDate);
+  `).all(playDate).filter((row) => batch.currentQuestionKeySet.has(row.question_key));
   const entries = new Map();
   rows.forEach((row) => {
     const player = players.get(row.player_id);
@@ -1996,6 +2041,7 @@ function getWhoGameDailyLeaderboard(playDate) {
 function getWhoGameAdminDashboard(requestedDate) {
   const playDate = String(requestedDate || "").trim() || getShanghaiDate();
   if (!isValidDateString(playDate)) throw createHttpError(400, "日期格式不正确");
+  const batch = getWhoGameBatchConfig(playDate);
 
   const players = getAllWhoGamePlayers();
   const playerById = new Map(players.map((player) => [player.id, player]));
@@ -2043,6 +2089,7 @@ function getWhoGameAdminDashboard(requestedDate) {
       id: row.id,
       slot: Number(row.slot),
       questionKey: row.question_key,
+      mode: getWhoGameSessionMode(row.question_key, playDate),
       answerName: question?.targetName || "未知题目",
       status: row.status,
       attemptsUsed,
@@ -2059,7 +2106,9 @@ function getWhoGameAdminDashboard(requestedDate) {
 
   const progress = players.map((player) => {
     const sessions = sessionsByPlayer.get(player.id) || [];
-    const completed = sessions.filter((session) => session.status !== "playing");
+    const dailySessions = sessions.filter((session) => session.mode === "daily");
+    const catchupSessions = sessions.filter((session) => session.mode === "catchup");
+    const completed = dailySessions.filter((session) => session.status !== "playing");
     const current = sessions.find((session) => session.status === "playing") || null;
     const firstPlayDate = firstDates.get(player.id) || "";
     const dailyLimit = !firstPlayDate || firstPlayDate === playDate
@@ -2074,14 +2123,16 @@ function getWhoGameAdminDashboard(requestedDate) {
       playerName: player.name,
       firstPlayDate,
       dailyLimit,
-      used: sessions.length,
+      used: dailySessions.length,
       completed: completed.length,
       correct,
       score,
       currentSlot: current?.slot || 0,
       status: current ? "playing" : completed.length >= dailyLimit ? "complete" : sessions.length ? "between" : "not_started",
       totalCompleted: totalCompleted.get(player.id) || 0,
-      questionCount: WHO_GAME_QUESTION_KEYS.length,
+      questionCount: batch.currentQuestionKeys.length,
+      catchupUsed: catchupSessions.length,
+      catchupCompleted: catchupSessions.filter((session) => session.status !== "playing").length,
       lastUpdatedAt,
       sessions
     };
@@ -2095,7 +2146,10 @@ function getWhoGameAdminDashboard(requestedDate) {
   const activePlayers = progress.filter((player) => player.used > 0);
   return {
     playDate,
-    questionCount: WHO_GAME_QUESTION_KEYS.length,
+    questionCount: batch.currentQuestionKeys.length,
+    legacyQuestionCount: batch.legacyQuestionKeys.length,
+    currentBatchActive: batch.currentBatchActive,
+    currentBatchStartDate: WHO_GAME_CURRENT_BATCH_START_DATE,
     leaderboard: getWhoGameDailyLeaderboard(playDate),
     summary: {
       playersStarted: activePlayers.length,
@@ -2110,6 +2164,7 @@ function getWhoGameAdminDashboard(requestedDate) {
 function getWhoGameDailyStatus(playerId) {
   const player = findWhoGamePlayer(playerId);
   const playDate = getShanghaiDate();
+  const batch = getWhoGameBatchConfig(playDate);
   const unlimited = isWhoGameUnlimitedPlayer(player.id);
   const sessions = databases.s3.prepare(`
     SELECT * FROM who_game_daily_sessions
@@ -2131,6 +2186,8 @@ function getWhoGameDailyStatus(playerId) {
     session.powerups = powerups.filter((powerup) => powerup.sessionId === session.id);
   });
   const current = sessions.find((session) => session.status === "playing") || null;
+  const dailySessions = sessions.filter((session) => session.mode === "daily");
+  const catchupSessions = sessions.filter((session) => session.mode === "catchup");
   const firstPlayDate = databases.s3.prepare(`
     SELECT MIN(play_date) AS play_date
     FROM who_game_daily_sessions
@@ -2144,26 +2201,49 @@ function getWhoGameDailyStatus(playerId) {
     WHERE player_id = ? AND status IN ('won', 'lost')
   `).all(player.id).map((row) => row.question_key));
   sessions.forEach((session) => completedQuestionKeys.add(session.questionKey));
-  const questionOrder = getWhoGameQuestionOrder(player.id, playDate);
-  const unseenQuestionKeys = questionOrder.filter((questionKey) => !completedQuestionKeys.has(questionKey));
+  const currentQuestionOrder = getWhoGameQuestionOrder(player.id, playDate, batch.currentQuestionKeys);
+  const legacyQuestionOrder = getWhoGameQuestionOrder(player.id, playDate, batch.legacyQuestionKeys);
+  const unseenQuestionKeys = currentQuestionOrder.filter((questionKey) => !completedQuestionKeys.has(questionKey));
+  const unseenLegacyQuestionKeys = legacyQuestionOrder.filter((questionKey) => !completedQuestionKeys.has(questionKey));
   const nextQuestionKey = unseenQuestionKeys[0]
-    || (unlimited && !current ? questionOrder[0] : "");
+    || (unlimited && !current ? currentQuestionOrder[0] : "");
+  const nextCatchupQuestionKey = unseenLegacyQuestionKeys[0] || "";
   const bankExhausted = !unlimited && !current && unseenQuestionKeys.length === 0;
-  const availableSlots = Math.max(0, dailyLimit - sessions.length);
+  const allBankExhausted = bankExhausted && unseenLegacyQuestionKeys.length === 0;
+  const availableDailySlots = Math.max(0, dailyLimit - dailySessions.length);
+  const physicalSlotsRemaining = Math.max(0, 3 - sessions.length);
+  const dailyComplete = dailySessions.filter((session) => session.status !== "playing").length >= dailyLimit
+    || bankExhausted;
+  const catchupAvailable = !unlimited
+    && !current
+    && dailyComplete
+    && catchupSessions.length === 0
+    && physicalSlotsRemaining > 0
+    && Boolean(nextCatchupQuestionKey);
   return {
     player,
     playDate,
     unlimited,
     isFirstPlayDay,
     dailyLimit,
-    used: sessions.length,
-    completed: sessions.filter((session) => session.status !== "playing").length,
-    remaining: unlimited && !current && sessions.length >= dailyLimit
+    used: dailySessions.length,
+    completed: dailySessions.filter((session) => session.status !== "playing").length,
+    remaining: unlimited && !current && dailySessions.length >= dailyLimit
       ? 1
-      : Math.min(availableSlots, unseenQuestionKeys.length),
+      : Math.min(availableDailySlots, unseenQuestionKeys.length, physicalSlotsRemaining),
     bankExhausted,
+    allBankExhausted,
     completedQuestionCount: completedQuestionKeys.size,
-    questionCount: WHO_GAME_QUESTION_KEYS.length,
+    questionCount: batch.currentQuestionKeys.length,
+    totalQuestionCount: WHO_GAME_QUESTION_KEYS.length,
+    legacyQuestionCount: batch.legacyQuestionKeys.length,
+    currentBatchActive: batch.currentBatchActive,
+    currentBatchStartDate: WHO_GAME_CURRENT_BATCH_START_DATE,
+    catchupAvailable,
+    catchupUsed: catchupSessions.length,
+    catchupCompleted: catchupSessions.filter((session) => session.status !== "playing").length,
+    catchupRemaining: catchupAvailable ? 1 : 0,
+    nextCatchupQuestionKey,
     leaderboard: getWhoGameDailyLeaderboard(playDate),
     powerupsUnlocked,
     powerupsUsed: powerups.length,
@@ -2334,6 +2414,35 @@ function startWhoGameDailySession(playerId) {
       wrong_guesses, score, created_at, updated_at, completed_at
     ) VALUES (?, ?, ?, ?, ?, 'playing', 1, '[]', 0, ?, ?, '')
   `).run(crypto.randomUUID(), status.player.id, status.playDate, slot, status.nextQuestionKey, now, now);
+  return getWhoGameDailyStatus(status.player.id);
+}
+
+function startWhoGameCatchupSession(playerId) {
+  const status = getWhoGameDailyStatus(playerId);
+  if (status.current) return status;
+  if (!status.catchupAvailable || !status.nextCatchupQuestionKey) {
+    throw createHttpError(409, status.catchupUsed
+      ? "今天的往期补做机会已经使用"
+      : "请先完成今天的正式挑战");
+  }
+  const usedSlots = new Set(status.sessions.map((session) => session.slot));
+  const slot = [1, 2, 3].find((value) => !usedSlots.has(value));
+  if (!slot) throw createHttpError(409, "今天没有可用的补做位置");
+  const now = new Date().toISOString();
+  databases.s3.prepare(`
+    INSERT INTO who_game_daily_sessions (
+      id, player_id, play_date, slot, question_key, status, revealed,
+      wrong_guesses, score, created_at, updated_at, completed_at
+    ) VALUES (?, ?, ?, ?, ?, 'playing', 1, '[]', 0, ?, ?, '')
+  `).run(
+    crypto.randomUUID(),
+    status.player.id,
+    status.playDate,
+    slot,
+    status.nextCatchupQuestionKey,
+    now,
+    now
+  );
   return getWhoGameDailyStatus(status.player.id);
 }
 
