@@ -5809,25 +5809,7 @@ function selectWhoGameClues(facts, theme) {
 function chooseWhoGameQuestion(questionKey = "") {
   const curatedQuestion = buildCuratedWhoGameQuestion(questionKey);
   if (curatedQuestion) return curatedQuestion;
-  const model = buildWhoGameModel();
-  if (!model.appearances.length) return null;
-  const recent = new Set(getWhoGameRecentKeys());
-  const fresh = model.appearances.filter((item) => !recent.has(`${item.match.id}:${item.profile.player.id}`));
-  const appearance = pickWhoGameItem(fresh.length ? fresh : model.appearances);
-  const suspects = buildWhoGameSuspects(appearance.profile, model.eligible);
-  const theme = pickWhoGameItem(WHO_GAME_THEMES);
-  const facts = buildWhoGameFacts(appearance.profile, appearance, suspects);
-  return {
-    key: `${appearance.match.id}:${appearance.profile.player.id}`,
-    answerId: appearance.profile.player.id,
-    profile: appearance.profile,
-    match: appearance.match,
-    detail: appearance.detail,
-    side: appearance.side,
-    suspects,
-    theme,
-    clues: selectWhoGameClues(facts, theme)
-  };
+  return null;
 }
 
 function buildCuratedWhoGameQuestion(questionKey = "curated-preview-robot-01") {

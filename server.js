@@ -71,6 +71,7 @@ const WHO_GAME_CURRENT_QUESTION_KEYS = WHO_GAME_CURRENT_QUESTIONS.map((question)
 const WHO_GAME_LEGACY_QUESTION_KEY_SET = new Set(WHO_GAME_LEGACY_QUESTION_KEYS);
 const WHO_GAME_CURRENT_QUESTION_KEY_SET = new Set(WHO_GAME_CURRENT_QUESTION_KEYS);
 const WHO_GAME_QUESTION_KEYS = WHO_GAME_QUESTIONS.map((question) => question.key);
+const WHO_GAME_QUESTION_KEY_SET = new Set(WHO_GAME_QUESTION_KEYS);
 const WHO_GAME_POWERUP_TYPES = ["eliminate", "attempts", "extraClue"];
 const REPLAY_PARSE_TIMEOUT_MS = Math.max(30_000, Number(ENV.REPLAY_PARSE_TIMEOUT_MS || 5 * 60 * 1000));
 let highlightUploadBusy = false;
@@ -137,6 +138,7 @@ const defaultHomepageHighlights = [
 databaseContext.run({ season: "s2", database: databases.s2 }, () => initDatabase({ seedDefaults: false }));
 databaseContext.run({ season: "s3", database: databases.s3 }, () => initDatabase({ seedDefaults: false }));
 bootstrapEmptyS3FromS2();
+archiveRetiredWhoGameSessions();
 
 const server = createServer(async (request, response) => {
   try {
@@ -290,6 +292,34 @@ function initDatabase({ seedDefaults = false } = {}) {
     CREATE INDEX IF NOT EXISTS who_game_daily_sessions_player_date
     ON who_game_daily_sessions (player_id, play_date);
 
+    CREATE TABLE IF NOT EXISTS who_game_retired_sessions (
+      id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL,
+      play_date TEXT NOT NULL,
+      slot INTEGER NOT NULL,
+      question_key TEXT NOT NULL,
+      status TEXT NOT NULL,
+      revealed INTEGER NOT NULL,
+      wrong_guesses TEXT NOT NULL,
+      score INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT DEFAULT '',
+      retired_reason TEXT NOT NULL,
+      retired_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS who_game_retired_powerup_uses (
+      id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL,
+      play_date TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      powerup_type TEXT NOT NULL,
+      result TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      retired_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS who_game_powerup_uses (
       id TEXT PRIMARY KEY,
       player_id TEXT NOT NULL,
@@ -390,6 +420,60 @@ function initDatabase({ seedDefaults = false } = {}) {
 
   seedHomepageHighlights();
   backfillHomepageHighlightLinks();
+}
+
+function archiveRetiredWhoGameSessions() {
+  const target = databases.s3;
+  const placeholders = WHO_GAME_QUESTION_KEYS.map(() => "?").join(", ");
+  const retiredCount = Number(target.prepare(`
+    SELECT COUNT(*) AS count
+    FROM who_game_daily_sessions
+    WHERE question_key NOT IN (${placeholders})
+  `).get(...WHO_GAME_QUESTION_KEYS)?.count || 0);
+  if (!retiredCount) return;
+
+  const retiredAt = new Date().toISOString();
+  target.exec("BEGIN");
+  try {
+    target.prepare(`
+      INSERT OR IGNORE INTO who_game_retired_sessions (
+        id, player_id, play_date, slot, question_key, status, revealed,
+        wrong_guesses, score, created_at, updated_at, completed_at,
+        retired_reason, retired_at
+      )
+      SELECT id, player_id, play_date, slot, question_key, status, revealed,
+             wrong_guesses, score, created_at, updated_at, completed_at,
+             'non_official_question', ?
+      FROM who_game_daily_sessions
+      WHERE question_key NOT IN (${placeholders})
+    `).run(retiredAt, ...WHO_GAME_QUESTION_KEYS);
+    target.prepare(`
+      INSERT OR IGNORE INTO who_game_retired_powerup_uses (
+        id, player_id, play_date, session_id, powerup_type, result, created_at, retired_at
+      )
+      SELECT uses.id, uses.player_id, uses.play_date, uses.session_id,
+             uses.powerup_type, uses.result, uses.created_at, ?
+      FROM who_game_powerup_uses AS uses
+      INNER JOIN who_game_daily_sessions AS sessions ON sessions.id = uses.session_id
+      WHERE sessions.question_key NOT IN (${placeholders})
+    `).run(retiredAt, ...WHO_GAME_QUESTION_KEYS);
+    target.prepare(`
+      DELETE FROM who_game_powerup_uses
+      WHERE session_id IN (
+        SELECT id FROM who_game_daily_sessions
+        WHERE question_key NOT IN (${placeholders})
+      )
+    `).run(...WHO_GAME_QUESTION_KEYS);
+    target.prepare(`
+      DELETE FROM who_game_daily_sessions
+      WHERE question_key NOT IN (${placeholders})
+    `).run(...WHO_GAME_QUESTION_KEYS);
+    target.exec("COMMIT");
+    console.log(`Archived ${retiredCount} retired who-game session(s).`);
+  } catch (error) {
+    target.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function bootstrapEmptyS3FromS2() {
@@ -2078,7 +2162,7 @@ function getWhoGameAdminDashboard(requestedDate) {
     FROM who_game_daily_sessions
     WHERE play_date = ?
     ORDER BY player_id ASC, slot ASC
-  `).all(playDate).forEach((row) => {
+  `).all(playDate).filter((row) => WHO_GAME_QUESTION_KEY_SET.has(row.question_key)).forEach((row) => {
     const wrongGuesses = parseJsonArray(row.wrong_guesses);
     const question = questionByKey.get(row.question_key);
     const attemptLimit = WHO_GAME_ATTEMPT_LIMIT + (attemptBonuses.get(row.id) || 0);
@@ -2170,7 +2254,9 @@ function getWhoGameDailyStatus(playerId) {
     SELECT * FROM who_game_daily_sessions
     WHERE player_id = ? AND play_date = ?
     ORDER BY slot ASC
-  `).all(player.id, playDate).map(mapWhoGameDailySession);
+  `).all(player.id, playDate)
+    .filter((row) => WHO_GAME_QUESTION_KEY_SET.has(row.question_key))
+    .map(mapWhoGameDailySession);
   const powerups = databases.s3.prepare(`
     SELECT id, session_id AS sessionId, powerup_type AS type, result, created_at AS createdAt
     FROM who_game_powerup_uses
@@ -2199,7 +2285,9 @@ function getWhoGameDailyStatus(playerId) {
     SELECT DISTINCT question_key
     FROM who_game_daily_sessions
     WHERE player_id = ? AND status IN ('won', 'lost')
-  `).all(player.id).map((row) => row.question_key));
+  `).all(player.id)
+    .map((row) => row.question_key)
+    .filter((questionKey) => WHO_GAME_QUESTION_KEY_SET.has(questionKey)));
   sessions.forEach((session) => completedQuestionKeys.add(session.questionKey));
   const currentQuestionOrder = getWhoGameQuestionOrder(player.id, playDate, batch.currentQuestionKeys);
   const legacyQuestionOrder = getWhoGameQuestionOrder(player.id, playDate, batch.legacyQuestionKeys);
