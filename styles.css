@@ -7772,13 +7772,28 @@ body[data-ui="modern"] {
     color: var(--hover-warm-bright);
   }
 
-  body[data-ui="modern"] :is(.hero-rank-list, .pair-rank-list) li:hover {
+  body[data-ui="modern"] .hero-rank-list li:hover {
     border-color: rgba(241, 189, 85, 0.22);
     background: linear-gradient(90deg, rgba(241, 189, 85, 0.095), rgba(241, 189, 85, 0.012) 72%);
     box-shadow: inset 2px 0 0 rgba(241, 189, 85, 0.78);
   }
 
-  body[data-ui="modern"] :is(.hero-rank-list, .pair-rank-list) li:hover b {
+  body[data-ui="modern"] .pair-rank-list li:hover {
+    border-radius: 0;
+    background: linear-gradient(90deg, rgba(241, 189, 85, 0.07), rgba(241, 189, 85, 0.012) 58%, transparent);
+    box-shadow: inset 2px 0 0 rgba(241, 189, 85, 0.82);
+  }
+
+  body[data-ui="modern"] .view:not(#dashboard) .pair-rank-list li::before {
+    display: none;
+  }
+
+  body[data-ui="modern"] .hero-rank-list li:hover b {
+    color: var(--hover-warm-bright);
+    text-shadow: 0 0 13px rgba(241, 189, 85, 0.18);
+  }
+
+  body[data-ui="modern"] .pair-rank-list li:hover .pair-rank-main strong {
     color: var(--hover-warm-bright);
     text-shadow: 0 0 13px rgba(241, 189, 85, 0.18);
   }
@@ -8289,6 +8304,11 @@ body[data-ui="modern"] .dashboard-highlight {
   display: none;
 }
 
+.view#whoIsIt .who-game-title-block {
+  min-width: 0;
+  justify-self: start;
+}
+
 .view#whoIsIt .who-game-heading h2 {
   justify-self: start;
   margin: 0;
@@ -8325,6 +8345,15 @@ body[data-ui="modern"] .dashboard-highlight {
   line-height: 1;
   vertical-align: 1.15em;
   white-space: nowrap;
+}
+
+.view#whoIsIt .who-game-rules {
+  margin: 13px 0 0 4px;
+  color: rgba(177, 204, 209, 0.62);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.55;
 }
 
 .who-identity-confirm {
@@ -9432,6 +9461,13 @@ body[data-ui="modern"] .dashboard-highlight {
 
   .view#whoIsIt .who-game-heading h2 {
     font-size: clamp(58px, 16vw, 88px);
+  }
+
+  .view#whoIsIt .who-game-rules {
+    max-width: 38em;
+    margin-top: 10px;
+    margin-left: 2px;
+    font-size: 11px;
   }
 
   .who-game-selected-answer {
@@ -10659,6 +10695,26 @@ body[data-ui="modern"] #dashboard .dashboard-stats .stat-card {
   text-align: center;
 }
 
+body[data-ui="modern"] #dashboard .dashboard-stats .dashboard-stat-action {
+  width: 100%;
+  appearance: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  transition: background 180ms ease, box-shadow 180ms ease;
+}
+
+body[data-ui="modern"] #dashboard .dashboard-stats .dashboard-stat-action:focus-visible {
+  z-index: 2;
+  outline: 2px solid rgba(241, 189, 85, 0.72);
+  outline-offset: -2px;
+}
+
+body[data-ui="modern"] #dashboard .dashboard-stats .dashboard-stat-action:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 body[data-ui="modern"] #dashboard .dashboard-stats .stat-card:last-child {
   border-right: 0;
 }
@@ -10707,6 +10763,16 @@ body[data-ui="modern"] #dashboard .dashboard-stats .stat-day-unit {
   body[data-ui="modern"] #dashboard .dashboard-stats .stat-card.is-pointer-hovered {
     background: transparent;
     box-shadow: none;
+  }
+
+  body[data-ui="modern"] #dashboard .dashboard-stats .dashboard-stat-action:not(:disabled):hover {
+    background: linear-gradient(180deg, rgba(241, 189, 85, 0.055), rgba(241, 189, 85, 0.008));
+    box-shadow: inset 0 -2px 0 rgba(241, 189, 85, 0.72);
+  }
+
+  body[data-ui="modern"] #dashboard .dashboard-stats .dashboard-stat-action:not(:disabled):hover strong {
+    color: var(--hover-warm-bright, #ffda84);
+    text-shadow: 0 0 18px rgba(241, 189, 85, 0.18);
   }
 }
 
@@ -12048,6 +12114,7 @@ body[data-ui="modern"].dashboard-ranks-visible #dashboard .dashboard-rank-featur
 
 body[data-ui="modern"] #dashboard .dashboard-rank-card.is-featured {
   --rank-hud-accent: rgba(91, 218, 234, 0.56);
+  cursor: pointer;
   box-shadow:
     inset 0 1px 0 rgba(184, 242, 249, 0.025),
     inset 0 0 46px rgba(47, 167, 184, 0.018);
@@ -12664,13 +12731,19 @@ body[data-ui="modern"] .pair-rank-card {
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  transition: background 180ms ease;
+  transition: background 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
-body[data-ui="modern"] .hero-rank-card:hover,
-body[data-ui="modern"] .pair-rank-card:hover {
+body[data-ui="modern"] .hero-rank-card:hover {
   border-color: rgba(128, 205, 215, 0.07);
   background: rgba(64, 177, 194, 0.035);
+  box-shadow: none;
+  transform: none;
+}
+
+body[data-ui="modern"] .pair-rank-card:hover {
+  border-color: rgba(128, 205, 215, 0.07);
+  background: transparent;
   box-shadow: none;
   transform: none;
 }
@@ -12846,6 +12919,17 @@ body[data-ui="modern"] .rating-trend-player-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   padding-top: 0;
+}
+
+body[data-ui="modern"] #dashboard .dashboard-rank-card.is-roster {
+  cursor: pointer;
+}
+
+body[data-ui="modern"] #dashboard .dashboard-rank-card:focus-visible {
+  z-index: 8;
+  outline: 2px solid rgba(110, 226, 240, 0.82);
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 1px rgba(205, 248, 253, 0.18), 0 0 0 3px rgba(81, 205, 220, 0.16);
 }
 
 body[data-ui="modern"] .rating-trend-player-actions {
@@ -15373,8 +15457,12 @@ body[data-ui="modern"] #overallData .page-heading {
 }
 
 .match-history-row:hover {
-  background: rgba(61, 160, 177, 0.075);
-  box-shadow: inset 3px 0 0 rgba(91, 212, 227, 0.7);
+  background: linear-gradient(90deg, rgba(241, 189, 85, 0.07), rgba(241, 189, 85, 0.012) 58%, transparent);
+  box-shadow: inset 2px 0 0 rgba(241, 189, 85, 0.82);
+}
+
+.match-history-row:hover .match-history-identity strong {
+  color: var(--hover-warm-bright, #ffda84);
 }
 
 .match-history-row:focus-visible {

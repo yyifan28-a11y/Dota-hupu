@@ -31,6 +31,10 @@ const WHO_GAME_ATTEMPT_LIMIT = 3;
 const WHO_GAME_CORRECT_SCORE = 100;
 const WHO_GAME_UNUSED_ATTEMPT_SCORE = 20;
 const WHO_GAME_UNSEEN_CLUE_SCORE = 10;
+const WHO_GAME_POWERUP_UNLOCK_PHRASES = [
+  "板神板神，勇猛超神",
+  "光权光权，智勇双全"
+];
 const WHO_GAME_PUBLICLY_AVAILABLE = true;
 // Curated clues that can change as S3 grows must freeze and display their authoring date.
 // Historical one-match facts and S2-only facts do not need this prefix.
@@ -199,6 +203,7 @@ let whoGamePowerupSelection = [];
 let whoGamePowerupBusy = false;
 let whoGamePowerupOpen = false;
 let whoGamePowerupUnlockOpen = false;
+let whoGamePowerupUnlockPhrase = WHO_GAME_POWERUP_UNLOCK_PHRASES[0];
 let whoGameSummaryOpen = false;
 
 const HOMEPAGE_FRAMING_DEVICES = Object.freeze({
@@ -899,6 +904,11 @@ function renderDashboard() {
   const seasonDay = getSeasonDay(db.matches);
   $("#statSeasonDay").innerHTML = `${seasonDay ?? "--"}<span class="stat-day-unit">天</span>`;
   $("#statLatestDate").textContent = latestMatch ? formatShortMatchDate(latestMatch.date) : "--";
+  const latestMatchAction = $('[data-dashboard-stat-action="latest"]');
+  if (latestMatchAction) {
+    latestMatchAction.disabled = !latestMatch;
+    latestMatchAction.setAttribute("aria-disabled", String(!latestMatch));
+  }
 
   renderDashboardHighlight();
 
@@ -906,6 +916,25 @@ function renderDashboard() {
   renderDashboardRankStage(playersWithStats);
 
   renderDashboardMatches();
+}
+
+function handleDashboardStatAction(action) {
+  if (action === "matches" || action === "players") {
+    updateAppLocation(action);
+    switchView(action);
+    scrollAppShellToTop();
+    return;
+  }
+  if (action === "calendar") {
+    const calendar = $("#dashboard .dashboard-matches-panel");
+    if (!calendar) return;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    calendar.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
+    return;
+  }
+  if (action === "latest") {
+    renderMatchDialog(getMatchesByScheduleDesc()[0]);
+  }
 }
 
 function renderMatches() {
@@ -1423,7 +1452,6 @@ function getSeasonDay(matches = db.matches, today = new Date()) {
 function createDashboardRankCard() {
   const card = document.createElement("article");
   card.className = "dashboard-rank-card";
-  card.setAttribute("role", "listitem");
   card.innerHTML = `
     <span class="dashboard-rank-number"></span>
     <span class="dashboard-rank-identity">
@@ -1453,8 +1481,10 @@ function updateDashboardRankCard(card, player, rank, mode) {
   ].filter(Boolean).join(" ");
   card.dataset.dashboardRankPlayer = String(player.id);
   card.dataset.rank = String(rank);
+  card.tabIndex = 0;
+  card.setAttribute("role", "link");
   card.style.setProperty("--rank-order", String(Math.min(rank, 12)));
-  card.setAttribute("aria-label", `第 ${rank} 名，${name}，${config.label} ${value}`);
+  card.setAttribute("aria-label", `查看 ${name} 的个人主页；第 ${rank} 名，${config.label} ${value}`);
 
   card.querySelector(".dashboard-rank-number").textContent = String(rank).padStart(2, "0");
   card.querySelector(".dashboard-rank-identity b").textContent = name;
@@ -2170,20 +2200,29 @@ function renderPlayerProfileIntro(player, stats, recentForm, rank, totalMatchCou
 function getPlayerProfileRelationHighlights(playerId) {
   const teammatePairs = (pairRankStats.teammate || []).filter((pair) => pair.games > 0 && pair.players?.includes(playerId));
   const opponentPairs = (pairRankStats.opponent || []).filter((pair) => pair.games > 0 && pair.playerId === playerId);
-  const sortByWinrate = (pairs, direction) => [...pairs].sort((a, b) => {
-    const winrateDiff = direction * (b.winrate - a.winrate);
-    return winrateDiff || b.games - a.games || direction * (b.netWins - a.netWins);
-  });
+  const sortByCombinedResult = (pairs, result = "positive") => {
+    const maxWins = Math.max(1, ...pairs.map((pair) => Number(pair.wins || 0)));
+    const maxLosses = Math.max(1, ...pairs.map((pair) => Number(pair.losses || 0)));
+    const score = (pair) => result === "negative"
+      ? (1 - Number(pair.winrate || 0)) * 0.65 + (Number(pair.losses || 0) / maxLosses) * 0.35
+      : Number(pair.winrate || 0) * 0.65 + (Number(pair.wins || 0) / maxWins) * 0.35;
+    return [...pairs].sort((a, b) => (
+      score(b) - score(a)
+      || (result === "negative" ? b.losses - a.losses : b.wins - a.wins)
+      || b.games - a.games
+      || String(a.key || "").localeCompare(String(b.key || ""))
+    ));
+  };
   const teammateEntries = (pairs) => pairs.slice(0, 3).map((pair) => ({
     pair,
     playerId: pair.players.find((id) => id !== playerId)
   }));
   const opponentEntries = (pairs) => pairs.slice(0, 3).map((pair) => ({ pair, playerId: pair.opponentId }));
   return [
-    { key: "best-teammate", label: "最搭队友", tone: "positive", entries: teammateEntries(sortByWinrate(teammatePairs, 1)) },
-    { key: "worst-teammate", label: "最不搭队友", tone: "negative", entries: teammateEntries(sortByWinrate(teammatePairs, -1)) },
-    { key: "feared-opponent", label: "最怕对手", tone: "negative", entries: opponentEntries(sortByWinrate(opponentPairs, -1)) },
-    { key: "favored-opponent", label: "最克制对手", tone: "positive", entries: opponentEntries(sortByWinrate(opponentPairs, 1)) }
+    { key: "best-teammate", label: "最搭队友", tone: "positive", entries: teammateEntries(sortByCombinedResult(teammatePairs, "positive")) },
+    { key: "worst-teammate", label: "最不搭队友", tone: "negative", entries: teammateEntries(sortByCombinedResult(teammatePairs, "negative")) },
+    { key: "feared-opponent", label: "最怕对手", tone: "negative", entries: opponentEntries(sortByCombinedResult(opponentPairs, "negative")) },
+    { key: "favored-opponent", label: "最克制对手", tone: "positive", entries: opponentEntries(sortByCombinedResult(opponentPairs, "positive")) }
   ];
 }
 
@@ -6342,6 +6381,12 @@ async function unlockWhoGamePowerups() {
   const errorMount = document.querySelector("#whoPowerupUnlockError");
   if (!input || !submit || !whoGameIdentityId) return;
   const phrase = input.value;
+  if (phrase.trim() !== whoGamePowerupUnlockPhrase) {
+    if (errorMount) errorMount.textContent = "输入内容不正确，请再试一次";
+    input.focus();
+    input.select();
+    return;
+  }
   submit.disabled = true;
   submit.textContent = "正在确认…";
   if (errorMount) errorMount.textContent = "";
@@ -6396,7 +6441,7 @@ function renderWhoGamePowerups() {
         <div class="who-identity-confirm-backdrop who-powerup-unlock-backdrop">
           <section class="who-identity-confirm-modal who-powerup-unlock-modal" role="dialog" aria-modal="true" aria-labelledby="whoPowerupUnlockTitle">
             <p id="whoPowerupUnlockTitle">输入以下内容以获得今日的三发超级道具</p>
-            <strong class="who-powerup-unlock-phrase">板神板神，勇猛超神</strong>
+            <strong class="who-powerup-unlock-phrase">${escapeHtml(whoGamePowerupUnlockPhrase)}</strong>
             <input id="whoPowerupUnlockInput" type="text" autocomplete="off" spellcheck="false" placeholder="请照着输入上面的内容" aria-label="超级道具解锁内容" />
             <small id="whoPowerupUnlockError" class="who-powerup-unlock-error" role="status"></small>
             <div class="who-powerup-unlock-actions">
@@ -6762,6 +6807,7 @@ function handleWhoGameClick(event) {
   const powerupButton = event.target.closest("[data-who-powerup]");
   if (powerupButton && whoGameState.status === "playing") {
     if (!whoGameDaily?.powerupsUnlocked) {
+      whoGamePowerupUnlockPhrase = pickWhoGameItem(WHO_GAME_POWERUP_UNLOCK_PHRASES);
       whoGamePowerupUnlockOpen = true;
       renderWhoGame();
       window.requestAnimationFrame(() => document.querySelector("#whoPowerupUnlockInput")?.focus());
@@ -6783,6 +6829,7 @@ function handleWhoGameClick(event) {
   }
   if (action === "confirm-identity" && whoGameIdentityCandidateId) selectWhoGameIdentity(whoGameIdentityCandidateId);
   if (action === "open-powerup-unlock") {
+    whoGamePowerupUnlockPhrase = pickWhoGameItem(WHO_GAME_POWERUP_UNLOCK_PHRASES);
     whoGamePowerupUnlockOpen = true;
     renderWhoGame();
     window.requestAnimationFrame(() => document.querySelector("#whoPowerupUnlockInput")?.focus());
@@ -7551,7 +7598,12 @@ async function pollReplayStatus() {
     });
     if (job.status === "ready") {
       pendingReplayResult = job.result;
-      setReplayUploadStatus("解析完成，请确认选手和位置。", "success");
+      setReplayUploadStatus(
+        job.archiveFileName
+          ? `解析完成，录像已留档为 ${job.archiveFileName}；请确认选手和位置。`
+          : "解析完成，请确认选手和位置。",
+        "success"
+      );
       renderReplayImportPreview(job.result);
       return;
     }
@@ -7955,12 +8007,28 @@ function bindEvents() {
     handleMatchCardOpen(event);
   });
   $("#featuredHighlight")?.addEventListener("keydown", handleMatchCardKeydown);
+  $(".dashboard-stats")?.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-dashboard-stat-action]")?.dataset.dashboardStatAction;
+    if (action) handleDashboardStatAction(action);
+  });
   $("#dashboardRankModes")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-dashboard-rank-mode]");
     const mode = button?.dataset.dashboardRankMode;
     if (!mode || !DASHBOARD_RANK_MODES[mode] || mode === activeDashboardRankMetric) return;
     activeDashboardRankMetric = mode;
     renderDashboardRankStage(getPlayersWithStats(), { animate: true });
+  });
+  $("#dashboardRankBoard")?.addEventListener("click", (event) => {
+    const card = event.target.closest("[data-dashboard-rank-player]");
+    if (!card) return;
+    openPlayerProfileById(card.dataset.dashboardRankPlayer);
+  });
+  $("#dashboardRankBoard")?.addEventListener("keydown", (event) => {
+    if (!['Enter', ' '].includes(event.key)) return;
+    const card = event.target.closest("[data-dashboard-rank-player]");
+    if (!card) return;
+    event.preventDefault();
+    openPlayerProfileById(card.dataset.dashboardRankPlayer);
   });
   $("#matchCalendarDays")?.addEventListener("click", (event) => {
     const dateButton = event.target.closest("[data-dashboard-match-date]");
@@ -8866,7 +8934,7 @@ function bindEvents() {
       rebuildDerivedStats();
       clearReplayImportPreview();
       renderAll();
-      alert(`比赛 ${result.matchId} 已成功导入。`);
+      alert(`比赛 ${result.matchId} 已成功导入。${result.archiveFileName ? `\n录像留档：${result.archiveFileName}` : ""}`);
     } catch (error) {
       alert(error.message || "录像导入失败。");
       button.disabled = false;

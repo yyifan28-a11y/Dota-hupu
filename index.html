@@ -100,26 +100,26 @@
           <section id="featuredHighlight" class="dashboard-highlight-slot" aria-live="polite"></section>
 
           <div class="stats-grid dashboard-stats" aria-label="赛季概况">
-            <div class="stat-card">
+            <button class="stat-card dashboard-stat-action" data-dashboard-stat-action="matches" type="button" aria-label="查看全部比赛">
               <span>全部比赛</span>
               <strong id="statMatches">0</strong>
               <small>场已录入</small>
-            </div>
-            <div class="stat-card">
+            </button>
+            <button class="stat-card dashboard-stat-action" data-dashboard-stat-action="players" type="button" aria-label="查看全部选手">
               <span>活跃选手</span>
               <strong id="statPlayers">0</strong>
               <small>人已建档</small>
-            </div>
-            <div class="stat-card">
+            </button>
+            <button class="stat-card dashboard-stat-action" data-dashboard-stat-action="calendar" type="button" aria-label="跳转到比赛日历">
               <span>赛季已进行</span>
               <strong id="statSeasonDay">--<span class="stat-day-unit">天</span></strong>
               <small>从首场数据起计</small>
-            </div>
-            <div class="stat-card">
+            </button>
+            <button class="stat-card dashboard-stat-action" data-dashboard-stat-action="latest" type="button" aria-label="查看最近一场比赛">
               <span>最近比赛</span>
               <strong id="statLatestDate">--</strong>
               <small>最新比赛日期</small>
-            </div>
+            </button>
           </div>
 
           <div class="dashboard-section-heading dashboard-grid-intro" aria-hidden="true">
@@ -505,7 +505,10 @@
 
         <section class="view" id="whoIsIt">
           <div class="who-game-heading">
-            <h2>他是谁<span class="who-game-question-marks" aria-hidden="true">？？？</span><small>测试版</small></h2>
+            <div class="who-game-title-block">
+              <h2>他是谁<span class="who-game-question-marks" aria-hidden="true">？？？</span><small>测试版</small></h2>
+              <p class="who-game-rules">每日 2 道新题；完成后可补 1 道旧题。仅统计 S2 与 S3 常规赛数据。</p>
+            </div>
             <div id="whoGameLeaderboardMount"></div>
             <span class="who-game-season is-hidden" id="whoGameSeasonLabel">--</span>
           </div>

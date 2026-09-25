@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
-import { open, readFile, writeFile, unlink } from "node:fs/promises";
-import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { copyFile, open, readFile, rename, writeFile, unlink } from "node:fs/promises";
+import { constants as fsConstants, createReadStream, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -22,6 +22,9 @@ const MAX_HIGHLIGHT_UPLOAD_BYTES = 10 * 1024 * 1024;
 const REPLAY_UPLOAD_DIR = isAbsolute(ENV.REPLAY_UPLOAD_DIR || "")
   ? ENV.REPLAY_UPLOAD_DIR
   : join(tmpdir(), ENV.REPLAY_UPLOAD_DIR || "dota-replay-imports");
+const REPLAY_ARCHIVE_DIR = resolveDatabasePath(
+  ENV.REPLAY_ARCHIVE_DIR || join(dirname(DB_PATHS.s3), "uploads", "replays")
+);
 const REPLAY_PARSER_PATH = join(__dirname, "scripts", "parse-dota-replay.py");
 const LOCAL_REPLAY_PYTHON = globalThis.process.platform === "win32"
   ? join(__dirname, ".venv", "Scripts", "python.exe")
@@ -33,7 +36,10 @@ const MAX_REPLAY_JOBS = Math.max(1, Number(ENV.REPLAY_MAX_JOBS || 3));
 const WHO_GAME_FIRST_DAY_LIMIT = 2;
 const WHO_GAME_RETURNING_DAY_LIMIT = 2;
 const WHO_GAME_DAILY_POWERUP_LIMIT = 3;
-const WHO_GAME_POWERUP_UNLOCK_PHRASE = "板神板神，勇猛超神";
+const WHO_GAME_POWERUP_UNLOCK_PHRASES = new Set([
+  "板神板神，勇猛超神",
+  "光权光权，智勇双全"
+]);
 const WHO_GAME_ATTEMPT_LIMIT = 3;
 const WHO_GAME_CLUE_COUNT = 5;
 const WHO_GAME_CORRECT_SCORE = 100;
@@ -80,6 +86,7 @@ const replayJobs = new Map();
 const replayQueue = [];
 mkdirSync(HIGHLIGHT_UPLOAD_DIR, { recursive: true });
 mkdirSync(REPLAY_UPLOAD_DIR, { recursive: true });
+mkdirSync(REPLAY_ARCHIVE_DIR, { recursive: true });
 Object.values(DB_PATHS).forEach((path) => mkdirSync(dirname(path), { recursive: true }));
 const databases = {
   s2: new DatabaseSync(DB_PATHS.s2),
@@ -163,6 +170,7 @@ server.listen(PORT, () => {
   console.log(`Dota2 inhouse tool running at http://localhost:${PORT}`);
   console.log(`S2 SQLite database: ${DB_PATHS.s2}`);
   console.log(`S3 SQLite database: ${DB_PATHS.s3}`);
+  console.log(`Replay archive: ${REPLAY_ARCHIVE_DIR}`);
 });
 
 function resolveDatabasePath(configuredPath) {
@@ -768,7 +776,12 @@ async function handleApi(request, response, url) {
     const imported = importReplayMatch(job, body);
     job.status = "imported";
     job.stage = "已导入";
-    sendJson(response, 201, { imported: 1, matchId: imported.matchId, state: getState() });
+    sendJson(response, 201, {
+      imported: 1,
+      matchId: imported.matchId,
+      archiveFileName: job.archiveFileName || "",
+      state: getState()
+    });
     return;
   }
 
@@ -1320,8 +1333,42 @@ function publicReplayJob(job, { includeResult = false } = {}) {
     createdAt: job.createdAt,
     error: job.error || ""
   };
+  if (job.archiveFileName) payload.archiveFileName = job.archiveFileName;
   if (includeResult && job.result) payload.result = enrichReplayResult(job.result);
   return payload;
+}
+
+function replayArchiveTime(value) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai",
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).formatToParts(new Date(value)).map((part) => [part.type, part.value]));
+  return `${parts.hour || "00"}${parts.minute || "00"}${parts.second || "00"}`;
+}
+
+async function archiveReplayFile(job, result) {
+  const season = String(job.season || "s3").toUpperCase();
+  const date = isValidDateString(result.date) ? result.date : getShanghaiDate();
+  const baseName = `${season}-${date}-${replayArchiveTime(job.createdAt)}`;
+  for (let suffix = 1; suffix <= 999; suffix += 1) {
+    const fileName = `${baseName}${suffix === 1 ? "" : `-${suffix}`}.dem`;
+    const targetPath = join(REPLAY_ARCHIVE_DIR, fileName);
+    if (existsSync(targetPath)) continue;
+    try {
+      await rename(job.filePath, targetPath);
+    } catch (error) {
+      if (error.code !== "EXDEV") throw error;
+      await copyFile(job.filePath, targetPath, fsConstants.COPYFILE_EXCL);
+      await unlink(job.filePath);
+    }
+    job.archiveFileName = fileName;
+    job.archivePath = targetPath;
+    return fileName;
+  }
+  throw new Error("同一上传时间的录像文件过多，无法生成唯一留档文件名");
 }
 
 function enrichReplayResult(result) {
@@ -1367,13 +1414,14 @@ function processReplayQueue() {
   job.status = "parsing";
   job.stage = "正在解析录像";
   runReplayParser(job.filePath)
-    .then((result) => {
+    .then(async (result) => {
       if (!Array.isArray(result.players) || result.players.length !== 10) {
         throw new Error(`录像只识别到 ${result.players?.length || 0} 名选手`);
       }
+      await archiveReplayFile(job, result);
       job.result = result;
       job.status = "ready";
-      job.stage = "解析完成，等待确认";
+      job.stage = `解析完成，录像已留档：${job.archiveFileName}`;
     })
     .catch((error) => {
       job.status = "error";
@@ -1548,7 +1596,7 @@ function importReplayMatch(job, body) {
       result.matchId,
       result.winner,
       score,
-      `录像导入：${job.originalName}`,
+      `录像导入：${job.archiveFileName || job.originalName}`,
       JSON.stringify(teams.radiant),
       JSON.stringify(teams.dire),
       JSON.stringify(cleanPositions(positions, teams)),
@@ -1572,6 +1620,8 @@ function importReplayMatch(job, body) {
     const analysis = {
       available: true,
       durationSeconds: Number(result.durationSeconds || 0),
+      replayArchiveFileName: job.archiveFileName || "",
+      originalReplayFileName: job.originalName || "",
       players: analysisPlayers,
       timeline: result.timeline && typeof result.timeline === "object" ? result.timeline : {}
     };
@@ -2375,7 +2425,7 @@ function getWhoGameSessionExcludedIds(session) {
 function unlockWhoGamePowerups(input = {}) {
   const player = findWhoGamePlayer(input.playerId);
   const phrase = String(input.phrase || "").trim();
-  if (phrase !== WHO_GAME_POWERUP_UNLOCK_PHRASE) throw createHttpError(400, "输入内容不正确，请再试一次");
+  if (!WHO_GAME_POWERUP_UNLOCK_PHRASES.has(phrase)) throw createHttpError(400, "输入内容不正确，请再试一次");
   const playDate = getShanghaiDate();
   databases.s3.prepare(`
     INSERT OR IGNORE INTO who_game_powerup_unlocks (player_id, play_date, created_at)
@@ -2682,14 +2732,15 @@ function generateTeams(ids, options) {
   if (!candidates.length) return null;
 
   if (options.mode === "random") {
-    return candidates[Math.floor(Math.random() * candidates.length)].teams;
+    const candidate = candidates[Math.floor(Math.random() * candidates.length)];
+    return randomizeGeneratedTeamOrder(candidate.teams);
   }
 
   const positionStats = getPositionTendencies(state.matches);
   const pairCounts = getPairCounts(state.matches);
   const winrates = getPlayerWinrates(state.matches);
 
-  return candidates
+  const ranked = candidates
     .map((candidate) => ({
       ...candidate,
       penalty: options.mode === "combination"
@@ -2698,7 +2749,30 @@ function generateTeams(ids, options) {
           ? winratePenalty(candidate.teams, winrates)
           : positionPenalty(candidate.teams, positionStats)
     }))
-    .sort((a, b) => a.diff - b.diff || a.penalty - b.penalty)[0].teams;
+    .sort((a, b) => a.diff - b.diff || a.penalty - b.penalty);
+  const best = ranked[0];
+  const equallyBest = ranked.filter((candidate) => (
+    Math.abs(candidate.diff - best.diff) < 1e-9
+    && Math.abs(candidate.penalty - best.penalty) < 1e-9
+  ));
+  const chosen = equallyBest[Math.floor(Math.random() * equallyBest.length)];
+  return randomizeGeneratedTeamOrder(chosen.teams);
+}
+
+function randomizeGeneratedTeamOrder(teams) {
+  let radiant = shuffleArray(teams.radiant);
+  let dire = shuffleArray(teams.dire);
+  if (Math.random() < 0.5) [radiant, dire] = [dire, radiant];
+  return { radiant, dire };
+}
+
+function shuffleArray(items) {
+  const shuffled = [...items];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled;
 }
 
 function getValidCandidates(ids, constraints, players) {
