@@ -779,6 +779,8 @@ async function handleApi(request, response, url) {
     sendJson(response, 201, {
       imported: 1,
       matchId: imported.matchId,
+      date: imported.date,
+      matchNo: imported.matchNo,
       archiveFileName: job.archiveFileName || "",
       state: getState()
     });
@@ -1338,6 +1340,29 @@ function publicReplayJob(job, { includeResult = false } = {}) {
   return payload;
 }
 
+function replayMatchIdFromFileName(fileName) {
+  const stem = String(fileName || "").trim().replace(/\.dem$/i, "");
+  return /^\d{6,20}$/.test(stem) && !/^0+$/.test(stem) ? stem : "";
+}
+
+function applyReplayFileNameFallback(job, result) {
+  const fileMatchId = replayMatchIdFromFileName(job.originalName);
+  if (!fileMatchId) return result;
+  const parsedMatchId = String(result.matchId || "").trim();
+  let isTruncatedMatchId = false;
+  try {
+    isTruncatedMatchId = parsedMatchId === String(BigInt(fileMatchId) & 0xffffffffn);
+  } catch {
+    isTruncatedMatchId = false;
+  }
+  if (parsedMatchId && !isTruncatedMatchId) return result;
+  return {
+    ...result,
+    matchId: fileMatchId,
+    matchIdSource: "fileName"
+  };
+}
+
 function replayArchiveTime(value) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Shanghai",
@@ -1414,7 +1439,8 @@ function processReplayQueue() {
   job.status = "parsing";
   job.stage = "正在解析录像";
   runReplayParser(job.filePath)
-    .then(async (result) => {
+    .then(async (parsedResult) => {
+      const result = applyReplayFileNameFallback(job, parsedResult);
       if (!Array.isArray(result.players) || result.players.length !== 10) {
         throw new Error(`录像只识别到 ${result.players?.length || 0} 名选手`);
       }
@@ -1491,11 +1517,18 @@ function runReplayParser(filePath) {
 
 function importReplayMatch(job, body) {
   const result = job.result;
-  if (!result.matchId || !isValidDateString(result.date) || !["radiant", "dire"].includes(result.winner)) {
-    throw createHttpError(400, "录像缺少比赛 ID、日期或胜方，不能自动导入");
+  const matchId = String(body.matchId || result.matchId || "").trim();
+  const date = String(body.date || result.date || "").trim();
+  const winner = String(body.winner || result.winner || "").trim();
+  const missingFields = [];
+  if (!/^\d{1,20}$/.test(matchId) || /^0+$/.test(matchId)) missingFields.push("比赛 ID");
+  if (!isValidDateString(date)) missingFields.push("比赛日期");
+  if (!["radiant", "dire"].includes(winner)) missingFields.push("获胜方");
+  if (missingFields.length) {
+    throw createHttpError(400, `请先补充有效的${missingFields.join("、")}`);
   }
-  if (db.prepare("SELECT id FROM matches WHERE match_id = ? LIMIT 1").get(result.matchId)) {
-    throw createHttpError(409, `比赛 ID ${result.matchId} 已经导入`);
+  if (db.prepare("SELECT id FROM matches WHERE match_id = ? LIMIT 1").get(matchId)) {
+    throw createHttpError(409, `比赛 ID ${matchId} 已经导入`);
   }
 
   const mappings = body.playerMappings && typeof body.playerMappings === "object" ? body.playerMappings : {};
@@ -1569,7 +1602,7 @@ function importReplayMatch(job, body) {
     };
   });
 
-  const matchNo = getNextMatchNo(result.date);
+  const matchNo = getNextMatchNo(date);
   const duration = formatReplayDuration(result.durationSeconds);
   const score = `${Number(result.radiantScore || 0)}-${Number(result.direScore || 0)} / ${duration}`;
   const now = new Date().toISOString();
@@ -1591,10 +1624,10 @@ function importReplayMatch(job, body) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       matchRecordId,
-      result.date,
+      date,
       matchNo,
-      result.matchId,
-      result.winner,
+      matchId,
+      winner,
       score,
       `录像导入：${job.archiveFileName || job.originalName}`,
       JSON.stringify(teams.radiant),
@@ -1641,7 +1674,7 @@ function importReplayMatch(job, body) {
     db.exec("ROLLBACK");
     throw error;
   }
-  return { id: matchRecordId, matchId: result.matchId };
+  return { id: matchRecordId, matchId, date, matchNo };
 }
 
 function formatReplayDuration(value) {

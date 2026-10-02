@@ -7635,9 +7635,66 @@ function formatReplayPreviewDuration(value) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+function getReplayMissingFields(result) {
+  const fields = [];
+  if (!/^\d{1,20}$/.test(String(result.matchId || "").trim()) || /^0+$/.test(String(result.matchId || "").trim())) {
+    fields.push({ key: "matchId", label: "比赛 ID" });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(result.date || ""))) {
+    fields.push({ key: "date", label: "比赛日期" });
+  }
+  if (!["radiant", "dire"].includes(result.winner)) {
+    fields.push({ key: "winner", label: "获胜方" });
+  }
+  return fields;
+}
+
+function replayImportButtonLabel(result) {
+  return getReplayMissingFields(result).length ? "补全并创建比赛" : "创建录像比赛";
+}
+
+function renderReplayMissingFields(result, missingFields) {
+  if (!missingFields.length) return "";
+  const keys = new Set(missingFields.map((field) => field.key));
+  return `
+    <section class="replay-missing-panel" aria-labelledby="replayMissingTitle">
+      <div class="replay-missing-heading">
+        <strong id="replayMissingTitle">需要手动补充</strong>
+        <span>${escapeHtml(missingFields.map((field) => field.label).join("、"))}</span>
+      </div>
+      <div class="replay-missing-fields">
+        ${keys.has("date") ? `
+          <label>
+            <span>比赛日期 <b>必填</b></span>
+            <input id="replayManualDate" type="date" required aria-required="true" />
+          </label>
+        ` : ""}
+        ${keys.has("matchId") ? `
+          <label>
+            <span>比赛 ID <b>必填</b></span>
+            <input id="replayManualMatchId" inputmode="numeric" pattern="[0-9]+" maxlength="20" placeholder="输入 Dota 比赛 ID" required aria-required="true" />
+          </label>
+        ` : ""}
+        ${keys.has("winner") ? `
+          <label>
+            <span>获胜方 <b>必填</b></span>
+            <select id="replayManualWinner" required aria-required="true">
+              <option value="">请选择</option>
+              <option value="radiant">天辉</option>
+              <option value="dire">夜魇</option>
+            </select>
+          </label>
+        ` : ""}
+      </div>
+      <small>录像中未包含以上信息。补充后仍可正常创建比赛，其他已解析数据会保留。</small>
+    </section>
+  `;
+}
+
 function renderReplayImportPreview(result) {
   const target = $("#replayImportPreview");
   if (!target) return;
+  const missingFields = getReplayMissingFields(result);
   const playerOptions = db.players
     .map((player) => `<option value="${escapeHtml(player.id)}">${escapeHtml(player.name)}</option>`)
     .join("");
@@ -7670,8 +7727,9 @@ function renderReplayImportPreview(result) {
   target.innerHTML = `
     <div class="excel-preview-card replay-preview-card">
       <h4>录像导入预览</h4>
-      <p>${escapeHtml(result.date || "日期未知")} 第 ${Number(result.nextMatchNo || 1)} 场 · 比赛 ID ${escapeHtml(result.matchId || "-")} · ${Number(result.radiantScore || 0)}-${Number(result.direScore || 0)} / ${escapeHtml(formatReplayPreviewDuration(result.durationSeconds))} · ${result.winner === "radiant" ? "天辉胜利" : "夜魇胜利"}</p>
+      <p>${escapeHtml(result.date || "日期待补充")} ${result.date ? `第 ${Number(result.nextMatchNo || 1)} 场` : ""} · 比赛 ID ${escapeHtml(result.matchId || "待补充")}${result.matchIdSource === "fileName" ? ` <span class="replay-source-hint">已从文件名恢复</span>` : ""} · ${Number(result.radiantScore || 0)}-${Number(result.direScore || 0)} / ${escapeHtml(formatReplayPreviewDuration(result.durationSeconds))} · ${result.winner === "radiant" ? "天辉胜利" : result.winner === "dire" ? "夜魇胜利" : "胜方待补充"}</p>
       ${result.duplicate ? `<div class="excel-message error"><p>这场比赛已经存在，不能重复导入。</p></div>` : ""}
+      ${renderReplayMissingFields(result, missingFields)}
       <div class="excel-message warning"><p>位置是根据分路和 10 分钟经济推测的，请逐项确认。手动选定后会把该 Steam ID 关联到站内选手；游戏昵称仅用于辅助辨认。</p></div>
       <div class="table-wrap excel-preview-table-wrap replay-preview-table-wrap">
         <table class="excel-preview-table replay-preview-table">
@@ -7680,7 +7738,7 @@ function renderReplayImportPreview(result) {
         </table>
       </div>
       <div class="button-row">
-        <button class="primary-button" id="confirmReplayImport" type="button" ${result.duplicate ? "disabled" : ""}>确认导入录像比赛</button>
+        <button class="primary-button" id="confirmReplayImport" type="button" ${result.duplicate ? "disabled" : ""}>${replayImportButtonLabel(result)}</button>
         <button class="secondary-button" id="clearReplayImport" type="button">取消预览</button>
       </div>
     </div>
@@ -8920,15 +8978,41 @@ function bindEvents() {
         return;
       }
     }
-    if (!confirm(`确认导入 ${pendingReplayResult.date} 第 ${pendingReplayResult.nextMatchNo} 场录像吗？`)) return;
+    const manualInputs = [$("#replayManualDate"), $("#replayManualMatchId"), $("#replayManualWinner")].filter(Boolean);
+    const firstInvalidInput = manualInputs.find((input) => !input.checkValidity());
+    if (firstInvalidInput) {
+      firstInvalidInput.reportValidity();
+      firstInvalidInput.focus();
+      return;
+    }
+    const date = $("#replayManualDate")?.value || pendingReplayResult.date || "";
+    const matchId = ($("#replayManualMatchId")?.value || pendingReplayResult.matchId || "").trim();
+    const winner = $("#replayManualWinner")?.value || pendingReplayResult.winner || "";
+    const invalidFields = [];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) invalidFields.push("比赛日期");
+    if (!/^\d{1,20}$/.test(matchId) || /^0+$/.test(matchId)) invalidFields.push("比赛 ID");
+    if (!["radiant", "dire"].includes(winner)) invalidFields.push("获胜方");
+    if (invalidFields.length) {
+      alert(`请先补充有效的${invalidFields.join("、")}。`);
+      return;
+    }
+    if (!confirm(`确认创建 ${date} 的录像比赛吗？场次会按该日期自动顺延。`)) return;
 
     const button = event.target;
     button.disabled = true;
-    button.textContent = "正在导入…";
+    button.textContent = "正在创建…";
     try {
       const result = await adminApi("/api/replays/import", {
         method: "POST",
-        body: JSON.stringify({ jobId: pendingReplayJobId, playerMappings, positions, heroNames })
+        body: JSON.stringify({
+          jobId: pendingReplayJobId,
+          date,
+          matchId,
+          winner,
+          playerMappings,
+          positions,
+          heroNames
+        })
       });
       db = result.state;
       rebuildDerivedStats();
@@ -8938,7 +9022,7 @@ function bindEvents() {
     } catch (error) {
       alert(error.message || "录像导入失败。");
       button.disabled = false;
-      button.textContent = "确认导入录像比赛";
+      button.textContent = replayImportButtonLabel(pendingReplayResult);
     }
   });
 

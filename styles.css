@@ -4408,6 +4408,85 @@ select:focus {
   min-width: 150px;
 }
 
+.replay-missing-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(185, 75, 67, 0.38);
+  border-radius: 8px;
+  background: rgba(185, 75, 67, 0.08);
+  padding: 12px;
+}
+
+.replay-missing-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.replay-missing-heading strong {
+  color: var(--red);
+  font-size: 14px;
+}
+
+.replay-missing-heading span,
+.replay-missing-panel > small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.replay-missing-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.replay-missing-fields label {
+  display: grid;
+  gap: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.replay-missing-fields label span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.replay-missing-fields label b {
+  color: var(--red);
+  font-size: 11px;
+}
+
+.replay-missing-fields input,
+.replay-missing-fields select {
+  width: 100%;
+  min-height: 40px;
+  border-color: rgba(185, 75, 67, 0.42);
+}
+
+.replay-missing-fields input:focus-visible,
+.replay-missing-fields select:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.replay-source-hint {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  border: 1px solid rgba(56, 189, 168, 0.28);
+  border-radius: 999px;
+  padding: 0 7px;
+  color: var(--green-dark);
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: 1px;
+}
+
 .replay-steam-id,
 .replay-lane-role,
 .replay-match-hint {
