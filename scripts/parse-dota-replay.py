@@ -8,8 +8,6 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import gem.state.entities as entity_state
-from gem.binary.reader import BufferReadError
 from gem.combat.aggregator import _CombatAggregator
 from gem.catalog import ability_display, item_display, load_data_json
 from gem.extractors.courier import CourierExtractor
@@ -21,12 +19,10 @@ from gem.extractors.smoke_vision import SmokeExtractor, VisionModifierExtractor
 from gem.extractors.wards import WardsExtractor
 from gem.parser import ReplayParser
 from gem.results.assembly import build_parsed_match
+import gem.schema.sendtable.models as sendtable_models
 
 
 ABILITY_IDS_PATH = Path(__file__).resolve().parents[1] / "assets" / "dota-ability-ids.json"
-INCOMPATIBLE_COSMETIC_BASELINE_CLASSES = {"CParticleSystem", "CRagdollManager"}
-BASELINE_COMPATIBILITY_SKIPS = []
-
 try:
     ABILITY_IDS = json.loads(ABILITY_IDS_PATH.read_text(encoding="utf-8"))
 except Exception:
@@ -36,39 +32,49 @@ except Exception:
         ABILITY_IDS = {}
 
 
-def install_cosmetic_baseline_compatibility():
-    """Tolerate the October 2026 cosmetic baseline encoding change.
+def fixed8_decoder(base_type):
+    """Decode Valve's fixed8 send-table encoder as exactly eight raw bits."""
 
-    The affected entity classes only drive particles and ragdolls. Their first
-    read for each new entity is always the instance baseline; suppressing an
-    end-of-buffer error there preserves match data while later entity deltas
-    continue to use the strict decoder and still fail loudly if incompatible.
+    def decode(reader):
+        value = reader.read_bits(8)
+        if base_type == "int8" and value >= 0x80:
+            return value - 0x100
+        return value
+
+    return decode
+
+
+def install_fixed8_encoder_compatibility():
+    """Backport fixed8 support missing from the current gem-dota release.
+
+    The October 2026 cosmetic update introduced more fixed8 fields. Reading
+    them as varints consumes bytes belonging to following fields and corrupts
+    the packet-entity stream, even though the affected data is cosmetic.
     """
-    original_read_fields = entity_state.read_fields
-    attempted_states = set()
+    field_class = sendtable_models.Field
+    original_set_model = field_class.set_model
+    if getattr(original_set_model, "_dota_fixed8_compatible", False):
+        return
 
-    def compatible_read_fields(reader, serializer, state):
-        serializer_name = getattr(serializer, "name", "")
-        is_first_cosmetic_read = (
-            serializer_name in INCOMPATIBLE_COSMETIC_BASELINE_CLASSES
-            and state not in attempted_states
-        )
-        if is_first_cosmetic_read:
-            attempted_states.add(state)
-        try:
-            return original_read_fields(reader, serializer, state)
-        except BufferReadError as error:
-            if not is_first_cosmetic_read:
-                raise
-            BASELINE_COMPATIBILITY_SKIPS.append(
-                {"className": serializer_name, "error": str(error)}
-            )
-            return None
+    def compatible_set_model(field, model):
+        original_set_model(field, model)
+        if field.encoder != "fixed8":
+            return
+        if model in (
+            sendtable_models.FIELD_MODEL_SIMPLE,
+            sendtable_models.FIELD_MODEL_FIXED_ARRAY,
+        ):
+            field.decoder = fixed8_decoder(field.field_type.base_type)
+        elif model == sendtable_models.FIELD_MODEL_VARIABLE_ARRAY:
+            generic_type = field.field_type.generic_type
+            if generic_type is not None:
+                field.child_decoder = fixed8_decoder(generic_type.base_type)
 
-    entity_state.read_fields = compatible_read_fields
+    compatible_set_model._dota_fixed8_compatible = True
+    field_class.set_model = compatible_set_model
 
 
-install_cosmetic_baseline_compatibility()
+install_fixed8_encoder_compatibility()
 
 
 def parse_with_metadata(path: Path):
@@ -236,12 +242,29 @@ def suggest_positions(players):
             if selected is not None:
                 suggestions[selected.player_id] = position
 
+        def choose_support(role, position):
+            candidates = [player for player in team if player.player_id in remaining and player.lane_role == role]
+            if not candidates:
+                return None
+            selected = min(candidates, key=lambda player: value_at_game_time(player, 600))
+            remaining.remove(selected.player_id)
+            suggestions[selected.player_id] = position
+            return selected
+
+        # In standard lanes the safe-lane support is position 5 and the
+        # off-lane support is position 4. Lane evidence takes priority over the
+        # former net-worth-only fallback, which frequently swapped the pair.
+        choose_support(3, "4")
+        choose_support(1, "5")
+
         unassigned = sorted(
             (player for player in team if player.player_id in remaining),
             key=lambda player: value_at_game_time(player, 600),
             reverse=True,
         )
-        for player, position in zip(unassigned, ("4", "5"), strict=False):
+        assigned_positions = {suggestions.get(player.player_id) for player in team}
+        fallback_positions = [position for position in ("4", "5") if position not in assigned_positions]
+        for player, position in zip(unassigned, fallback_positions, strict=False):
             suggestions[player.player_id] = position
     return suggestions
 
