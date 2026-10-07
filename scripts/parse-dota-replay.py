@@ -8,6 +8,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import gem.state.entities as entity_state
+from gem.binary.reader import BufferReadError
 from gem.combat.aggregator import _CombatAggregator
 from gem.catalog import ability_display, item_display, load_data_json
 from gem.extractors.courier import CourierExtractor
@@ -22,6 +24,8 @@ from gem.results.assembly import build_parsed_match
 
 
 ABILITY_IDS_PATH = Path(__file__).resolve().parents[1] / "assets" / "dota-ability-ids.json"
+INCOMPATIBLE_COSMETIC_BASELINE_CLASSES = {"CParticleSystem", "CRagdollManager"}
+BASELINE_COMPATIBILITY_SKIPS = []
 
 try:
     ABILITY_IDS = json.loads(ABILITY_IDS_PATH.read_text(encoding="utf-8"))
@@ -30,6 +34,41 @@ except Exception:
         ABILITY_IDS = load_data_json("ability_ids.json")
     except Exception:
         ABILITY_IDS = {}
+
+
+def install_cosmetic_baseline_compatibility():
+    """Tolerate the October 2026 cosmetic baseline encoding change.
+
+    The affected entity classes only drive particles and ragdolls. Their first
+    read for each new entity is always the instance baseline; suppressing an
+    end-of-buffer error there preserves match data while later entity deltas
+    continue to use the strict decoder and still fail loudly if incompatible.
+    """
+    original_read_fields = entity_state.read_fields
+    attempted_states = set()
+
+    def compatible_read_fields(reader, serializer, state):
+        serializer_name = getattr(serializer, "name", "")
+        is_first_cosmetic_read = (
+            serializer_name in INCOMPATIBLE_COSMETIC_BASELINE_CLASSES
+            and state not in attempted_states
+        )
+        if is_first_cosmetic_read:
+            attempted_states.add(state)
+        try:
+            return original_read_fields(reader, serializer, state)
+        except BufferReadError as error:
+            if not is_first_cosmetic_read:
+                raise
+            BASELINE_COMPATIBILITY_SKIPS.append(
+                {"className": serializer_name, "error": str(error)}
+            )
+            return None
+
+    entity_state.read_fields = compatible_read_fields
+
+
+install_cosmetic_baseline_compatibility()
 
 
 def parse_with_metadata(path: Path):
