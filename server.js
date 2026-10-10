@@ -361,6 +361,17 @@ function initDatabase({ seedDefaults = false } = {}) {
   addColumnIfMissing("matches", "player_details", "TEXT DEFAULT '{}'");
   addColumnIfMissing("matches", "match_no", "INTEGER DEFAULT 1");
   addColumnIfMissing("matches", "match_id", "TEXT DEFAULT ''");
+  addColumnIfMissing("matches", "is_playoff", "INTEGER");
+  db.exec(`
+    UPDATE matches SET is_playoff = 0 WHERE is_playoff IS NULL;
+    CREATE TRIGGER IF NOT EXISTS classify_new_match_phase AFTER INSERT ON matches
+    WHEN NEW.is_playoff IS NULL
+    BEGIN
+      UPDATE matches SET is_playoff = CASE WHEN
+        (SELECT value FROM app_state WHERE key = 'playoffMode') = 'true'
+        THEN 1 ELSE 0 END WHERE id = NEW.id;
+    END;
+  `);
   addColumnIfMissing("homepage_highlights", "match_record_id", "TEXT DEFAULT ''");
   addColumnIfMissing("homepage_highlights", "player_id", "TEXT DEFAULT ''");
   addColumnIfMissing("homepage_highlights", "framing", "TEXT NOT NULL DEFAULT '{}'");
@@ -1051,6 +1062,14 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (method === "POST" && url.pathname === "/api/playoffs/mode") {
+    const body = await readJson(request);
+    const enabled = body.enabled !== false;
+    db.prepare("INSERT INTO app_state (key, value) VALUES ('playoffMode', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify(enabled));
+    sendJson(response, 200, { playoffMode: enabled });
+    return;
+  }
+
   if (method === "POST" && url.pathname === "/api/playoffs/teams") {
     const body = await readJson(request);
     sendJson(response, 200, savePlayoffTeams(body.teams || body || {}));
@@ -1174,8 +1193,8 @@ async function handleApi(request, response, url) {
     });
 
     const insertMatch = db.prepare(`
-      INSERT INTO matches (id, date, match_no, match_id, winner, score, note, radiant, dire, positions, player_details, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO matches (id, date, match_no, match_id, winner, score, note, radiant, dire, positions, player_details, is_playoff, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     body.matches.forEach((match) => {
       const radiant = Array.isArray(match.radiant) ? match.radiant : [];
@@ -1192,6 +1211,7 @@ async function handleApi(request, response, url) {
         JSON.stringify(dire),
         JSON.stringify(match.positions || {}),
         JSON.stringify(match.playerDetails || match.player_details || {}),
+        match.isPlayoff === undefined ? null : (match.isPlayoff ? 1 : 0),
         new Date().toISOString()
       );
     });
@@ -1999,7 +2019,7 @@ function getState() {
       steamAccounts: steamAccountsByPlayer.get(player.id) || []
     })),
     matches: db.prepare(`
-      SELECT id, date, match_no AS matchNo, match_id AS matchId, winner, score, note, radiant, dire, positions, player_details AS playerDetails
+      SELECT id, date, match_no AS matchNo, match_id AS matchId, winner, score, note, radiant, dire, positions, player_details AS playerDetails, is_playoff AS isPlayoff
       FROM matches
       ORDER BY created_at DESC
     `).all().map((match) => ({
@@ -2017,6 +2037,7 @@ function getState() {
     homepageHighlights: getHomepageHighlights(),
     currentTeams: getTeams(),
     playoffTeams: getPlayoffTeams(),
+    playoffMode: db.prepare("SELECT value FROM app_state WHERE key = 'playoffMode'").get()?.value === "true",
     playoffTeamNames: getPlayoffTeamNames(),
     playoffResults: getPlayoffResults(),
     champion: getChampion()

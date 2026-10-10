@@ -7427,20 +7427,18 @@ body[data-ui="modern"] .player-profile-insights-grid {
 
 body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-insights-grid > .player-profile-relations-module {
   min-width: 0;
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  background: transparent;
-  box-shadow: none;
+  border: 1px solid rgba(174, 225, 232, 0.12);
+  border-radius: 6px;
+  padding: clamp(16px, 2vw, 22px);
+  background: linear-gradient(135deg, rgba(213, 247, 251, 0.032), transparent 34%), rgba(3, 20, 25, 0.78);
+  box-shadow: inset 0 1px 0 rgba(224, 250, 253, 0.04);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-insights-grid > .player-profile-relations-module:hover {
   transform: none;
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
+  border-color: rgba(174, 225, 232, 0.12);
 }
 
 body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-insights-grid > .player-profile-records-module {
@@ -7464,29 +7462,30 @@ body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-insig
 
 body[data-ui="modern"] .player-profile-relation-list {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
 }
 
 body[data-ui="modern"] .player-profile-relation-group {
   min-width: 0;
   border: 1px solid rgba(128, 205, 215, 0.08);
-  border-radius: 4px;
+  border-radius: 6px;
   background: rgba(3, 21, 26, 0.68);
   overflow: hidden;
 }
 
 body[data-ui="modern"] .player-profile-relation-group > h5 {
   margin: 0;
-  padding: 8px 10px 7px;
+  padding: 12px 14px;
   border-bottom: 1px solid rgba(128, 205, 215, 0.08);
   color: #789399;
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 0.06em;
 }
 
 body[data-ui="modern"] .player-profile-relation-group.is-positive > h5 { color: #70cfae; }
 body[data-ui="modern"] .player-profile-relation-group.is-negative > h5 { color: #d8838b; }
+body[data-ui="modern"] .player-profile-relation-group.is-neutral > h5 { color: #76d7e3; }
 
 body[data-ui="modern"] .player-profile-relation-entries {
   display: grid;
@@ -7495,13 +7494,13 @@ body[data-ui="modern"] .player-profile-relation-entries {
 body[data-ui="modern"] .player-profile-relation-person {
   display: grid;
   min-width: 0;
-  min-height: 39px;
+  min-height: 44px;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   border: 0;
   border-bottom: 1px solid rgba(128, 205, 215, 0.06);
-  padding: 6px 10px;
+  padding: 8px 14px;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -7535,13 +7534,13 @@ body[data-ui="modern"] .player-profile-relation-person > small {
 
 body[data-ui="modern"] .player-profile-relation-person > small b {
   color: #dce9eb;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 body[data-ui="modern"] .player-profile-relation-person > small i,
 body[data-ui="modern"] .player-profile-relation-person > small em {
   color: #668087;
-  font-size: 8px;
+  font-size: 10px;
   font-style: normal;
 }
 
@@ -14373,16 +14372,86 @@ body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-analy
 }
 
 body[data-ui="modern"] #playerProfile.has-player-selection .player-profile-analysis-module .player-profile-stat {
-  min-height: 94px;
-  align-content: space-between;
-  border-color: rgba(128, 205, 215, 0.08);
-  border-radius: 4px;
-  background: rgba(2, 15, 19, 0.42);
+  min-height: 82px;
+  align-content: center;
+  gap: 10px;
+  padding: 14px 10px;
+  border-color: rgba(128, 205, 215, 0.14);
+  border-radius: 6px;
+  background: linear-gradient(135deg, rgba(75, 199, 216, 0.065), transparent 70%), rgba(2, 15, 19, 0.62);
+  box-shadow: inset 0 1px 0 rgba(153, 234, 244, 0.04);
+}
+
+body[data-ui="modern"] .player-profile-analysis-module .player-profile-stat > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #9bb7bc;
+  font-size: 11px;
+  line-height: 1;
+}
+
+body[data-ui="modern"] .player-profile-analysis-module .player-profile-stat > span::before {
+  content: "";
+  width: 3px;
+  height: 10px;
+  border-radius: 2px;
+  background: #59cddd;
 }
 
 body[data-ui="modern"] .player-profile-analysis-module .player-profile-stat strong {
   color: #79deea;
   font-size: clamp(20px, 2vw, 28px);
+}
+
+body[data-ui="modern"] .player-profile-stat-value {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: nowrap;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-ui="modern"] .player-profile-analysis-module .player-profile-stat-value strong {
+  font-size: clamp(18px, 1.8vw, 24px);
+}
+
+body[data-ui="modern"] .player-profile-stat-comparison {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  padding-top: 0;
+}
+
+body[data-ui="modern"] .player-profile-stat-comparison small {
+  color: #819ba0;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+body[data-ui="modern"] .player-profile-stat-comparison b {
+  color: #b6cace;
+  font-weight: 500;
+}
+
+body[data-ui="modern"] .player-profile-stat-comparison .player-profile-stat-delta {
+  color: #aac0c5;
+  font-variant-numeric: tabular-nums;
+  padding-left: 6px;
+  border-left: 1px solid rgba(128, 205, 215, 0.18);
+  line-height: 1.2;
+}
+
+body[data-ui="modern"] .player-profile-stat-comparison .player-profile-stat-delta.is-above { color: #6fd2ad; }
+body[data-ui="modern"] .player-profile-stat-comparison .player-profile-stat-delta.is-below { color: #df858c; }
+
+body[data-ui="modern"] .player-profile-comparison-note {
+  margin: 12px 0 0;
+  color: #789399;
+  font-size: 10px;
+  line-height: 1.8;
 }
 
 body[data-ui="modern"] .player-profile-analysis-empty {
@@ -17469,3 +17538,46 @@ body[data-ui="modern"][data-season="s2"] .view#whoIsIt .page-heading::before {
     animation: none;
   }
 }
+
+body[data-ui="modern"] .playoffs-intro {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  padding: clamp(24px, 4vw, 44px); margin: 0 0 24px;
+  border: 1px solid rgba(112,220,232,.18); border-radius: 8px;
+  background: linear-gradient(120deg, rgba(38,132,148,.16), transparent 65%), rgba(3,20,25,.8);
+}
+.playoffs-kicker { color: #70dce8; font-size: 10px; letter-spacing: .18em; }
+.playoffs-intro h3 { color: #e4f1f3; font-size: clamp(24px,3vw,38px); margin: 12px 0; }
+.playoffs-intro p { color: #819fa5; margin: 0; font-size: 13px; }
+.playoffs-roster-status { display: grid; gap: 6px; text-align: right; flex-shrink: 0; }
+.playoffs-roster-status strong { color: #70dce8; font-size: 42px; font-variant-numeric: tabular-nums; }
+.playoffs-roster-status strong small { font-size: 20px; color: #69878e; }
+.playoffs-roster-status > span { color: #819fa5; font-size: 11px; }
+.playoffs-roster-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; }
+.playoffs-roster-card { min-width: 0; border: 1px solid rgba(128,205,215,.14); border-top: 2px solid var(--team-accent); border-radius: 8px; background: rgba(3,20,25,.84); overflow: hidden; }
+.playoffs-roster-card header { display: flex; align-items: center; justify-content: space-between; padding: 22px 24px; border-bottom: 1px solid rgba(128,205,215,.1); }
+.playoffs-roster-card header span { color: var(--team-accent); font-size: 10px; letter-spacing: .16em; }
+.playoffs-roster-card h4 { margin: 6px 0 0; font-size: 26px; color: #e4f1f3; }
+.playoffs-roster-card header > small { color: var(--team-accent); font-size: 13px; }
+.playoffs-roster-members { padding: 6px 24px; }
+.playoffs-roster-member { display: flex; width: 100%; min-height: 58px; gap: 16px; align-items: center; border: 0; border-bottom: 1px solid rgba(128,205,215,.07); background: transparent; color: #dcecef; text-align: left; padding: 10px 0; }
+button.playoffs-roster-member { cursor: pointer; }
+button.playoffs-roster-member:hover, button.playoffs-roster-member:focus-visible { background: rgba(112,220,232,.06); }
+.playoffs-member-index { color: var(--team-accent); opacity: .65; font-size: 12px; font-variant-numeric: tabular-nums; }
+.playoffs-roster-member strong { font-size: 16px; overflow-wrap: anywhere; }
+.playoffs-roster-member > small { margin-left: auto; color: var(--team-accent); font-size: 16px; flex-shrink: 0; }
+.playoffs-roster-member > small span { font-size: 9px; color: #789399; margin-left: 6px; }
+.playoffs-roster-member.is-pending { color: #607d84; font-size: 13px; }
+.playoffs-roster-member.is-pending > small { color: #607d84; }
+.playoffs-roster-card footer { color: #789399; font-size: 10px; padding: 14px 24px; letter-spacing: .06em; }
+.playoffs-archive-empty { padding: 28px; color: #819fa5; }
+@media(max-width: 620px) {
+  .playoffs-roster-grid { grid-template-columns: 1fr; }
+  body[data-ui="modern"] .playoffs-intro { padding: 22px; gap: 12px; }
+  .playoffs-roster-status strong { font-size: 30px; }
+}
+.playoffs-nav-label { position: relative; display: inline-block; text-align: center; }
+.playoffs-coming-soon { position: absolute; top: calc(100% + 2px); left: 50%; transform: translateX(-50%); font-size: 8px; line-height: 1; font-weight: 400; color: #789399; white-space: nowrap; pointer-events: none; }
+.nav-tab.is-coming-soon { color: #60747a !important; cursor: default; opacity: .65; }
+.playoff-mode-control { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+#playoffModeStatus { color: #819fa5; font-size: 12px; }
+.playoff-match-badge { display: inline-flex; align-items: center; padding: 2px 5px; border: 1px solid rgba(232,188,103,.3); border-radius: 3px; background: rgba(232,188,103,.08); color: #e8bc67 !important; font-size: 10px !important; font-weight: 500; line-height: 1.3; white-space: nowrap; vertical-align: middle; }
