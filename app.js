@@ -366,6 +366,7 @@ async function loadState() {
   db = await api("/api/state");
   applySeasonUi();
   updatePlayoffModeUi();
+  $$("[data-playoff-team-name]").forEach((input) => { input.value = db.playoffTeamNames?.[input.dataset.playoffTeamName] || input.dataset.playoffTeamName; });
   adminPlayoffDraftTeams = null;
   rebuildDerivedStats();
   hasLoadedState = true;
@@ -1330,6 +1331,7 @@ function getDashboardCalendarDateInfo(value) {
 
 function updatePlayoffModeUi() {
   const enabled = Boolean(db.playoffMode) && !IS_S2_SEASON;
+  $("#playoffImportTypeControl")?.classList.toggle("is-hidden", !enabled);
   const nav = $('.nav-tab[data-view="playoffs"]');
   if (nav) {
     nav.disabled = !enabled;
@@ -1343,7 +1345,8 @@ function updatePlayoffModeUi() {
 }
 
 function renderPlayoffMatchBadge(match) {
-  return match.isPlayoff ? '<span class="playoff-match-badge">季后赛</span>' : "";
+  const typeLabel = { training: "训练赛", ranking: "排位赛", elimination: "淘汰赛" }[match.playoffType];
+  return match.isPlayoff ? `<span class="playoff-match-badge">季后赛${typeLabel ? ` · ${typeLabel}` : ""}</span>` : "";
 }
 
 function getPlayoffTeams() {
@@ -1368,12 +1371,7 @@ function renderPlayoffs() {
   }
   const teams = getPlayoffTeams();
   const keys = ["A", "B", "C", "D"];
-  const confirmed = keys.filter((key) => (teams[key] || []).filter((id) => getPlayer(id)).length === 5).length;
   target.innerHTML = `
-    <section class="playoffs-intro">
-      <div><span class="playoffs-kicker">S3 / THE NEXT CHAPTER</span><h3>四支队伍，向冠军出发。</h3><p>季后赛参赛阵容</p></div>
-      <div class="playoffs-roster-status"><strong>${confirmed}<small> / 4</small></strong><span>完整阵容</span></div>
-    </section>
     <section class="playoffs-roster-grid" aria-label="季后赛四支队伍">
       ${keys.map((key, index) => {
         const players = (teams[key] || []).map((id) => getPlayer(id)).filter(Boolean);
@@ -4958,7 +4956,7 @@ function renderAdminPlayoffTeams() {
       ${["A", "B", "C", "D"].map((team) => `
         <button class="playoff-admin-team ${adminPlayoffSelectedTeam === team ? "is-active" : ""}" data-playoff-target-team="${team}" type="button">
           <span>
-            <strong>${team}队</strong>
+            <strong>${escapeHtml(db.playoffTeamNames?.[team] || `${team}队`)}</strong>
             <em>${(teams[team] || []).length}/5</em>
           </span>
           ${(teams[team] || []).length ? `<i data-clear-playoff-team="${team}">清除</i>` : ""}
@@ -8018,6 +8016,19 @@ function initializeNavSubmenus() {
 }
 
 function bindEvents() {
+  $("#savePlayoffTeamNames")?.addEventListener("click", async () => {
+    const button = $("#savePlayoffTeamNames");
+    const status = $("#playoffTeamNamesStatus");
+    const names = Object.fromEntries($$("[data-playoff-team-name]").map((input) => [input.dataset.playoffTeamName, input.value.trim()]));
+    button.disabled = true;
+    try {
+      db.playoffTeamNames = await adminApi("/api/playoffs/team-names", { method: "POST", body: JSON.stringify({ names }) });
+      renderAdminPlayoffTeams();
+      renderPlayoffs();
+      status.textContent = "队名已保存";
+    } catch (error) { status.textContent = error.message; }
+    finally { button.disabled = false; }
+  });
   $("#enterPlayoffMode")?.addEventListener("click", async () => {
     const button = $("#enterPlayoffMode");
     button.disabled = true;
@@ -9045,6 +9056,7 @@ function bindEvents() {
         method: "POST",
         body: JSON.stringify({
           jobId: pendingReplayJobId,
+          playoffType: db.playoffMode ? $("#playoffImportType").value : "",
           date,
           matchId,
           winner,
@@ -9113,7 +9125,7 @@ function bindEvents() {
     try {
       const result = await adminApi("/api/excel/import", {
         method: "POST",
-        body: JSON.stringify({ matches: selectedMatches })
+        body: JSON.stringify({ matches: selectedMatches, playoffType: db.playoffMode ? $("#playoffImportType").value : "" })
       });
       db = result.state;
       rebuildDerivedStats();

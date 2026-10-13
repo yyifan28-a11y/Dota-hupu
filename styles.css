@@ -17581,3 +17581,10 @@ button.playoffs-roster-member:hover, button.playoffs-roster-member:focus-visible
 .playoff-mode-control { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
 #playoffModeStatus { color: #819fa5; font-size: 12px; }
 .playoff-match-badge { display: inline-flex; align-items: center; padding: 2px 5px; border: 1px solid rgba(232,188,103,.3); border-radius: 3px; background: rgba(232,188,103,.08); color: #e8bc67 !important; font-size: 10px !important; font-weight: 500; line-height: 1.3; white-space: nowrap; vertical-align: middle; }
+#playoffImportTypeControl:not(.is-hidden) { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 14px 0 20px; color: #b8d0d5; font-size: 13px; }
+#playoffImportTypeControl select { min-width: 130px; padding: 8px 12px; border: 1px solid rgba(112,220,232,.22); border-radius: 5px; background: #09232b; color: #dcecef; }
+#playoffImportTypeControl small { color: #789399; font-size: 11px; }
+.playoff-team-name-editor { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 20px 0; }
+.playoff-team-name-editor label { display: grid; gap: 6px; flex: 1 1 150px; color: #93afb5; font-size: 12px; }
+.playoff-team-name-editor input { width: 100%; min-width: 0; padding: 9px 12px; background: #09232b; color: #dcecef; border: 1px solid rgba(112,220,232,.22); border-radius: 5px; }
+#playoffTeamNamesStatus { color: #93afb5; font-size: 12px; }

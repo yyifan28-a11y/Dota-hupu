@@ -362,6 +362,7 @@ function initDatabase({ seedDefaults = false } = {}) {
   addColumnIfMissing("matches", "match_no", "INTEGER DEFAULT 1");
   addColumnIfMissing("matches", "match_id", "TEXT DEFAULT ''");
   addColumnIfMissing("matches", "is_playoff", "INTEGER");
+  addColumnIfMissing("matches", "playoff_type", "TEXT DEFAULT ''");
   db.exec(`
     UPDATE matches SET is_playoff = 0 WHERE is_playoff IS NULL;
     CREATE TRIGGER IF NOT EXISTS classify_new_match_phase AFTER INSERT ON matches
@@ -1070,6 +1071,18 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (method === "POST" && url.pathname === "/api/playoffs/team-names") {
+    const body = await readJson(request);
+    const names = Object.fromEntries(["A", "B", "C", "D"].map((key) => [key, String(body.names?.[key] || "").trim()]));
+    if (Object.values(names).some((name) => !name || name.length > 30)) {
+      sendJson(response, 400, { error: "每队名称须为 1–30 个字符" });
+      return;
+    }
+    db.prepare("INSERT INTO app_state (key, value) VALUES ('playoffTeamNames', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify(names));
+    sendJson(response, 200, names);
+    return;
+  }
+
   if (method === "POST" && url.pathname === "/api/playoffs/teams") {
     const body = await readJson(request);
     sendJson(response, 200, savePlayoffTeams(body.teams || body || {}));
@@ -1193,8 +1206,8 @@ async function handleApi(request, response, url) {
     });
 
     const insertMatch = db.prepare(`
-      INSERT INTO matches (id, date, match_no, match_id, winner, score, note, radiant, dire, positions, player_details, is_playoff, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO matches (id, date, match_no, match_id, winner, score, note, radiant, dire, positions, player_details, is_playoff, playoff_type, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     body.matches.forEach((match) => {
       const radiant = Array.isArray(match.radiant) ? match.radiant : [];
@@ -1212,6 +1225,7 @@ async function handleApi(request, response, url) {
         JSON.stringify(match.positions || {}),
         JSON.stringify(match.playerDetails || match.player_details || {}),
         match.isPlayoff === undefined ? null : (match.isPlayoff ? 1 : 0),
+        ["training", "ranking", "elimination"].includes(match.playoffType) ? match.playoffType : "",
         new Date().toISOString()
       );
     });
@@ -1255,7 +1269,7 @@ async function handleApi(request, response, url) {
       return;
     }
 
-    insertMatches(validation.matches);
+    insertMatches(validation.matches, normalizePlayoffImportType(body.playoffType));
     sendJson(response, 200, { imported: validation.matches.length, state: getState() });
     return;
   }
@@ -1536,6 +1550,7 @@ function runReplayParser(filePath) {
 }
 
 function importReplayMatch(job, body) {
+  const playoffType = normalizePlayoffImportType(body.playoffType);
   const result = job.result;
   const matchId = String(body.matchId || result.matchId || "").trim();
   const date = String(body.date || result.date || "").trim();
@@ -1656,6 +1671,7 @@ function importReplayMatch(job, body) {
       JSON.stringify(cleanPlayerDetails(details, teams)),
       now
     );
+    db.prepare("UPDATE matches SET playoff_type = ? WHERE id = ?").run(playoffType, matchRecordId);
     const analysisPlayers = {};
     result.players.forEach((player) => {
       const playerId = String(mappings[player.slot]);
@@ -2019,7 +2035,7 @@ function getState() {
       steamAccounts: steamAccountsByPlayer.get(player.id) || []
     })),
     matches: db.prepare(`
-      SELECT id, date, match_no AS matchNo, match_id AS matchId, winner, score, note, radiant, dire, positions, player_details AS playerDetails, is_playoff AS isPlayoff
+      SELECT id, date, match_no AS matchNo, match_id AS matchId, winner, score, note, radiant, dire, positions, player_details AS playerDetails, is_playoff AS isPlayoff, playoff_type AS playoffType
       FROM matches
       ORDER BY created_at DESC
     `).all().map((match) => ({
@@ -3432,7 +3448,13 @@ function validateExcelMatches(matches) {
   return { errors, matches: cleaned };
 }
 
-function insertMatches(matches) {
+function normalizePlayoffImportType(value) {
+  if (db.prepare("SELECT value FROM app_state WHERE key = 'playoffMode'").get()?.value !== "true") return "";
+  if (!["training", "ranking", "elimination"].includes(value)) throw createHttpError(400, "请选择训练赛、排位赛或淘汰赛");
+  return value;
+}
+
+function insertMatches(matches, playoffType = "") {
   const insert = db.prepare(`
     INSERT INTO matches (id, date, match_no, match_id, winner, score, note, radiant, dire, positions, player_details, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -3440,8 +3462,9 @@ function insertMatches(matches) {
   db.exec("BEGIN");
   try {
     matches.forEach((match) => {
+      const id = crypto.randomUUID();
       insert.run(
-        crypto.randomUUID(),
+        id,
         match.date,
         match.matchNo,
         match.matchId,
@@ -3454,6 +3477,7 @@ function insertMatches(matches) {
         JSON.stringify(match.playerDetails),
         new Date().toISOString()
       );
+      db.prepare("UPDATE matches SET playoff_type = ? WHERE id = ?").run(playoffType, id);
     });
     db.exec("COMMIT");
   } catch (error) {

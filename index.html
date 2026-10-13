@@ -709,6 +709,10 @@
               </summary>
               <div class="backup-panel-body">
                 <h3>录像导入</h3>
+                <label id="playoffImportTypeControl" class="is-hidden">季后赛比赛类型
+                  <select id="playoffImportType"><option value="training">训练赛</option><option value="ranking">排位赛</option><option value="elimination">淘汰赛</option></select>
+                  <small>适用于本次录像或 Excel 导入</small>
+                </label>
                 <p>上传 Dota 2 的 .dem 录像。解析后请确认十名选手和双方 1–5 号位；录像缺失的比赛信息可以手动补充后创建。</p>
                 <div class="button-row">
                   <label class="primary-button file-button admin-only">
@@ -790,6 +794,14 @@
               </summary>
               <div class="playoff-admin">
                 <div class="playoff-mode-control"><button class="primary-button" id="enterPlayoffMode" type="button">进入季后赛模式</button><span id="playoffModeStatus"></span></div>
+                <div class="playoff-team-name-editor">
+                  <label>A 队<input data-playoff-team-name="A" maxlength="30" placeholder="A 队名称" /></label>
+                  <label>B 队<input data-playoff-team-name="B" maxlength="30" placeholder="B 队名称" /></label>
+                  <label>C 队<input data-playoff-team-name="C" maxlength="30" placeholder="C 队名称" /></label>
+                  <label>D 队<input data-playoff-team-name="D" maxlength="30" placeholder="D 队名称" /></label>
+                  <button class="secondary-button" id="savePlayoffTeamNames" type="button">保存队名</button>
+                  <span id="playoffTeamNamesStatus" role="status"></span>
+                </div>
                 <p>从现有选手库中选择 A、B、C、D 四支队伍的出场人员。</p>
                 <div id="adminPlayoffTeams" class="playoff-admin-grid"></div>
               </div>
