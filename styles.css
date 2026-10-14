@@ -17588,3 +17588,115 @@ button.playoffs-roster-member:hover, button.playoffs-roster-member:focus-visible
 .playoff-team-name-editor label { display: grid; gap: 6px; flex: 1 1 150px; color: #93afb5; font-size: 12px; }
 .playoff-team-name-editor input { width: 100%; min-width: 0; padding: 9px 12px; background: #09232b; color: #dcecef; border: 1px solid rgba(112,220,232,.22); border-radius: 5px; }
 #playoffTeamNamesStatus { color: #93afb5; font-size: 12px; }
+.playoffs-ranking-stage { margin-top: 28px; }
+.playoffs-ranking-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:18px; }
+.playoffs-ranking-heading span { color:#70dce8; font-size:10px; letter-spacing:.16em; }
+.playoffs-ranking-heading h3 { margin:8px 0; font-size:26px; color:#e4f1f3; }
+.playoffs-ranking-heading p, .playoffs-ranking-note { color:#819fa5; font-size:11px; line-height:1.7; }
+.playoffs-ranking-heading > strong { color:#70dce8; font-size:28px; white-space:nowrap; }
+.playoffs-ranking-heading > strong small { color:#819fa5; font-size:11px; }
+.playoffs-ranking-layout { display:grid; grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr); gap:18px; }
+.playoffs-ranking-panel { min-width:0; padding:20px; border:1px solid rgba(128,205,215,.14); border-radius:6px; background:rgba(3,20,25,.84); }
+.playoffs-ranking-panel h4 { margin:0 0 16px; color:#dcecef; font-size:16px; }
+.playoffs-table-scroll { overflow-x:auto; }
+.playoffs-ranking-panel table { width:100%; border-collapse:collapse; font-size:12px; }
+.playoffs-ranking-panel th, .playoffs-ranking-panel td { padding:12px 8px; border-bottom:1px solid rgba(128,205,215,.09); text-align:center; color:#a5c0c5; }
+.playoffs-ranking-panel thead th { color:#6f959e; font-size:10px; }
+.playoffs-ranking-panel tbody th { color:#e0edf0; overflow-wrap:anywhere; }
+.playoffs-ranking-panel .playoffs-points { color:#70dce8; font-size:20px; font-weight:700; }
+.playoffs-matrix { table-layout:fixed; min-width:360px; }
+.playoffs-matrix td > strong { color:#dcecef; font-size:15px; }
+.playoffs-matrix .is-self { background:rgba(128,205,215,.025); color:#45616a; }
+.playoffs-game-dots { display:flex; justify-content:center; gap:4px; margin-top:8px; }
+.playoffs-game-dots button, .playoffs-game-dots span { display:inline-grid; place-items:center; width:20px; height:20px; border:1px solid rgba(128,205,215,.12); border-radius:3px; font-size:10px; background:transparent; }
+.playoffs-game-dots button { cursor:pointer; }
+.playoffs-game-dots .is-win { color:#71cba5; background:rgba(113,203,165,.08); }
+.playoffs-game-dots .is-loss { color:#df858c; background:rgba(223,133,140,.08); }
+.playoffs-game-dots .is-pending { color:#52727a; }
+.playoffs-game-dots button:hover { border-color:#70dce8; }
+.playoffs-ranking-note { margin:12px 0 0; }
+.playoffs-ranking-warning { color:#e8bc67; font-size:12px; line-height:1.8; }
+@media(max-width:1000px) { .playoffs-ranking-layout { grid-template-columns:1fr; } }
+.playoffs-ranking-panel .playoffs-standings { min-width: 0; table-layout: fixed; }
+.playoffs-ranking-panel .playoffs-standings th, .playoffs-ranking-panel .playoffs-standings td { width: auto; min-width: 0; padding: 12px 4px; white-space: normal; }
+.playoffs-roster-member .playoffs-member-index { flex: 0 0 82px; font-size: 10px; white-space: nowrap; opacity: .8; }
+@media(max-width:520px) { .playoffs-roster-member { gap: 10px; } .playoffs-roster-member .playoffs-member-index { flex-basis: 72px; font-size: 9px; } }
+.playoffs-roster-grid { max-width: 900px; margin-inline: auto; gap: 16px; }
+.playoffs-roster-card header { padding: 16px 20px; }
+.playoffs-roster-card h4 { margin: 0; font-size: 22px; }
+.playoffs-roster-members { padding: 4px 20px; }
+.playoffs-roster-member { min-height: 46px; padding: 10px 0; gap: 12px; }
+.playoffs-roster-member .playoffs-member-index { flex: 0 0 90px; font-size: 10px; letter-spacing: .04em; }
+.playoffs-roster-member strong, .playoffs-roster-member .playoffs-pending-id { margin-left: auto; text-align: right; font-size: 15px; }
+.playoffs-roster-grid { max-width: none; gap: 20px; }
+.playoffs-roster-card header { padding: 18px 20px 14px; border-bottom: 0; }
+.playoffs-roster-card h4 { display: flex; align-items: baseline; gap: 10px; }
+.playoffs-roster-card header h4 > span { font-size: 16px; font-weight: 400; letter-spacing: .06em; }
+.playoffs-roster-body { display: grid; grid-template-columns: minmax(0,.85fr) minmax(0,1.15fr); gap: 18px; padding: 0 20px 20px; align-items: stretch; }
+.playoffs-team-logo { display: block; width: 100%; height: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; }
+.playoffs-roster-body .playoffs-roster-members { display: grid; grid-template-rows: repeat(5,1fr); padding: 0; min-width: 0; }
+.playoffs-roster-body .playoffs-roster-member { min-height: 42px; padding: 8px 0; gap: 8px; }
+.playoffs-roster-body .playoffs-roster-member:last-child { border-bottom: 0; }
+.playoffs-roster-body .playoffs-member-index { flex: 0 0 auto; font-size: 9px; letter-spacing: .02em; }
+.playoffs-roster-body .playoffs-roster-member strong { font-size: 14px; }
+@media(max-width:1000px) { .playoffs-roster-grid { grid-template-columns: 1fr; max-width: 680px; } .playoffs-roster-body .playoffs-member-index { font-size: 11px; } .playoffs-roster-body .playoffs-roster-member strong { font-size: 16px; } }
+@media(max-width:420px) { .playoffs-roster-body { gap: 12px; padding: 0 14px 14px; grid-template-columns: minmax(0,.7fr) minmax(0,1.3fr); } .playoffs-roster-body .playoffs-member-index { font-size: 8px; } .playoffs-roster-body .playoffs-roster-member strong { font-size: 12px; } }
+.playoffs-table-team { display: inline-flex; align-items: center; justify-content: center; gap: 6px; max-width: 100%; vertical-align: middle; }
+.playoffs-table-team img { width: 24px; height: 24px; flex: 0 0 24px; object-fit: cover; border-radius: 4px; }
+.playoffs-table-team > span { overflow-wrap: anywhere; }
+.playoffs-matrix .playoffs-table-team { gap: 4px; }
+.playoffs-matrix .playoffs-table-team img { width: 20px; height: 20px; flex-basis: 20px; }
+/* Playoffs follows the site's panel, typography and warm hover hierarchy. */
+body[data-ui="modern"] #playoffs .playoffs-ranking-panel {
+  border-color: rgba(174, 225, 232, 0.12);
+  background: linear-gradient(135deg, rgba(213,247,251,.032), transparent 34%), rgba(3,20,25,.78);
+  box-shadow: inset 0 1px 0 rgba(224,250,253,.04);
+}
+body[data-ui="modern"] #playoffs .playoffs-ranking-panel h4 {
+  display: flex; align-items: center; gap: 10px; font-size: 16px;
+}
+body[data-ui="modern"] #playoffs .playoffs-ranking-panel h4::before {
+  content: ""; width: 3px; height: 15px; border-radius: 1px; background: #70dce8;
+}
+body[data-ui="modern"] #playoffs .playoffs-ranking-panel thead th {
+  color: #7fc7d1; font-size: 11px; letter-spacing: .055em;
+}
+body[data-ui="modern"] #playoffs .playoffs-ranking-panel tbody th {
+  font-family: inherit; font-size: 13px; letter-spacing: normal; text-transform: none; font-weight: 600;
+}
+body[data-ui="modern"] #playoffs .playoffs-ranking-panel tbody td { font-size: 13px; }
+body[data-ui="modern"] #playoffs .playoffs-ranking-panel tbody .playoffs-points { font-size: 20px; }
+body[data-ui="modern"] #playoffs .playoffs-table-team > span { font-family: inherit; letter-spacing: normal; }
+body[data-ui="modern"] #playoffs .playoffs-table-team { gap: 7px; }
+body[data-ui="modern"] #playoffs .playoffs-roster-member { transition: background-color 160ms ease, box-shadow 160ms ease; }
+body[data-ui="modern"] #playoffs .playoffs-roster-member:focus-visible { outline: 2px solid #65d4e3; outline-offset: -2px; }
+@media (hover: hover) and (pointer: fine) {
+  body[data-ui="modern"] #playoffs :is(.playoffs-standings, .playoffs-matrix) tbody tr:hover { box-shadow: none; }
+  body[data-ui="modern"] #playoffs :is(.playoffs-standings, .playoffs-matrix) tbody tr:hover > :is(td, th) {
+    border-bottom-color: rgba(241,189,85,.16);
+    background: linear-gradient(90deg, rgba(241,189,85,.07), rgba(241,189,85,.012) 58%, transparent);
+  }
+  body[data-ui="modern"] #playoffs :is(.playoffs-standings, .playoffs-matrix) tbody tr:hover > :first-child {
+    background: linear-gradient(90deg, rgba(241,189,85,.12), rgba(10,43,49,.9) 72%);
+    box-shadow: inset 2px 0 0 rgba(241,189,85,.82);
+  }
+  body[data-ui="modern"] #playoffs :is(.playoffs-standings, .playoffs-matrix) tbody tr:hover .playoffs-table-team > span { color: var(--hover-warm-bright, #ffda84); }
+  body[data-ui="modern"] #playoffs button.playoffs-roster-member:hover {
+    background: linear-gradient(90deg, rgba(241,189,85,.07), rgba(241,189,85,.012) 58%, transparent);
+    box-shadow: inset 2px 0 0 rgba(241,189,85,.82);
+  }
+  body[data-ui="modern"] #playoffs button.playoffs-roster-member:hover strong { color: var(--hover-warm-bright, #ffda84); }
+}
+body[data-ui="modern"] #playoffs .playoffs-ranking-panel .playoffs-table-team > span,
+body[data-ui="modern"] #playoffs :is(.playoffs-standings, .playoffs-matrix) tbody tr:hover .playoffs-table-team > span {
+  color: var(--team-accent);
+  font-family: var(--font-body, "Microsoft YaHei", sans-serif);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-transform: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  body[data-ui="modern"] #playoffs button.playoffs-roster-member:hover { box-shadow: none; }
+}
