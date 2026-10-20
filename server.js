@@ -1679,6 +1679,9 @@ function importReplayMatch(job, body) {
       const playerId = String(mappings[player.slot]);
       analysisPlayers[playerId] = {
         slot: Number(player.slot),
+        heroSlug: String(player.heroSlug || ""),
+        heroId: Number(player.heroId || 0),
+        team: player.team,
         level: Number(player.level || 0),
         netWorth: Number(player.netWorth || 0),
         denies: Number(player.denies || 0),
@@ -3696,7 +3699,16 @@ function isDotaTalentKey(key) {
 }
 
 function normalizeReplayAnalysis(analysis = {}) {
-  const events = Array.isArray(analysis.draft) ? [...analysis.draft].sort((a, b) => Number(a.order) - Number(b.order)) : [];
+  const events = Array.isArray(analysis.draft) ? analysis.draft.map((event) => {
+    if (event.action !== "pick") return { ...event };
+    const key = String(event.heroSlug || "").replace(/_/g, "").toLowerCase();
+    const player = Object.values(analysis.players || {}).find((player) => String(player.heroSlug || "").replace(/_/g, "").toLowerCase() === key);
+    const slot = Number(event.slot);
+    const team = ["radiant", "dire"].includes(player?.team) ? player.team
+      : Number.isInteger(slot) && slot >= 0 && slot < 10 ? (slot < 5 ? "radiant" : "dire") : event.team;
+    return { ...event, team };
+  }).sort((a, b) => Number(a.order) - Number(b.order)) : [];
+  analysis = { ...analysis, draft: events };
   const pickOrders = new Set([8, 9, 13, 14, 15, 16, 17, 18, 23, 24]);
   const firstOrders = new Set([1, 2, 5, 8, 10, 11, 14, 15, 18, 19, 21, 23]);
   const first = events[7]?.team;

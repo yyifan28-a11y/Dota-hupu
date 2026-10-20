@@ -5301,7 +5301,7 @@ function renderMatchDraft(match, analysis) {
   const card = (event) => {
       const hero = findHero(event.heroSlug);
       const name = hero?.cn || event.heroSlug || `英雄 #${Number(event.heroId || 0)}`;
-      return `<div class="bp-hero is-${event.action}" title="${escapeHtml(name)} · ${event.action === "pick" ? "选人" : "禁用"} #${Number(event.order || 0)}"><div class="bp-portrait">${hero ? `<img src="${heroImageUrl(hero)}" alt="${escapeHtml(name)}" loading="lazy" />` : '<span>?</span>'}</div><small>#${Number(event.order || 0)}</small></div>`;
+      return `<div class="bp-hero is-${event.action}" title="${escapeHtml(name)} · ${event.action === "pick" ? "选人" : "禁用"} #${Number(event.order || 0)}"><div class="bp-portrait">${hero ? `<img class="bp-hero-image" src="${heroImageUrl(hero)}" alt="${escapeHtml(name)}" loading="lazy" />` : '<span>?</span>'}</div><small>#${Number(event.order || 0)}</small></div>`;
   };
   const unknown = ordered.filter((event) => !["radiant", "dire"].includes(event.team));
   const group = (team, action) => {
@@ -8206,6 +8206,13 @@ function bindEvents() {
   setupPasswordControls();
 
   document.addEventListener("error", (event) => {
+    if (event.target?.classList?.contains("bp-hero-image")) {
+      const image = event.target;
+      const fallback = document.createElement("span");
+      fallback.className = "bp-image-fallback";
+      fallback.textContent = image.alt || "英雄";
+      image.replaceWith(fallback);
+    }
     if (event.target?.classList?.contains("hero-avatar")) {
       event.target.remove();
     }

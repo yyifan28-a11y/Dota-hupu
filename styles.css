@@ -17928,3 +17928,12 @@ body[data-ui="modern"] #matchDetail .match-team-board.is-winner > header {
   .match-playoff-versus .match-versus-team:last-child .match-victory-stamp { left:calc(50% + 12px); right:auto; }
   .match-playoff-versus .match-versus-team .match-victory-stamp small { font-size:7px; }
 }
+.bp-image-fallback { display:grid; place-items:center; height:100%; padding:3px; color:#afc8ce; font-size:10px; text-align:center; }
+body[data-ui="modern"] #playoffs .playoffs-matrix tbody th:first-child {
+  text-align: left;
+  padding-left: 12px;
+}
+body[data-ui="modern"] #playoffs .playoffs-matrix tbody th:first-child .playoffs-table-team {
+  display: flex;
+  justify-content: flex-start;
+}

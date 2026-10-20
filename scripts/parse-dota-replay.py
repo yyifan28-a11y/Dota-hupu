@@ -273,10 +273,11 @@ def suggest_positions(players):
 
 def serialize_draft(match):
     """Keep detection order; never guess an unknown ban's team."""
-    hero_teams = {player.hero_name: player.team for player in match.players if player.hero_name}
+    hero_key = lambda name: name.removeprefix("npc_dota_hero_").replace("_", "").lower()
+    hero_teams = {hero_key(player.hero_name): player.team for player in match.players if player.hero_name}
     events = []
     for event in sorted(getattr(match, "draft", []) or [], key=lambda item: item.tick):
-        team = hero_teams.get(event.hero_name, event.team) if event.is_pick else event.team
+        team = hero_teams.get(hero_key(event.hero_name), 0) if event.is_pick else event.team
         events.append({
             "order": len(events) + 1,
             "tick": event.tick,
