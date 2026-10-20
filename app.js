@@ -5222,6 +5222,10 @@ function loadMatchAnalysis(matchId) {
 function renderMatchDetailPage() {
   const target = $("#matchDetailPage");
   if (!target) return;
+  if (!hasLoadedState) {
+    target.innerHTML = '<section class="match-detail-loading" role="status" aria-live="polite"><span class="match-analysis-spinner" aria-hidden="true"></span><p>正在加载比赛…</p></section>';
+    return;
+  }
   const match = db.matches.find((item) => item.id === selectedMatchDetailId);
   if (!match) {
     target.innerHTML = `
@@ -5583,6 +5587,7 @@ function handleMatchChartPointer(event) {
 }
 
 function handleMatchDetailPageClick(event) {
+  if (event.target.closest("[data-match-load-retry]")) { window.location.reload(); return; }
   const playerProfileLink = event.target.closest("[data-match-player-profile]");
   if (playerProfileLink) {
     event.preventDefault();
@@ -9942,11 +9947,17 @@ const initialView = REQUESTED_VIEW || sessionStorage.getItem(ACTIVE_VIEW_KEY) ||
 switchView(REQUESTED_VIEW === "matchDetail" && REQUESTED_MATCH_ID
   ? "matchDetail"
   : (REQUESTED_PLAYER_ID ? "playerProfile" : (initialView === "matchDetail" ? "dashboard" : initialView)));
+document.documentElement.classList.remove("app-booting");
 // The legacy splash/video and clock code is intentionally retained but no longer initialized.
 initializeDashboardScrollSequence();
 Promise.allSettled([restoreAdminSession(), ensureStateLoaded()]).then((results) => {
   updateAdminUi();
-  if (results[1]?.status === "rejected") console.error(results[1].reason);
+  if (results[1]?.status === "rejected") {
+    console.error(results[1].reason);
+    if ($("#matchDetail")?.classList.contains("is-active")) {
+      $("#matchDetailPage").innerHTML = '<section class="match-detail-empty panel" role="alert"><h2>比赛加载失败</h2><p>请检查网络连接后重试。</p><button class="secondary-button" data-match-load-retry type="button">重新加载</button></section>';
+    }
+  }
   if (IS_HOMEPAGE_PREVIEW_FRAME && results[1]?.status === "fulfilled") {
     window.parent.postMessage({ type: "homepage-highlight-preview-ready" }, window.location.origin);
   }

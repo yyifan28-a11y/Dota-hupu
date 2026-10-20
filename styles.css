@@ -17937,3 +17937,4 @@ body[data-ui="modern"] #playoffs .playoffs-matrix tbody th:first-child .playoffs
   display: flex;
   justify-content: flex-start;
 }
+.match-detail-loading { min-height:260px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; color:#819fa5; font-size:13px; }
