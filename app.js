@@ -963,7 +963,7 @@ function renderMatches() {
       <article class="match-history-row" data-open-match="${escapeHtml(match.id)}" tabindex="0" role="button" aria-label="查看 ${escapeHtml(match.date || "日期未记录")} 第 ${Number(match.matchNo || 1)} 场比赛详情">
         <div class="match-history-identity">
           <strong>${escapeHtml(formatShortMatchDate(match.date))}</strong>
-          <span>第 ${Number(match.matchNo || 1)} 场 ${renderPlayoffMatchBadge(match)}</span>
+          <span>${match.isPlayoff ? "" : `第 ${Number(match.matchNo || 1)} 场 `}${renderPlayoffMatchBadge(match)}</span>
         </div>
         <div class="match-history-duration">
           <strong>${escapeHtml(getMatchDurationLabel(match))}</strong>
@@ -1347,6 +1347,17 @@ function updatePlayoffModeUi() {
 function renderPlayoffMatchBadge(match) {
   const typeLabel = { training: "训练赛", ranking: "排位赛", elimination: "淘汰赛" }[match.playoffType];
   return match.isPlayoff ? `<span class="playoff-match-badge">季后赛${typeLabel ? ` · ${typeLabel}` : ""}</span>` : "";
+}
+
+function getMatchPlayoffTeamName(match, side) {
+  if (!match.isPlayoff || !["ranking", "elimination"].includes(match.playoffType)) return "";
+  const ids = match[side] || [];
+  if (ids.length !== 5 || new Set(ids).size !== 5) return "";
+  const keys = ["A", "B", "C", "D"].filter((key) => {
+    const roster = getPlayoffTeams()[key] || [];
+    return roster.length === 5 && new Set(roster).size === 5 && roster.every((id) => ids.includes(id));
+  });
+  return keys.length === 1 ? (db.playoffTeamNames?.[keys[0]] || `${keys[0]} 队`) : "";
 }
 
 function getPlayoffTeams() {
@@ -5233,8 +5244,8 @@ function renderMatchDetailPage() {
       </button>
       <div class="match-detail-title-block">
         <span>MATCH OVERVIEW</span>
-        ${renderPlayoffMatchBadge(match)}<h2 id="matchDetailPageTitle">${escapeHtml(formatShortMatchDate(match.date))} · 第 ${Number(match.matchNo || 1)} 场</h2>
-        <div class="match-overview-details"><span>MATCH ID <b>${escapeHtml(match.matchId || "—")}</b></span><span>DATE <b>${escapeHtml(match.date)}</b></span></div>
+        <h2 id="matchDetailPageTitle">${escapeHtml(formatShortMatchDate(match.date))}${match.isPlayoff ? ` ${renderPlayoffMatchBadge(match)}` : ` · 第 ${Number(match.matchNo || 1)} 场`}</h2>
+        <div class="match-overview-details"><span>MATCH ID <b>${escapeHtml(match.matchId || "—")}</b></span></div>
       </div>
       <div class="match-detail-result-block ${match.winner === "radiant" ? "is-radiant" : "is-dire"}">
         <span>${match.winner === "radiant" ? "RADIANT VICTORY" : "DIRE VICTORY"}</span>
@@ -5245,6 +5256,7 @@ function renderMatchDetailPage() {
 
 
     <div class="match-detail-continuous">
+      ${renderMatchPlayoffVersus(match)}
       ${renderMatchDraft(match, analysis)}
       <section class="match-detail-section" aria-labelledby="matchDataSectionTitle">
         <header class="match-detail-section-heading">
@@ -5268,6 +5280,17 @@ function renderMatchDetailPage() {
       </section>
     </div>
   `;
+}
+
+function renderMatchPlayoffVersus(match) {
+  const sides = ["radiant", "dire"];
+  const names = sides.map((side) => getMatchPlayoffTeamName(match, side));
+  if (!names.some(Boolean)) return "";
+  return `<section class="match-playoff-versus" aria-label="季后赛对阵">${sides.map((side, index) => {
+    const ids = match[side] || [];
+    const key = ["A", "B", "C", "D"].find((key) => getPlayoffTeams()[key]?.length === 5 && getPlayoffTeams()[key].every((id) => ids.includes(id)));
+    return `${index ? '<span class="match-versus-divider">VS</span>' : ""}<div class="match-versus-team ${match.winner === side ? "is-winner" : "is-loser"}">${names[index] && key ? `<img src="./assets/playoff-teams/team-${key.toLowerCase()}.webp" width="64" height="64" alt="" />` : ""}<div><small>${side === "radiant" ? "天辉" : "夜魇"}</small><strong>${escapeHtml(names[index] || (side === "radiant" ? "天辉" : "夜魇"))}</strong>${match.winner === side ? '<span class="match-victory-stamp" aria-label="获胜队伍">胜利<small>VICTORY</small></span>' : ""}</div></div>`;
+  }).join("")}</section>`;
 }
 
 function renderMatchDraft(match, analysis) {
@@ -5443,7 +5466,7 @@ function renderMatchSkillBuild(match, analysis) {
   return `<div class="match-skill-stack">
     ${[["radiant", "天辉", match.radiant], ["dire", "夜魇", match.dire]].map(([team, label, ids]) => `
       <section class="match-skill-board match-team-${team}">
-        <header><span class="match-team-mark"></span><h3>${label} · 技能加点</h3></header>
+        <header><span class="match-team-mark"></span><h3>${label}</h3></header>
         <div class="match-skill-scroll"><table class="match-skill-table">
           <thead><tr><th>选手</th>${Array.from({ length: maxLevel }, (_, index) => `<th>${index + 1}</th>`).join("")}</tr></thead>
           <tbody>${ids.map((id) => {

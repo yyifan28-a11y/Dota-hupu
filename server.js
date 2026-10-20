@@ -3454,7 +3454,7 @@ function validateExcelMatches(matches) {
 
 function normalizePlayoffImportType(value) {
   if (db.prepare("SELECT value FROM app_state WHERE key = 'playoffMode'").get()?.value !== "true") return "";
-  if (!["training", "ranking", "elimination"].includes(value)) throw createHttpError(400, "请选择训练赛、排位赛或淘汰赛");
+  if (!["ranking", "elimination"].includes(value)) throw createHttpError(400, "请选择排位赛或淘汰赛");
   return value;
 }
 

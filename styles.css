@@ -17798,3 +17798,133 @@ body[data-ui="modern"] #matchDetail .match-team-board.is-winner > header {
   body[data-ui="modern"] #matchDetail .match-scoreboard-table:has(tr > :nth-child(12):hover) tr > :nth-child(12) { background-color: rgba(100, 204, 221, .10); }
   body[data-ui="modern"] #matchDetail .match-scoreboard-table tbody td:hover { background: rgba(100, 204, 221, .22); box-shadow: inset 0 0 0 1px rgba(112, 220, 232, .35); }
 }
+.match-team-side-label { margin-left:10px; font-size:11px; color:#789399; font-weight:400; }
+.match-winner-team-name { color:#dbecef; font-size:14px; }
+.match-playoff-versus { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:24px; padding:24px; border:1px solid rgba(174,225,232,.12); border-radius:8px; background:rgba(3,20,25,.78); }
+.match-versus-team { display:flex; align-items:center; gap:16px; min-width:0; }
+.match-versus-team:last-child { flex-direction:row-reverse; text-align:right; }
+.match-versus-team img { width:64px; height:64px; object-fit:cover; border-radius:6px; }
+.match-versus-team > div { display:grid; gap:6px; min-width:0; }
+.match-versus-team small { color:#789399; font-size:11px; }
+.match-versus-team strong { color:#d8e9ed; font-size:clamp(16px,2vw,24px); overflow-wrap:anywhere; }
+.match-versus-team.is-winner strong { color:#f1cc78; }
+.match-versus-team.is-winner img { box-shadow:0 0 0 1px rgba(241,189,85,.45); }
+.match-versus-team.is-loser { opacity:.45; }
+.match-versus-team.is-loser img { filter:grayscale(.65); }
+.match-versus-divider { color:#627e87; font:700 16px Consolas,monospace; letter-spacing:.12em; }
+@media(max-width:600px) { .match-playoff-versus { padding:16px 12px; gap:10px; } .match-versus-team { flex-direction:column; gap:10px; text-align:center; } .match-versus-team:last-child { flex-direction:column; text-align:center; } .match-versus-team img { width:48px; height:48px; } }
+.match-victory-stamp { display:inline-flex; justify-self:start; flex-direction:column; align-items:center; gap:2px; width:66px; padding:5px 8px; margin-top:4px; border:2px solid #62cf98; outline:1px solid rgba(98,207,152,.45); outline-offset:-5px; border-radius:4px; color:#78dfa9; background:rgba(49,139,89,.09); font-size:20px; font-weight:900; line-height:1.2; letter-spacing:.12em; transform:rotate(-9deg); }
+.match-victory-stamp small { color:#78dfa9; font:700 8px Consolas,monospace; letter-spacing:.1em; }
+.match-versus-team:last-child .match-victory-stamp { justify-self:end; transform:rotate(9deg); }
+@media(max-width:600px) { .match-versus-team .match-victory-stamp, .match-versus-team:last-child .match-victory-stamp { justify-self:center; } }
+/* The victory stamp overlays the matchup without occupying a layout row. */
+.match-versus-team { position: relative; }
+.match-versus-team .match-victory-stamp {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  margin: 0;
+  transform: translateY(-50%) rotate(-15deg);
+  pointer-events: none;
+  opacity: .85;
+  border-style: double;
+  border-width: 3px;
+  background: repeating-linear-gradient(7deg, transparent 0 3px, rgba(98,207,152,.055) 3px 4px);
+  text-shadow: 1px 0 rgba(98,207,152,.3);
+}
+.match-versus-team:last-child .match-victory-stamp {
+  right: auto;
+  left: 10px;
+  transform: translateY(-50%) rotate(13deg);
+}
+@media(max-width:600px) {
+  .match-versus-team .match-victory-stamp { top: 27px; right: -8px; transform: rotate(-15deg); }
+  .match-versus-team:last-child .match-victory-stamp { top: 27px; left: -8px; right: auto; transform: rotate(13deg); }
+}
+/* Free-positioned horizontal ink stamp; no contribution to card dimensions. */
+.match-playoff-versus { position:relative; overflow:visible; }
+.match-versus-team > div { position:static; }
+.match-versus-team .match-victory-stamp {
+  position:absolute;
+  display:inline-flex;
+  flex-direction:row;
+  justify-content:center;
+  gap:8px;
+  width:126px;
+  height:42px;
+  padding:3px 8px;
+  top:-12px;
+  right:4%;
+  bottom:auto;
+  margin:0;
+  z-index:3;
+  transform:rotate(-12deg);
+  font-size:23px;
+  letter-spacing:.1em;
+  white-space:nowrap;
+  box-sizing:border-box;
+}
+.match-versus-team .match-victory-stamp small { font-size:9px; }
+.match-versus-team:last-child .match-victory-stamp {
+  top:-12px;
+  left:4%;
+  right:auto;
+  transform:rotate(12deg);
+}
+@media(max-width:600px) {
+  .match-versus-team .match-victory-stamp { top:-18px; right:-14px; width:114px; height:38px; font-size:21px; transform:rotate(-12deg); }
+  .match-versus-team:last-child .match-victory-stamp { top:-18px; left:-14px; right:auto; transform:rotate(12deg); }
+}
+/* Stamp crosses the actual matchup card edge, anchored to the card itself. */
+.match-playoff-versus .match-versus-team { position: static; }
+.match-playoff-versus .match-versus-team .match-victory-stamp {
+  top: -19px;
+  left: 150px;
+  right: auto;
+  transform: rotate(-12deg);
+  width: 146px;
+  height: 48px;
+}
+.match-playoff-versus .match-versus-team:last-child .match-victory-stamp {
+  top: -19px;
+  left: auto;
+  right: 150px;
+  transform: rotate(12deg);
+}
+@media(max-width:600px) {
+  .match-playoff-versus .match-versus-team .match-victory-stamp { left: 16px; top: -18px; width: 120px; height: 40px; }
+  .match-playoff-versus .match-versus-team:last-child .match-victory-stamp { left: auto; right: 16px; top: -18px; }
+}
+/* Oversized stamp centered vertically, bleeding beyond both card edges. */
+.match-playoff-versus .match-versus-team .match-victory-stamp {
+  top:50%; left:17%; right:auto;
+  width:300px; height:120px;
+  font-size:38px; gap:10px;
+  transform:translateY(-50%) rotate(-12deg);
+}
+.match-playoff-versus .match-versus-team .match-victory-stamp small { font-size:12px; }
+.match-playoff-versus .match-versus-team:last-child .match-victory-stamp {
+  top:50%; left:auto; right:17%;
+  transform:translateY(-50%) rotate(12deg);
+}
+@media(max-width:600px) {
+  .match-playoff-versus .match-versus-team .match-victory-stamp { top:50%; left:3%; width:220px; height:140px; font-size:27px; gap:6px; transform:translateY(-50%) rotate(-12deg); }
+  .match-playoff-versus .match-versus-team:last-child .match-victory-stamp { top:50%; left:auto; right:3%; transform:translateY(-50%) rotate(12deg); }
+  .match-playoff-versus .match-versus-team .match-victory-stamp small { font-size:9px; }
+}
+/* Compact stamp immediately beside VS. */
+.match-playoff-versus .match-versus-team .match-victory-stamp {
+  top:50%; left:auto; right:calc(50% + 24px);
+  width:150px; height:62px; font-size:27px; gap:7px;
+  transform:translateY(-50%) rotate(-12deg);
+}
+.match-playoff-versus .match-versus-team .match-victory-stamp small { font-size:9px; }
+.match-playoff-versus .match-versus-team:last-child .match-victory-stamp {
+  top:50%; left:calc(50% + 24px); right:auto;
+  transform:translateY(-50%) rotate(12deg);
+}
+@media(max-width:600px) {
+  .match-playoff-versus .match-versus-team .match-victory-stamp { right:calc(50% + 12px); left:auto; width:112px; height:48px; font-size:21px; gap:4px; }
+  .match-playoff-versus .match-versus-team:last-child .match-victory-stamp { left:calc(50% + 12px); right:auto; }
+  .match-playoff-versus .match-versus-team .match-victory-stamp small { font-size:7px; }
+}
