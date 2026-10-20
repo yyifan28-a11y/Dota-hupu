@@ -20,3 +20,4 @@ uploads/
 # OS/editor noise.
 .DS_Store
 Thumbs.db
+/fengmian/

@@ -1380,7 +1380,7 @@ function getPlayoffRankingStage(teams = getPlayoffTeams(), matches = db.matches)
     if (!radiant || !dire || radiant === dire || !["radiant", "dire"].includes(match.winner) || getMatchQuality(match) === "draft") { unmatched += 1; return; }
     const pairKey = [radiant, dire].sort().join(":");
     const games = pairs.get(pairKey) || [];
-    if (games.length >= 3) { excess += 1; return; }
+    if (games.length >= 2) { excess += 1; return; }
     const winner = match.winner === "radiant" ? radiant : dire;
     games.push({ match, winner });
     pairs.set(pairKey, games);
@@ -1418,7 +1418,7 @@ function renderPlayoffRankingStage(teams) {
         }).join("")}</tr>`).join("")}
       </tbody></table></div></section>
     </div>
-    ${stage.unmatched || stage.excess ? `<p class="playoffs-ranking-warning">${stage.unmatched ? `${stage.unmatched} 场排位赛尚未计入：请检查四队名单、比赛阵容及比赛信息。` : ""}${stage.excess ? `${stage.excess} 场超出每组 3 局，暂未计入；每组按日期及场次取最早 3 局。` : ""}</p>` : ""}
+    ${stage.unmatched || stage.excess ? `<p class="playoffs-ranking-warning">${stage.unmatched ? `${stage.unmatched} 场排位赛尚未计入：请检查四队名单、比赛阵容及比赛信息。` : ""}${stage.excess ? `${stage.excess} 场超出每组 2 场，暂未计入；每组按日期及场次取最早 2 场。` : ""}</p>` : ""}
   </section>`;
 }
 
@@ -1429,7 +1429,7 @@ function renderPlayoffs() {
   const keys = ["A", "B", "C", "D"];
   const teams = Object.fromEntries(keys.map((key) => [key, []]));
   ids.forEach((id, index) => teams[keys[Math.floor(index / 4) % 2 ? 3 - index % 4 : index % 4]].push(id));
-  const results = [["A", "B", "A"], ["A", "B", "B"], ["A", "B", "A"], ["A", "C", "C"], ["A", "C", "C"], ["A", "D", "A"], ["B", "C", "B"], ["B", "D", "D"], ["B", "D", "B"], ["C", "D", "D"]];
+  const results = [["A", "B", "A"], ["A", "B", "B"], ["A", "C", "C"], ["A", "C", "C"], ["A", "D", "A"], ["B", "C", "B"], ["B", "D", "D"], ["B", "D", "B"], ["C", "D", "D"]];
   const matches = results.map(([a, b, winner], index) => ({
     id: `playoff-demo-${index}`, date: "2026-10-14", matchNo: index + 1, matchId: `demo-${index}`,
     isPlayoff: 1, playoffType: "ranking", radiant: teams[a], dire: teams[b], winner: winner === a ? "radiant" : "dire",
@@ -1438,7 +1438,7 @@ function renderPlayoffs() {
   try {
     db = { ...realDb, playoffMode: true, playoffTeams: teams, playoffTeamNames: { A: "天辉先锋", B: "夜魇狂潮", C: "肉山守卫", D: "不朽之盾" }, matches };
     renderPlayoffsContent();
-    $("#playoffOverview")?.insertAdjacentHTML("afterbegin", '<p class="playoffs-ranking-warning">示例预览 · 4 支队伍，已赛 10 / 18 局 · 不影响真实数据</p>');
+    $("#playoffOverview")?.insertAdjacentHTML("afterbegin", '<p class="playoffs-ranking-warning">示例预览 · 4 支队伍，已赛 9 / 12 场 · 不影响真实数据</p>');
     $$("#playoffOverview [data-open-match]").forEach((button) => { button.removeAttribute("data-open-match"); button.disabled = true; button.title = "示例结果，无真实比赛详情"; });
   } finally { db = realDb; }
 }
@@ -5234,7 +5234,7 @@ function renderMatchDetailPage() {
       <div class="match-detail-title-block">
         <span>MATCH OVERVIEW</span>
         ${renderPlayoffMatchBadge(match)}<h2 id="matchDetailPageTitle">${escapeHtml(formatShortMatchDate(match.date))} · 第 ${Number(match.matchNo || 1)} 场</h2>
-        <p>${escapeHtml(match.note || "虎扑内战比赛记录")}</p>
+        <div class="match-overview-details"><span>MATCH ID <b>${escapeHtml(match.matchId || "—")}</b></span><span>DATE <b>${escapeHtml(match.date)}</b></span></div>
       </div>
       <div class="match-detail-result-block ${match.winner === "radiant" ? "is-radiant" : "is-dire"}">
         <span>${match.winner === "radiant" ? "RADIANT VICTORY" : "DIRE VICTORY"}</span>
@@ -5243,38 +5243,52 @@ function renderMatchDetailPage() {
       </div>
     </header>
 
-    <div class="match-detail-meta" aria-label="比赛信息">
-      <span><small>比赛 ID</small><b>${escapeHtml(match.matchId || "未记录")}</b></span>
-      <span><small>比赛日期</small><b>${escapeHtml(match.date)}</b></span>
-      <span><small>数据来源</small><b>${analysis?.available ? `录像解析 · ${escapeHtml(analysis.parserVersion || "")}` : "比赛记录"}</b></span>
-    </div>
 
     <div class="match-detail-continuous">
+      ${renderMatchDraft(match, analysis)}
       <section class="match-detail-section" aria-labelledby="matchDataSectionTitle">
         <header class="match-detail-section-heading">
-          <span>01 · SCOREBOARD</span>
-          <div><h3 id="matchDataSectionTitle">比赛数据</h3><p>双方选手、经济、输出与最终装备。</p></div>
+          <span id="matchDataSectionTitle">SCOREBOARD</span>
         </header>
         ${renderMatchScoreboard(match, analysis)}
       </section>
 
       <section class="match-detail-section" aria-labelledby="matchSkillsSectionTitle">
         <header class="match-detail-section-heading">
-          <span>02 · SKILL PROGRESSION</span>
-          <div><h3 id="matchSkillsSectionTitle">技能加点</h3><p>按英雄等级查看每位选手的完整技能路线。</p></div>
+          <span id="matchSkillsSectionTitle">SKILL PROGRESSION</span>
         </header>
         ${renderMatchSkillBuild(match, analysis)}
       </section>
 
       <section class="match-detail-section" aria-labelledby="matchMomentumSectionTitle">
         <header class="match-detail-section-heading">
-          <span>03 · MATCH MOMENTUM</span>
-          <div><h3 id="matchMomentumSectionTitle">经济 / 经验</h3><p>逐分钟观察天辉与夜魇的领先变化。</p></div>
+          <span id="matchMomentumSectionTitle">MATCH MOMENTUM</span>
         </header>
         ${renderMatchAdvantagePanel(match, analysis)}
       </section>
     </div>
   `;
+}
+
+function renderMatchDraft(match, analysis) {
+  const events = Array.isArray(analysis?.draft) ? analysis.draft.filter((event) => ["pick", "ban"].includes(event.action)) : [];
+  if (!events.length && ![2, 16].includes(Number(analysis?.gameMode)) && !match.isPlayoff) return "";
+  if (!analysis && matchAnalysisRequests.has(match.id)) return "";
+  const ordered = [...events].sort((a, b) => Number(a.order) - Number(b.order));
+  const card = (event) => {
+      const hero = findHero(event.heroSlug);
+      const name = hero?.cn || event.heroSlug || `英雄 #${Number(event.heroId || 0)}`;
+      return `<div class="bp-hero is-${event.action}" title="${escapeHtml(name)} · ${event.action === "pick" ? "选人" : "禁用"} #${Number(event.order || 0)}"><div class="bp-portrait">${hero ? `<img src="${heroImageUrl(hero)}" alt="${escapeHtml(name)}" loading="lazy" />` : '<span>?</span>'}</div><small>#${Number(event.order || 0)}</small></div>`;
+  };
+  const unknown = ordered.filter((event) => !["radiant", "dire"].includes(event.team));
+  const group = (team, action) => {
+    const list = ordered.filter((event) => event.team === team && event.action === action);
+    return `<div class="bp-group"><div class="bp-group-label">${action === "pick" ? "PICKS / 选人" : "BANS / 禁用"}</div><div class="bp-heroes is-${action}">${list.length ? list.map(card).join("") : `<p class="bp-unavailable">${unknown.some((event) => event.action === action) ? "阵营待核实，见下方记录" : "暂无记录"}</p>`}</div></div>`;
+  };
+  return `<section class="match-detail-section match-draft-section" aria-labelledby="matchDraftTitle">
+    <header class="match-detail-section-heading"><span id="matchDraftTitle">BP · DRAFT</span></header>
+    ${events.length ? `<div class="bp-board">${[["radiant", "天辉"], ["dire", "夜魇"]].map(([team, label]) => `<section class="bp-team is-${team}"><h4>${label}<small>${team.toUpperCase()}</small></h4>${group(team, "pick")}${group(team, "ban")}</section>`).join("")}</div>${unknown.length ? `<section class="bp-unverified"><h4>阵营待核实</h4><p>以下记录已从录像提取，暂不归入任何一方。</p><div class="bp-heroes is-unknown">${unknown.map(card).join("")}</div></section>` : ""}` : '<div class="match-draft-empty">暂无 BP 数据，需使用新版解析器解析原始录像后补充。</div>'}
+  </section>`;
 }
 
 function getMatchDetailRow(match, playerId, analysis) {
@@ -5340,9 +5354,10 @@ function normalizeMatchAbilityBuild(build) {
 }
 
 function renderMatchItems(row) {
-  const items = Array.isArray(row.finalItems) ? row.finalItems.filter((item) => Number(item.slot) < 9) : [];
-  if (!items.length) return `<span class="match-detail-no-items">—</span>`;
-  return `<div class="match-detail-items">${items.map((item) => {
+  const items = Array.isArray(row.finalItems) ? row.finalItems.filter((item) => Number.isInteger(Number(item.slot)) && Number(item.slot) >= 0 && Number(item.slot) < 6) : [];
+  return `<div class="match-detail-items">${Array.from({ length: 6 }, (_, slot) => {
+    const item = items.find((entry) => Number(entry.slot) === slot);
+    if (!item) return '<span class="match-detail-item is-empty" aria-label="空物品槽"></span>';
     const purchaseTime = Number(row.purchaseTimes?.[item.key]);
     const time = Number.isFinite(purchaseTime) ? `${Math.floor(purchaseTime / 60)}:${String(Math.max(0, purchaseTime % 60)).padStart(2, "0")}` : "";
     return `<span class="match-detail-item" title="${escapeHtml(item.name || item.key)}${time ? ` · ${time}` : ""}">
@@ -5374,7 +5389,7 @@ function renderMatchTeamScoreboard(team, label, ids, match, analysis) {
     return result;
   }, { kills: 0, deaths: 0, assists: 0, lastHits: 0, denies: 0, netWorth: 0, damage: 0, buildingDamage: 0, damageTaken: 0, healing: 0 });
 
-  return `<section class="match-team-board match-team-${team}">
+  return `<section class="match-team-board match-team-${team}${match.winner === team ? " is-winner" : ""}">
     <header><span class="match-team-mark" aria-hidden="true"></span><h3>${label}</h3><b>${match.winner === team ? "胜利" : "失败"}</b></header>
     <div class="match-scoreboard-scroll">
       <table class="match-scoreboard-table">
@@ -5488,11 +5503,11 @@ function renderAdvantageChart(times, gold, xp) {
   const visibleGold = matchDetailChartSeries.gold && gold.length;
   const visibleXp = matchDetailChartSeries.xp && xp.length;
   return `<section class="match-advantage-card">
-    <header><div><span>MATCH MOMENTUM</span><h3>经济与经验走势</h3><p>正值为天辉领先，负值为夜魇领先。</p></div><div class="match-chart-controls" role="group" aria-label="曲线显示">
+    <header><div class="match-chart-controls" role="group" aria-label="曲线显示">
       <button class="is-gold ${visibleGold ? "is-active" : ""}" type="button" data-match-chart-series="gold" aria-pressed="${Boolean(visibleGold)}"><i></i>经济</button>
       <button class="is-xp ${visibleXp ? "is-active" : ""}" type="button" data-match-chart-series="xp" aria-pressed="${Boolean(visibleXp)}"><i></i>经验</button>
     </div></header>
-    <div class="match-advantage-chart-scroll"><svg class="match-advantage-chart" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="matchChartTitle matchChartDesc">
+    <div class="match-advantage-chart-scroll"><svg class="match-advantage-chart" data-y-max="${yMax}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="matchChartTitle matchChartDesc">
       <title id="matchChartTitle">天辉经济与经验领先曲线</title><desc id="matchChartDesc">零线上方代表天辉领先，下方代表夜魇领先。</desc>
       <rect x="${padding.left}" y="${padding.top}" width="${plotWidth}" height="${plotHeight / 2}" class="chart-radiant-zone" />
       <rect x="${padding.left}" y="${padding.top + plotHeight / 2}" width="${plotWidth}" height="${plotHeight / 2}" class="chart-dire-zone" />
@@ -5502,11 +5517,46 @@ function renderAdvantageChart(times, gold, xp) {
       <text x="${padding.left + 18}" y="${height - padding.bottom - 18}" class="chart-team-label is-dire">夜魇领先</text>
       ${visibleXp ? `<polyline points="${points(xp)}" class="chart-series chart-series-xp"/>` : ""}
       ${visibleGold ? `<polyline points="${points(gold)}" class="chart-series chart-series-gold"/>` : ""}
-      ${visibleGold ? gold.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="8" class="chart-hit"><title>${Math.round(Number(times[index] || 0) / 60)} 分钟 · 经济 ${Number(value) >= 0 ? "天辉" : "夜魇"}领先 ${formatMatchMetric(Math.abs(value))}</title></circle>`).join("") : ""}
-      ${visibleXp ? xp.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="8" class="chart-hit"><title>${Math.round(Number(times[index] || 0) / 60)} 分钟 · 经验 ${Number(value) >= 0 ? "天辉" : "夜魇"}领先 ${formatMatchMetric(Math.abs(value))}</title></circle>`).join("") : ""}
+      <g class="chart-inspector" visibility="hidden" pointer-events="none">
+        <line class="chart-crosshair" y1="28" y2="378" />
+        <circle class="chart-focus-gold" r="4" /><circle class="chart-focus-xp" r="4" />
+        <g class="chart-tooltip"><rect width="218" height="100" rx="7" /><text class="chart-tooltip-time" x="14" y="24"></text><line x1="14" x2="204" y1="34" y2="34" /><text class="chart-tooltip-gold" x="14" y="58"></text><text class="chart-tooltip-xp" x="14" y="82"></text></g>
+      </g>
     </svg></div>
-    <details class="match-chart-data"><summary>查看逐分钟数据</summary><div><table><thead><tr><th>时间</th><th>经济领先</th><th>经验领先</th></tr></thead><tbody>${times.map((time, index) => `<tr><td>${Math.round(Number(time || 0) / 60)}:00</td><td>${formatMatchMetric(gold[index])}</td><td>${formatMatchMetric(xp[index])}</td></tr>`).join("")}</tbody></table></div></details>
   </section>`;
+}
+
+function handleMatchChartPointer(event) {
+  const svg = event.target.closest?.(".match-advantage-chart");
+  if (!svg) return;
+  const inspector = svg.querySelector(".chart-inspector");
+  const matrix = svg.getScreenCTM();
+  if (!inspector || !matrix) return;
+  const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+  if (point.x < 72 || point.x > 976 || point.y < 28 || point.y > 378) { inspector.setAttribute("visibility", "hidden"); return; }
+  const timeline = getMatchAnalysis(selectedMatchDetailId)?.timeline;
+  if (!timeline?.times?.length) return;
+  const gold = timeline.goldAdvantage || [], xp = timeline.xpAdvantage || [];
+  const count = Math.max(timeline.times.length, gold.length, xp.length);
+  const index = Math.max(0, Math.min(count - 1, Math.round((point.x - 72) / 904 * (count - 1))));
+  const x = 72 + index / Math.max(1, count - 1) * 904;
+  const yMax = Number(svg.dataset.yMax);
+  const line = inspector.querySelector("line");
+  line.setAttribute("x1", x); line.setAttribute("x2", x);
+  const describe = (value, label) => value === null || value === undefined || !Number.isFinite(Number(value)) ? `${label}：暂无数据` : `${label}：${Number(value) === 0 ? "双方持平" : `${Number(value) > 0 ? "天辉" : "夜魇"}领先 ${Math.abs(Number(value)).toLocaleString("zh-CN")}`}`;
+  [["gold", gold], ["xp", xp]].forEach(([key, series]) => {
+    const circle = inspector.querySelector(`.chart-focus-${key}`);
+    const valid = series[index] != null && Number.isFinite(Number(series[index]));
+    circle.setAttribute("visibility", valid && matchDetailChartSeries[key] ? "visible" : "hidden");
+    circle.setAttribute("cx", x);
+    circle.setAttribute("cy", 28 + (yMax - Number(series[index] || 0)) / (yMax * 2) * 350);
+  });
+  const seconds = Math.max(0, Math.round(Number(timeline.times[index] || 0)));
+  inspector.querySelector(".chart-tooltip-time").textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  inspector.querySelector(".chart-tooltip-gold").textContent = describe(gold[index], "经济");
+  inspector.querySelector(".chart-tooltip-xp").textContent = describe(xp[index], "经验");
+  inspector.querySelector(".chart-tooltip").setAttribute("transform", `translate(${Math.max(72, Math.min(758, point.x + (point.x > 742 ? -234 : 16)))},${Math.max(28, Math.min(278, point.y - 50))})`);
+  inspector.setAttribute("visibility", "visible");
 }
 
 function handleMatchDetailPageClick(event) {
@@ -8231,6 +8281,12 @@ function bindEvents() {
   });
   $("#closeHomepageHighlightPreview")?.addEventListener("click", () => closeHomepageHighlightFraming());
   $("#matchDetail")?.addEventListener("click", handleMatchDetailPageClick);
+  $("#matchDetail")?.addEventListener("pointermove", handleMatchChartPointer);
+  $("#matchDetail")?.addEventListener("pointerdown", handleMatchChartPointer);
+  $("#matchDetail")?.addEventListener("pointerout", (event) => {
+    const svg = event.target.closest?.(".match-advantage-chart");
+    if (svg && !svg.contains(event.relatedTarget)) svg.querySelector(".chart-inspector")?.setAttribute("visibility", "hidden");
+  });
   $("#whoIsIt")?.addEventListener("click", handleWhoGameClick);
   $("#whoIsIt")?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.target?.id !== "whoPowerupUnlockInput") return;

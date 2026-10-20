@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 import sys
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -269,6 +271,48 @@ def suggest_positions(players):
     return suggestions
 
 
+def serialize_draft(match):
+    """Keep detection order; never guess an unknown ban's team."""
+    hero_teams = {player.hero_name: player.team for player in match.players if player.hero_name}
+    events = []
+    for event in sorted(getattr(match, "draft", []) or [], key=lambda item: item.tick):
+        team = hero_teams.get(event.hero_name, event.team) if event.is_pick else event.team
+        events.append({
+            "order": len(events) + 1,
+            "tick": event.tick,
+            "slot": event.slot_index,
+            "heroSlug": event.hero_name.removeprefix("npc_dota_hero_"),
+            "heroId": event.hero_id,
+            "action": "pick" if event.is_pick else "ban",
+            "team": "radiant" if team == 2 else "dire" if team == 3 else "unknown",
+        })
+    # CM 24-action sequence. Anchor first/second side to the verified hero roster.
+    pick_orders = {8, 9, 13, 14, 15, 16, 17, 18, 23, 24}
+    first_orders = {1, 2, 5, 8, 10, 11, 14, 15, 18, 19, 21, 23}
+    if match.game_mode == 2 and len(events) == 24:
+        first = events[7]["team"]
+        second = "dire" if first == "radiant" else "radiant"
+        valid = first in ("radiant", "dire") and all(
+            event["action"] == ("pick" if event["order"] in pick_orders else "ban")
+            and (event["action"] != "pick" or event["team"] == (first if event["order"] in first_orders else second))
+            for event in events
+        )
+        if valid:
+            for event in events:
+                event["team"] = first if event["order"] in first_orders else second
+                event["teamSource"] = "cm_sequence_verified"
+            return events
+    bans = [event for event in events if event["action"] == "ban"]
+    # Active-team changes can arrive in the same update as the previous ban.
+    # A complete CM draft has seven bans per side; reject inconsistent labels.
+    if match.game_mode == 2 and len(bans) == 14:
+        counts = {team: sum(event["team"] == team for event in bans) for team in ("radiant", "dire")}
+        if counts != {"radiant": 7, "dire": 7}:
+            for event in bans:
+                event["team"] = "unknown"
+    return events
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("Usage: parse-dota-replay.py <replay.dem>")
@@ -338,6 +382,7 @@ def main():
         "parserVersion": "0.8.0",
         "matchId": str(match.match_id or ""),
         "gameMode": match.game_mode,
+        "draft": serialize_draft(match),
         "startedAt": local_started_at.isoformat() if local_started_at else "",
         "date": local_started_at.date().isoformat() if local_started_at else "",
         "winner": (

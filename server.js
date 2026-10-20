@@ -1503,7 +1503,7 @@ function runReplayParser(filePath) {
       cwd: __dirname,
       windowsHide: true,
       shell: false,
-      env: ENV
+      env: { ...ENV, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" }
     });
     let stdout = "";
     let stderr = "";
@@ -1520,15 +1520,17 @@ function runReplayParser(filePath) {
       child.kill();
     }, REPLAY_PARSE_TIMEOUT_MS);
 
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString("utf8");
+      stdout += chunk;
       if (stdout.length > 2 * 1024 * 1024) {
         failure = "录像解析结果异常过大";
         child.kill();
       }
     });
     child.stderr.on("data", (chunk) => {
-      if (stderr.length < 64 * 1024) stderr += chunk.toString("utf8");
+      if (stderr.length < 64 * 1024) stderr += chunk;
     });
     child.on("error", (error) => finish(reject, new Error(`无法启动录像解析器：${error.message}`)));
     child.on("close", (code) => {
@@ -1692,6 +1694,8 @@ function importReplayMatch(job, body) {
       replayArchiveFileName: job.archiveFileName || "",
       originalReplayFileName: job.originalName || "",
       players: analysisPlayers,
+      gameMode: Number(result.gameMode || 0),
+      draft: Array.isArray(result.draft) ? result.draft : [],
       timeline: result.timeline && typeof result.timeline === "object" ? result.timeline : {}
     };
     db.prepare(`
@@ -3692,6 +3696,19 @@ function isDotaTalentKey(key) {
 }
 
 function normalizeReplayAnalysis(analysis = {}) {
+  const events = Array.isArray(analysis.draft) ? [...analysis.draft].sort((a, b) => Number(a.order) - Number(b.order)) : [];
+  const pickOrders = new Set([8, 9, 13, 14, 15, 16, 17, 18, 23, 24]);
+  const firstOrders = new Set([1, 2, 5, 8, 10, 11, 14, 15, 18, 19, 21, 23]);
+  const first = events[7]?.team;
+  const second = first === "radiant" ? "dire" : "radiant";
+  if (Number(analysis.gameMode) === 2 && events.length === 24 && ["radiant", "dire"].includes(first)
+    && events.every((event, index) => Number(event.order) === index + 1
+      && event.action === (pickOrders.has(index + 1) ? "pick" : "ban")
+      && (event.action !== "pick" || event.team === (firstOrders.has(index + 1) ? first : second)))) {
+    analysis = { ...analysis, draft: events.map((event) => ({ ...event,
+      team: firstOrders.has(Number(event.order)) ? first : second, teamSource: "cm_sequence_verified"
+    })) };
+  }
   const players = analysis.players && typeof analysis.players === "object" ? analysis.players : {};
   Object.values(players).forEach((player) => {
     if (!Array.isArray(player?.abilityBuild)) return;
