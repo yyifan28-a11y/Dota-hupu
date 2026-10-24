@@ -17970,3 +17970,34 @@ body[data-ui="modern"] #playoffs .playoffs-standings tbody th .playoffs-table-te
 .playoffs-bracket-team.is-pending { color:#92adb3; }
 .playoffs-bracket-match footer { padding:10px 14px; color:#819fa5; font-size:10px; line-height:1.6; border-top:1px solid rgba(128,205,215,.13); }
 .playoffs-bracket-round:last-child .playoffs-bracket-match { border-color:rgba(232,188,103,.4); }
+.playoffs-bracket-participant { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.playoffs-bracket-participant > strong { color:#8aaab1; font:16px Consolas,monospace; }
+.playoffs-bracket-participant.is-winner { background:rgba(232,188,103,.08); }
+.playoffs-bracket-participant.is-winner > strong { color:#e8bc67; }
+.playoffs-bracket-games { display:flex; flex-wrap:wrap; gap:6px; }
+.playoffs-bracket-games button { border:1px solid rgba(128,205,215,.2); border-radius:4px; padding:4px 7px; background:transparent; color:#8aaab1; font-size:11px; cursor:pointer; }
+.playoffs-bracket-games button:hover { color:#e8bc67; border-color:rgba(232,188,103,.5); }
+.playoffs-bracket-match[data-playoff-series] { cursor:pointer; }
+.playoffs-bracket-match[data-playoff-series]:is(:hover,:focus-visible) { border-color:#b69b60; outline:none; }
+.playoff-series-dialog { width:min(720px,calc(100vw - 24px)); max-height:85vh; overflow:auto; padding:30px 16px 16px; border:1px solid #315058; border-radius:10px; background:#071c23; color:#dcecef; box-shadow:0 18px 60px #0008; }
+.playoff-series-dialog::backdrop { background:#0009; }
+.playoff-series-close { position:absolute; right:8px; top:4px; border:0; background:none; color:#91aeb5; font-size:24px; cursor:pointer; }
+.playoff-series-score { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:16px; padding:10px 4px 24px; }
+.playoff-series-score > strong { color:#e8bc67; font:700 25px Consolas,monospace; white-space:nowrap; }
+.playoff-series-team { display:flex; align-items:center; justify-content:center; gap:8px; font-size:15px; font-weight:700; }
+.playoff-series-team img { border-radius:4px; }
+.playoff-series-game { display:grid; grid-template-columns:24px minmax(0,1fr) 54px minmax(0,1fr) 24px; width:100%; align-items:center; gap:8px; padding:12px 4px; border:0; border-top:1px solid #213b43; background:transparent; color:inherit; cursor:pointer; }
+.playoff-series-game:nth-child(even) { background:#ffffff04; }
+.playoff-series-game:hover { background:#d5ad5410; }
+.playoff-series-game .match-history-team { display:flex; min-width:0; gap:2px; overflow:hidden; border:0; box-shadow:none; }
+.playoff-series-game .match-history-hero { flex:1 1 0; min-width:0; height:auto; aspect-ratio:1.25; }
+.playoff-series-game .match-history-hero img { width:100%; height:100%; object-fit:cover; }
+.playoff-series-duration { font:12px Consolas,monospace; }
+.playoff-series-result { font-size:13px; font-weight:700; }
+.playoff-series-result.is-win { color:#65cf9d; }
+.playoff-series-result.is-loss { color:#e77d83; }
+@media(max-width:520px) {
+  .playoff-series-team { flex-direction:column; font-size:12px; }
+  .playoff-series-game { grid-template-columns:14px minmax(0,1fr) 40px minmax(0,1fr) 14px; gap:4px; }
+  .playoff-series-duration { font-size:10px; }
+}

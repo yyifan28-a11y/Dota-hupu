@@ -1438,30 +1438,93 @@ function renderPlayoffRankingStage(teams) {
   </section>`;
 }
 
-function renderPlayoffEliminationStage(teams) {
-  const stage = getPlayoffRankingStage(teams);
-  const settled = stage.completed === 12 && new Set(stage.rows.map((row) => row.rank)).size === 4;
-  const seed = (rank) => {
-    const row = settled && stage.rows.find((row) => row.rank === rank);
-    return row ? `<span class="playoffs-bracket-team"><img src="./assets/playoff-teams/team-${row.key.toLowerCase()}-small.webp" width="24" height="24" alt="" loading="lazy" />${escapeHtml(db.playoffTeamNames?.[row.key] || `${row.key} 队`)}</span>` : `<span class="playoffs-bracket-team">排位第 ${rank} 名</span>`;
+function getPlayoffEliminationStage(teams = getPlayoffTeams(), matches = db.matches) {
+  const ranking = getPlayoffRankingStage(teams, matches);
+  const elimination = matches.filter((match) => match.isPlayoff && match.playoffType === "elimination");
+  const settled = ranking.completed === 12 || elimination.length > 0;
+  const seeds = settled ? ranking.rows.map((row) => row.key) : [];
+  const series = [
+    { title: "胜者组决赛", bestOf: 3, teams: seeds.slice(0, 2), labels: ["排位第 1 名", "排位第 2 名"], games: [], wins: [0, 0] },
+    { title: "败者组首轮", bestOf: 3, teams: seeds.slice(2, 4), labels: ["排位第 3 名", "排位第 4 名"], games: [], wins: [0, 0] },
+    { title: "败者组决赛", bestOf: 3, teams: [], labels: ["胜者组决赛败者", "败者组首轮胜者"], games: [], wins: [0, 0] },
+    { title: "总决赛", bestOf: 5, teams: [], labels: ["胜者组决赛胜者", "败者组决赛胜者"], games: [], wins: [0, 0] }
+  ];
+  const identify = (ids) => {
+    const keys = ["A", "B", "C", "D"].filter((key) => ids?.length === 5 && new Set(ids).size === 5 && teams[key]?.length === 5 && teams[key].every((id) => ids.includes(id)));
+    return keys.length === 1 ? keys[0] : "";
   };
-  const card = (title, format, a, b) => `<article class="playoffs-bracket-match"><header><h4>${title}</h4><span>${format}</span></header><div>${a}</div><div>${b}</div></article>`;
-  const pending = (label) => `<span class="playoffs-bracket-team is-pending">${label}</span>`;
+  const advance = () => {
+    series[2].teams = [series[0].loser, series[1].winner];
+    series[3].teams = [series[0].winner, series[2].winner];
+  };
+  let unmatched = 0;
+  elimination.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)) || Number(a.matchNo) - Number(b.matchNo) || String(a.createdAt || "").localeCompare(String(b.createdAt || "")) || String(a.matchId || "").localeCompare(String(b.matchId || ""), undefined, { numeric: true })).forEach((match) => {
+    advance();
+    const radiant = identify(match.radiant);
+    const dire = identify(match.dire);
+    const round = series.find((item) => !item.winner && radiant && dire && radiant !== dire && item.teams.length === 2 && item.teams.includes(radiant) && item.teams.includes(dire));
+    if (!round || !["radiant", "dire"].includes(match.winner) || getMatchQuality(match) === "draft") { unmatched += 1; return; }
+    const winner = match.winner === "radiant" ? radiant : dire;
+    round.games.push(match);
+    round.wins[round.teams.indexOf(winner)] += 1;
+    if (round.wins.some((wins) => wins >= Math.ceil(round.bestOf / 2))) {
+      round.winner = winner;
+      round.loser = round.teams.find((key) => key !== winner);
+    }
+  });
+  advance();
+  return { series, settled, unmatched };
+}
+
+function renderPlayoffEliminationStage(teams) {
+  const { series } = getPlayoffEliminationStage(teams);
+  const participant = (round, index) => {
+    const key = round.teams[index];
+    return `<div class="playoffs-bracket-participant ${key && round.winner === key ? "is-winner" : ""}"><span class="playoffs-bracket-team">${key ? `<img src="./assets/playoff-teams/team-${key.toLowerCase()}-small.webp" width="24" height="24" alt="" loading="lazy" />${escapeHtml(db.playoffTeamNames?.[key] || `${key} 队`)}` : escapeHtml(round.labels[index])}</span><strong>${round.games.length ? round.wins[index] : "—"}</strong></div>`;
+  };
+  const card = (round) => `<article class="playoffs-bracket-match" data-playoff-series="${series.indexOf(round)}" role="button" tabindex="0" aria-label="${round.title}"><header><h4>${round.title}</h4><span>BO${round.bestOf}</span></header>${participant(round, 0)}${participant(round, 1)}</article>`;
   return `<section class="playoffs-ranking-stage playoffs-elimination-stage">
     <header class="playoffs-ranking-heading"><div><span>DOUBLE ELIMINATION</span><h3>淘汰赛</h3></div></header>
     <div class="playoffs-bracket-scroll"><div class="playoffs-bracket">
-      <section class="playoffs-bracket-round"><h4>首轮</h4>
-        ${card("胜者组决赛", "BO3", seed(1), seed(2))}
-        ${card("败者组首轮", "BO3", seed(3), seed(4))}
-      </section>
-      <section class="playoffs-bracket-round"><h4>败者组决赛</h4>
-        ${card("败者组决赛", "BO3", pending("胜者组决赛败者"), pending("败者组首轮胜者"))}
-      </section>
-      <section class="playoffs-bracket-round"><h4>总决赛</h4>
-        ${card("总决赛", "BO5", pending("胜者组决赛胜者"), pending("败者组决赛胜者"))}
-      </section>
+      <section class="playoffs-bracket-round"><h4>首轮</h4>${card(series[0])}${card(series[1])}</section>
+      <section class="playoffs-bracket-round"><h4>败者组决赛</h4>${card(series[2])}</section>
+      <section class="playoffs-bracket-round"><h4>总决赛</h4>${card(series[3])}</section>
     </div></div>
   </section>`;
+}
+
+let playoffDemoState = null;
+
+function openPlayoffSeries(index) {
+  if (new URLSearchParams(window.location.search).get("playoffDemo") === "1" && playoffDemoState && db !== playoffDemoState) {
+    const realDb = db;
+    try { db = playoffDemoState; return openPlayoffSeries(index); } finally { db = realDb; }
+  }
+  const round = getPlayoffEliminationStage().series[index];
+  if (!round) return;
+  let dialog = $("#playoffSeriesDialog");
+  if (!dialog) {
+    dialog = document.createElement("dialog");
+    dialog.id = "playoffSeriesDialog";
+    dialog.className = "playoff-series-dialog";
+    dialog.setAttribute("aria-label", "淘汰赛对阵");
+    document.body.append(dialog);
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog || event.target.closest("[data-close-series]")) dialog.close();
+      if (event.target.closest("[data-open-match]")) { dialog.close(); handleMatchCardOpen(event); }
+    });
+  }
+  const team = (index) => {
+    const key = round.teams[index];
+    return `<div class="playoff-series-team">${key ? `<img src="./assets/playoff-teams/team-${key.toLowerCase()}-small.webp" width="30" height="30" alt="" /><span>${escapeHtml(db.playoffTeamNames?.[key] || `${key} 队`)}</span>` : escapeHtml(round.labels[index])}</div>`;
+  };
+  dialog.innerHTML = `<button class="playoff-series-close" type="button" data-close-series aria-label="关闭">×</button><div class="playoff-series-score">${team(0)}<strong>${round.wins[0]} : ${round.wins[1]}</strong>${team(1)}</div><div class="playoff-series-rows">${round.games.map((match) => {
+    const leftSide = (match.radiant || []).every((id) => (getPlayoffTeams()[round.teams[0]] || []).includes(id)) ? "radiant" : "dire";
+    const rightSide = leftSide === "radiant" ? "dire" : "radiant";
+    return `<button type="button" class="playoff-series-game" data-open-match="${escapeHtml(match.id)}"><span class="playoff-series-result ${match.winner === leftSide ? "is-win" : "is-loss"}">${match.winner === leftSide ? "W" : "L"}</span>${renderMatchHistoryTeam(leftSide, match[leftSide], match, match.winner === leftSide)}<span class="playoff-series-duration">${escapeHtml(getMatchDurationLabel(match))}</span>${renderMatchHistoryTeam(rightSide, match[rightSide], match, match.winner === rightSide)}<span class="playoff-series-result ${match.winner === rightSide ? "is-win" : "is-loss"}">${match.winner === rightSide ? "W" : "L"}</span></button>`;
+  }).join("")}</div>`;
+  if (db === playoffDemoState) dialog.querySelectorAll("[data-open-match]").forEach((button) => { button.removeAttribute("data-open-match"); });
+  dialog.showModal();
 }
 
 function renderPlayoffs() {
@@ -1477,10 +1540,18 @@ function renderPlayoffs() {
     isPlayoff: 1, playoffType: "ranking", radiant: teams[a], dire: teams[b], winner: winner === a ? "radiant" : "dire",
     score: "32-24 / 35:00", positions: Object.fromEntries([...teams[a], ...teams[b]].map((id, slot) => [id, String(slot % 5 + 1)])), playerDetails: {}
   }));
+  const heroDetails = realDb.matches.flatMap((match) => Object.values(match.playerDetails || {})).filter((detail) => detail.hero);
+  const stage = getPlayoffRankingStage(teams, matches);
+  const [one, two, three, four] = stage.rows.map((row) => row.key);
+  const demoResults = [[one,two,one],[two,one,two],[one,two,one],[three,four,three],[four,three,three],[two,three,two],[three,two,three],[two,three,two],[one,two,one],[two,one,two],[one,two,one],[two,one,one]];
+  demoResults.forEach(([a,b,winner], index) => {
+    const allIds = [...teams[a], ...teams[b]];
+    matches.push({ id:`elimination-demo-${index}`, date:"2026-10-24", matchNo:index+1, matchId:`demo-${index}`, isPlayoff:1, playoffType:"elimination", radiant:teams[a], dire:teams[b], winner:winner===a?"radiant":"dire", score:`32-24 / ${["38:24","42:16","35:50"][index%3]}`, positions:Object.fromEntries(allIds.map((id,slot)=>[id,String(slot%5+1)])), playerDetails:Object.fromEntries(allIds.map((id,slot)=>[id,{...(heroDetails[(index*10+slot)%heroDetails.length] || {}),position:String(slot%5+1)}])) });
+  });
   try {
-    db = { ...realDb, playoffMode: true, playoffTeams: teams, playoffTeamNames: { A: "天辉先锋", B: "夜魇狂潮", C: "肉山守卫", D: "不朽之盾" }, matches };
+    db = playoffDemoState = { ...realDb, playoffMode: true, playoffTeams: teams, playoffTeamNames: realDb.playoffTeamNames, matches };
     renderPlayoffsContent();
-    $("#playoffOverview")?.insertAdjacentHTML("afterbegin", '<p class="playoffs-ranking-warning">示例预览 · 4 支队伍，已赛 9 / 12 场 · 不影响真实数据</p>');
+    $("#playoffOverview")?.insertAdjacentHTML("afterbegin", '<p class="playoffs-ranking-warning">淘汰赛效果预览 · 临时演示数据，不影响真实比赛</p>');
     $$("#playoffOverview [data-open-match]").forEach((button) => { button.removeAttribute("data-open-match"); button.disabled = true; button.title = "示例结果，无真实比赛详情"; });
   } finally { db = realDb; }
 }
@@ -8234,7 +8305,12 @@ function bindEvents() {
       alert(error.message);
     }
   });
+  $("#playoffOverview")?.addEventListener("keydown", (event) => {
+    if (["Enter", " "].includes(event.key) && event.target.matches("[data-playoff-series]")) { event.preventDefault(); openPlayoffSeries(Number(event.target.dataset.playoffSeries)); }
+  });
   $("#playoffOverview")?.addEventListener("click", (event) => {
+    const series = event.target.closest("[data-playoff-series]");
+    if (series) { openPlayoffSeries(Number(series.dataset.playoffSeries)); return; }
     if (event.target.closest("[data-open-match]")) { handleMatchCardOpen(event); return; }
     const button = event.target.closest("[data-player-profile-id]");
     if (button) openPlayerProfileById(button.dataset.playerProfileId);
