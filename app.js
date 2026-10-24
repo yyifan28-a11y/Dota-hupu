@@ -962,8 +962,13 @@ function renderMatches() {
     return `
       <article class="match-history-row" data-open-match="${escapeHtml(match.id)}" tabindex="0" role="button" aria-label="查看 ${escapeHtml(match.date || "日期未记录")} 第 ${Number(match.matchNo || 1)} 场比赛详情">
         <div class="match-history-identity">
-          <strong>${escapeHtml(formatShortMatchDate(match.date))}</strong>
-          <span>${match.isPlayoff ? "" : `第 ${Number(match.matchNo || 1)} 场 `}${renderPlayoffMatchBadge(match)}</span>
+          <div class="match-history-date-line"><strong>${escapeHtml(formatShortMatchDate(match.date))}</strong>${renderPlayoffMatchBadge(match)}</div>
+          <span class="match-history-matchup">${match.isPlayoff ? ["radiant", "dire"].map((side) => {
+            const name = getMatchPlayoffTeamName(match, side);
+            const ids = match[side] || [];
+            const key = name && ["A", "B", "C", "D"].find((key) => getPlayoffTeams()[key]?.length === 5 && getPlayoffTeams()[key].every((id) => ids.includes(id)));
+            return `<span class="match-history-matchup-team">${key ? `<img src="./assets/playoff-teams/team-${key.toLowerCase()}-small.webp" width="16" height="16" alt="" loading="lazy" />` : ""}${escapeHtml(name || (side === "radiant" ? "天辉" : "夜魇"))}</span>`;
+          }).join('<span class="match-history-matchup-vs">VS</span>') : `第 ${Number(match.matchNo || 1)} 场`}</span>
         </div>
         <div class="match-history-duration">
           <strong>${escapeHtml(getMatchDurationLabel(match))}</strong>
@@ -1433,6 +1438,32 @@ function renderPlayoffRankingStage(teams) {
   </section>`;
 }
 
+function renderPlayoffEliminationStage(teams) {
+  const stage = getPlayoffRankingStage(teams);
+  const settled = stage.completed === 12 && new Set(stage.rows.map((row) => row.rank)).size === 4;
+  const seed = (rank) => {
+    const row = settled && stage.rows.find((row) => row.rank === rank);
+    return row ? `<span class="playoffs-bracket-team"><img src="./assets/playoff-teams/team-${row.key.toLowerCase()}-small.webp" width="24" height="24" alt="" loading="lazy" />${escapeHtml(db.playoffTeamNames?.[row.key] || `${row.key} 队`)}</span>` : `<span class="playoffs-bracket-team">排位第 ${rank} 名</span>`;
+  };
+  const card = (title, format, a, b) => `<article class="playoffs-bracket-match"><header><h4>${title}</h4><span>${format}</span></header><div>${a}</div><div>${b}</div></article>`;
+  const pending = (label) => `<span class="playoffs-bracket-team is-pending">${label}</span>`;
+  return `<section class="playoffs-ranking-stage playoffs-elimination-stage">
+    <header class="playoffs-ranking-heading"><div><span>DOUBLE ELIMINATION</span><h3>淘汰赛</h3></div></header>
+    <div class="playoffs-bracket-scroll"><div class="playoffs-bracket">
+      <section class="playoffs-bracket-round"><h4>首轮</h4>
+        ${card("胜者组决赛", "BO3", seed(1), seed(2))}
+        ${card("败者组首轮", "BO3", seed(3), seed(4))}
+      </section>
+      <section class="playoffs-bracket-round"><h4>败者组决赛</h4>
+        ${card("败者组决赛", "BO3", pending("胜者组决赛败者"), pending("败者组首轮胜者"))}
+      </section>
+      <section class="playoffs-bracket-round"><h4>总决赛</h4>
+        ${card("总决赛", "BO5", pending("胜者组决赛胜者"), pending("败者组决赛胜者"))}
+      </section>
+    </div></div>
+  </section>`;
+}
+
 function renderPlayoffs() {
   if (new URLSearchParams(window.location.search).get("playoffDemo") !== "1") return renderPlayoffsContent();
   const realDb = db;
@@ -1482,7 +1513,8 @@ function renderPlayoffsContent() {
         </article>`;
       }).join("")}
     </section>
-    ${renderPlayoffRankingStage(teams)}`;
+    ${renderPlayoffRankingStage(teams)}
+    ${renderPlayoffEliminationStage(teams)}`;
 }
 
 function getMatchesByScheduleDesc(matches = db.matches) {

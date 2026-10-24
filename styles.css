@@ -15568,7 +15568,7 @@ body[data-ui="modern"] #overallData .page-heading {
 .match-history-table-head,
 .match-history-row {
   display: grid;
-  grid-template-columns: minmax(82px, 0.46fr) 66px 84px minmax(185px, 1fr) minmax(185px, 1fr);
+  grid-template-columns: minmax(180px, 0.7fr) 66px 84px minmax(185px, 1fr) minmax(185px, 1fr);
   gap: 12px;
   min-width: 680px;
   align-items: center;
@@ -15623,6 +15623,18 @@ body[data-ui="modern"] #overallData .page-heading {
   display: grid;
   gap: 5px;
 }
+
+.match-history-date-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.match-history-matchup { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.match-history-matchup-team { display: inline-flex; align-items: center; gap: 3px; }
+.match-history-matchup-team img { width: 16px; height: 16px; flex: 0 0 16px; object-fit: cover; border-radius: 3px; }
+.match-history-matchup-vs { font-size: 9px; opacity: .7; }
 
 .match-history-identity strong,
 .match-history-duration strong {
@@ -15769,7 +15781,7 @@ body[data-ui="modern"] #overallData .page-heading {
 
   .match-history-table-head,
   .match-history-row {
-    grid-template-columns: 84px 68px 84px 200px 200px;
+    grid-template-columns: 180px 68px 84px 200px 200px;
     gap: 16px;
     min-width: 700px;
   }
@@ -17929,12 +17941,32 @@ body[data-ui="modern"] #matchDetail .match-team-board.is-winner > header {
   .match-playoff-versus .match-versus-team .match-victory-stamp small { font-size:7px; }
 }
 .bp-image-fallback { display:grid; place-items:center; height:100%; padding:3px; color:#afc8ce; font-size:10px; text-align:center; }
-body[data-ui="modern"] #playoffs .playoffs-matrix tbody th:first-child {
+body[data-ui="modern"] #playoffs .playoffs-matrix tbody th:first-child,
+body[data-ui="modern"] #playoffs .playoffs-standings tr > th:nth-child(2) {
   text-align: left;
   padding-left: 12px;
 }
-body[data-ui="modern"] #playoffs .playoffs-matrix tbody th:first-child .playoffs-table-team {
+body[data-ui="modern"] #playoffs .playoffs-matrix tbody th:first-child .playoffs-table-team,
+body[data-ui="modern"] #playoffs .playoffs-standings tbody th .playoffs-table-team {
   display: flex;
   justify-content: flex-start;
 }
 .match-detail-loading { min-height:260px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; color:#819fa5; font-size:13px; }
+
+.playoffs-bracket-scroll { overflow-x:auto; padding-bottom:8px; }
+.playoffs-bracket { display:grid; grid-template-columns:repeat(3,minmax(230px,1fr)); gap:32px; min-width:780px; }
+.playoffs-bracket-round { display:flex; flex-direction:column; justify-content:center; gap:22px; min-width:0; position:relative; }
+.playoffs-bracket-round > h4 { margin:0; color:#8aaab1; font-size:12px; letter-spacing:.08em; }
+.playoffs-bracket-match { position:relative; border:1px solid rgba(128,205,215,.2); border-radius:7px; background:rgba(3,20,25,.88); }
+.playoffs-bracket-round:not(:last-child) .playoffs-bracket-match::after { content:"→"; position:absolute; left:100%; width:32px; top:50%; text-align:center; color:#70dce8; }
+.playoffs-bracket-match header { display:flex; justify-content:space-between; align-items:center; padding:13px 14px; border-bottom:1px solid rgba(128,205,215,.13); }
+.playoffs-bracket-match header h4 { margin:0; font-size:14px; color:#dcecef; }
+.playoffs-bracket-match header > span { color:#e8bc67; font:12px Consolas,monospace; }
+.playoffs-bracket-match > div { padding:13px 14px; }
+.playoffs-bracket-match > div + div { border-top:1px solid rgba(128,205,215,.08); }
+.playoffs-bracket-team { display:flex; align-items:center; gap:7px; flex-wrap:wrap; color:#e4f1f3; font-size:13px; }
+.playoffs-bracket-team img { border-radius:4px; flex:0 0 24px; }
+.playoffs-bracket-team small { color:#819fa5; font-size:10px; margin-left:auto; }
+.playoffs-bracket-team.is-pending { color:#92adb3; }
+.playoffs-bracket-match footer { padding:10px 14px; color:#819fa5; font-size:10px; line-height:1.6; border-top:1px solid rgba(128,205,215,.13); }
+.playoffs-bracket-round:last-child .playoffs-bracket-match { border-color:rgba(232,188,103,.4); }
